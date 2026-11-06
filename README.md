@@ -57,10 +57,6 @@ After changing `engine/engine.js`, run `npm run build` so the page picks it up. 
 
 ## Things to know
 
-- Game state is stored as `json`, not `jsonb`. Postgres `jsonb` reorders keys and the engine sums floating-point
-  numbers in key order, so a reloaded game could differ by a rounding error from a replayed one.
-- The page does not hide a case's hidden truth from the player, since it plays on its own engine. That is fine for a
-  single-player game but would need changing before any competitive mode.
-- Not built yet: the Azure deployment, Lakebase (it will be a different `DATABASE_URL` and the same migrations),
-  the Azure email service (replace `server/mailer.js`), and the party, agreement, collateral, security and hedge tables,
-  which need the portfolio loan model from step 3.
+- Game state is stored as `json`, not `jsonb`. Postgres `jsonb` reorders keys and the engine sums floating-point numbers in key order, so a reloaded game could differ by a rounding error from a replayed one.
+- The page does not hide a case's hidden truth from the player, since it plays on its own engine. That is fine for a single-player game but would need changing before any competitive mode.
+- Not built yet: the Azure deployment, Lakebase (it will be a different `DATABASE_URL` and the same migrations), the Azure email service (replace `server/mailer.js`), and the party, agreement, collateral, security and hedge tables, which need the portfolio loan model from step 3.
