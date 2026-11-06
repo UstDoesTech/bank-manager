@@ -2928,7 +2928,7 @@ const Remote = (() => {
     try { rec = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { rec = null; }
     flush();
   }
-  const ready = () => !!(me && me.signedIn && me.consented);
+  const ready = () => !!(me && me.signedIn && me.consented && !(me.guest && optedOut()));      // a guest who said no is not recorded
   async function create(opts){
     try { const r = await api('POST', '/api/games', opts); if (!r.ok) return null; rec = { id: r.json.id, seq: 1, pending: [] }; store(); return r.json; }
     catch (e) { return null; }
@@ -3029,8 +3029,7 @@ function accountScreen(msg, isErr){
     $('#acBack').onclick = titleScreen; return;
   }
   overlay(`<div class="eyebrow">Account</div><h2>Save your games</h2>
-    ${m && m.guest ? `<p>You are playing as a guest: your games are recorded without a name or email. Create an account to keep them under your own sign-in, or sign in to an account you already have.</p>
-    <details class="more"><summary>Stop recording and delete my guest games</summary><div class="acct" style="margin-top:8px"><button type="button" class="btn no" id="acGuestDel">Delete my guest games and stop recording</button></div></details>` : '<p>Sign in to have your games recorded under your own account. Playing without one is recorded anonymously unless you turn that off on the title screen.</p>'}
+    ${m && m.guest ? `<p>Sign in or create an account to keep your games under your own login.</p>` : '<p>Sign in to keep your games under your own login.</p>'}
     <form class="acct" id="acForm" novalidate>
       <label>Email<input type="email" id="acEmail" autocomplete="username" required></label>
       <label>Password<input type="password" id="acPw" autocomplete="current-password" minlength="10" required></label>
@@ -3045,7 +3044,6 @@ function accountScreen(msg, isErr){
     Remote.setMe((await Remote.api('GET', '/api/me')).json); await Remote.init(); accountScreen(); };
   $('#acReg').onclick = async () => { const r = await Remote.api('POST', '/api/register', creds()); if (r.ok && m && m.guest){ try { Remote.setMe((await Remote.api('GET', '/api/me')).json); } catch (e) {} } accountScreen(r.ok ? r.json.message : r.json.message || 'Could not register.', !r.ok); };
   $('#acForgot').onclick = async () => { const r = await Remote.api('POST', '/api/forgot', { email: $('#acEmail').value.trim() }); accountScreen(r.json.message || 'Enter your email address first.', !r.ok); };
-  const gd = $('#acGuestDel'); if (gd) gd.onclick = async () => { const r = await Remote.api('DELETE', '/api/me', {}); if (r.ok){ Remote.setMe(null); Remote.drop(); Remote.setOptedOut(true); titleScreen(); } else accountScreen(r.json.message, true); };
   $('#acBack').onclick = titleScreen;
 }
 function resetScreen(token){
@@ -3070,7 +3068,7 @@ function titleScreen(){
       ${Remote.available() ? `<button type="button" class="btn link" id="ovAcct">${Remote.ready() ? (Remote.me().guest ? 'Playing as a guest · sign in to keep your games' : 'Recording as ' + esc(Remote.who())) : 'Sign in to save your games'}</button>` : ''}
     </div>
     ${resumable ? '<p style="color:var(--muted);font-size:12.5px;margin:0">Starting something new replaces your saved game.</p>' : ''}
-    ${Remote.available() && !(Remote.me() && !Remote.me().guest) ? (Remote.optedOut() ? '<p style="color:var(--muted);font-size:12.5px;margin:0">Recording is off on this device. <button type="button" class="btn link" id="ovRecOn">Turn it on</button></p>' : '<p style="color:var(--muted);font-size:12.5px;margin:0">Games are recorded anonymously, with no name or email, to help improve the game. <button type="button" class="btn link" id="ovRecOff">Don’t record my games</button></p>') : ''}`);
+    ${Remote.available() && !(Remote.me() && !Remote.me().guest) ? (Remote.optedOut() ? '<p style="color:var(--muted);font-size:12.5px;margin:0">Recording is off. <button type="button" class="btn link" id="ovRecOn">Turn it on</button></p>' : '<p style="color:var(--muted);font-size:12.5px;margin:0">Game sessions are recorded. <button type="button" class="btn link" id="ovRecOff">Don’t record my games</button></p>') : ''}`);
   const g = $('#ovGo'); if (g) g.onclick = () => { S = saved; save(); play(); };
   $('#ovTrain').onclick = () => startGame({ tutorial:true });
   $('#ovNew').onclick = () => startGame();

@@ -263,6 +263,7 @@ function register(app, { pool, host }) {
   });
 
   app.delete('/api/games/:id', auth, async (req) => {
+    if (req.player.guest) throw new HttpError(403, 'guest_cannot_delete', 'Guest games cannot be deleted. Create an account to manage your games.');
     const r = await pool.query('DELETE FROM bank.game WHERE id = $1 AND player_key = $2', [req.params.id, req.player.player_key]);
     if (!r.rowCount) throw new HttpError(404, 'not_found', 'No such game.');
     return { ok: true };

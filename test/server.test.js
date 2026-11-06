@@ -421,7 +421,7 @@ test('literacy: every example analysis query runs', async () => {
   for (const q of queries) await pool.query(q);
 });
 
-test('guests: a game played without signing in is recorded under an opaque key, claimed by registering, and deletable', async () => {
+test('guests: a game played without signing in is recorded under an opaque key and claimed by registering; guests cannot delete', async () => {
   const g1 = await call('POST', '/api/guest', {});
   assert.strictEqual(g1.status, 201); assert(g1.cookie && /bm_session/.test(g1.cookie));
   assert(/Max-Age=31/.test(String(g1.res.headers['set-cookie'])), 'a guest cookie lasts a year, not two weeks');
@@ -453,11 +453,11 @@ test('guests: a game played without signing in is recorded under an opaque key, 
   assert.strictEqual((await call('POST', '/api/register', { email: taken, password: PW }, g2.cookie)).status, 202);
   assert.strictEqual((await call('GET', '/api/me', null, g2.cookie)).json.guest, true);
 
-  // a guest can delete themselves without a password, and every game goes with them
+  // a guest cannot delete their games
   const game2 = await call('POST', '/api/games', {}, g2.cookie);
-  assert.strictEqual((await call('DELETE', '/api/me', {}, g2.cookie)).status, 200);
-  assert.strictEqual((await pool.query('SELECT 1 FROM bank.game WHERE id = $1', [game2.json.id])).rows.length, 0);
-  assert.strictEqual((await call('GET', '/api/me', null, g2.cookie)).json.signedIn, false);
+  assert.strictEqual((await call('DELETE', '/api/me', {}, g2.cookie)).status, 403);
+  assert.strictEqual((await call('DELETE', `/api/games/${game2.json.id}`, null, g2.cookie)).status, 403);
+  assert.strictEqual((await pool.query('SELECT 1 FROM bank.game WHERE id = $1', [game2.json.id])).rows.length, 1);
 
   // an account cannot be made without an email and password except as a guest
   await assert.rejects(pool.query('INSERT INTO account.player (guest) VALUES (false)'), /player_guest_or_account/);

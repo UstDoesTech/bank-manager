@@ -179,13 +179,13 @@ test('the page works with no server: opened from a file there is no account butt
   await ctx.close();
 });
 
-test('the page without an account: the game is recorded anonymously, the player was told, and can switch it off', { skip: !EDGE && 'no Edge/Chrome found' }, async () => {
+test('the page without an account: the game is recorded anonymously, the player was told, and can switch it off, but cannot delete', { skip: !EDGE && 'no Edge/Chrome found' }, async () => {
   const ctx = await browser.newContext({ viewport: { width: 420, height: 860 } });
   const page = await ctx.newPage();
   const errors = []; page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(base + '/');
   await page.waitForSelector('#ovTrain');
-  assert.match(await page.textContent('.panel'), /recorded anonymously/);
+  assert.match(await page.textContent('.panel'), /Game sessions are recorded/);
   assert.strictEqual((await pool.query('SELECT count(*)::int n FROM account.player WHERE guest')).rows[0].n, 0, 'nobody is created just by opening the page');
 
   await page.click('#ovNew');
@@ -200,13 +200,16 @@ test('the page without an account: the game is recorded anonymously, the player 
   // a returning visit uses the same guest; turning recording off on the title screen stops new games being recorded
   await page.reload(); await page.waitForSelector('#ovAcct');
   assert.match(await page.textContent('#ovAcct'), /guest/);
-  await page.click('#ovAcct'); await page.click('summary'); await page.click('#acGuestDel');
+  await page.click('#ovAcct');
+  assert.strictEqual(await page.locator('text=/delete/i').count(), 0, 'a guest is not offered deletion');
+  await page.click('#acBack');
+  await page.click('#ovRecOff');
   await page.waitForSelector('#ovRecOn');
-  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.game WHERE id = $1', [gameId])).rows[0].n, 0, 'the guest games were deleted');
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.game WHERE id = $1', [gameId])).rows[0].n, 1, 'the recorded game stays');
   await page.click('#ovNew');
   await page.waitForFunction(() => S && S.seed);
   await new Promise((res) => setTimeout(res, 500));
-  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.game g JOIN account.player p ON p.player_key = g.player_key WHERE p.guest')).rows[0].n, 0, 'nothing is recorded once it is off');
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.game g JOIN account.player p ON p.player_key = g.player_key WHERE p.guest')).rows[0].n, 1, 'no new game is recorded once it is off');
   assert.deepStrictEqual(errors, []);
   await ctx.close();
 });

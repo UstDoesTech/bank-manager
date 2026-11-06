@@ -183,7 +183,8 @@ function register(app, { pool, mailer, config }) {
   app.delete('/api/me', { preHandler: app.requireAuth }, async (req, reply) => {
     const password = String((req.body && req.body.password) || '');
     const { rows } = await pool.query('SELECT password_hash FROM account.player WHERE id = $1', [req.player.id]);
-    if (!req.player.guest && !(await verifyPassword(rows[0].password_hash, password))) throw new HttpError(401, 'bad_credentials', 'Password is wrong.');
+    if (req.player.guest) throw new HttpError(403, 'guest_cannot_delete', 'Guest games cannot be deleted. Create an account to manage your games.');
+    if (!(await verifyPassword(rows[0].password_hash, password))) throw new HttpError(401, 'bad_credentials', 'Password is wrong.');
     const client = await pool.connect();
     try {
       await client.query('BEGIN');

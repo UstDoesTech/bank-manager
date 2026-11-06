@@ -23,8 +23,8 @@ docker compose up --build          # Postgres + the game server
 Open http://localhost:8080. A game started without signing in is still recorded, anonymously: the server makes a guest
 player (a random key, no name or email, a one-year cookie), the title screen says so, and "Don't record my games" turns it
 off on that device (the game then plays offline as before). Opening the page records nothing; the guest is created when a
-game starts. A guest can sign in or create an account to keep their games (registering claims the same player row), or
-delete their guest games from the account screen. Guests do not get the literacy check, which is for signed-in players.
+game starts. A guest can sign in or create an account to keep their games (registering claims the same player row). A guest
+cannot delete their games (the server refuses it); only an account can. Guests do not get the literacy check, which is for signed-in players.
 To sign in to an account, choose "Sign in to save your games", create one, and confirm the address. There is no email
 service locally: the confirmation link is written to a table and to the server log.
 
