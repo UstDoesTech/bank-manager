@@ -420,3 +420,45 @@ test('literacy: every example analysis query runs', async () => {
   assert(queries.length >= 5);
   for (const q of queries) await pool.query(q);
 });
+
+test('guests: a game played without signing in is recorded under an opaque key, claimed by registering, and deletable', async () => {
+  const g1 = await call('POST', '/api/guest', {});
+  assert.strictEqual(g1.status, 201); assert(g1.cookie && /bm_session/.test(g1.cookie));
+  assert(/Max-Age=31/.test(String(g1.res.headers['set-cookie'])), 'a guest cookie lasts a year, not two weeks');
+  const me = (await call('GET', '/api/me', null, g1.cookie)).json;
+  assert.strictEqual(me.signedIn, true); assert.strictEqual(me.guest, true); assert.strictEqual(me.email, null); assert.strictEqual(me.consented, true);
+  assert.strictEqual((await call('POST', '/api/guest', {}, g1.cookie)).json.guest, true);        // asking again does not make a second player
+
+  const game = await call('POST', '/api/games', { households: true }, g1.cookie);
+  assert.strictEqual(game.status, 201);
+  const played = await play(g1.cookie, game.json.id, game.json.state, 1, 3);
+  assert((await verifyGame(pool, host, game.json.id)).ok);
+  const key = (await pool.query('SELECT player_key FROM bank.game WHERE id = $1', [game.json.id])).rows[0].player_key;
+
+  // registering keeps the same player and the games
+  const email = 'claim-guest@example.com';
+  assert.strictEqual((await call('POST', '/api/register', { email, password: PW }, g1.cookie)).status, 202);
+  const row = (await pool.query('SELECT player_key, guest, email_confirmed_at FROM account.player WHERE lower(email) = $1', [email])).rows[0];
+  assert.strictEqual(row.player_key, key); assert.strictEqual(row.guest, false); assert.strictEqual(row.email_confirmed_at, null);
+  const token = (await lastMail(email)).match(/token=([\w-]+)/)[1];
+  assert.strictEqual((await call('GET', '/api/confirm?token=' + token)).status, 302);
+  const login = await call('POST', '/api/login', { email, password: PW });
+  assert.strictEqual((await call('GET', '/api/games', null, login.cookie)).json.games.length, 1);
+  await call('DELETE', '/api/me', { password: PW }, login.cookie);
+
+  // a guest who registers an address that is already taken learns nothing and keeps playing as a guest
+  const taken = 'taken-' + Date.now() + '@example.com';
+  await newPlayer(taken);
+  const g2 = await call('POST', '/api/guest', {});
+  assert.strictEqual((await call('POST', '/api/register', { email: taken, password: PW }, g2.cookie)).status, 202);
+  assert.strictEqual((await call('GET', '/api/me', null, g2.cookie)).json.guest, true);
+
+  // a guest can delete themselves without a password, and every game goes with them
+  const game2 = await call('POST', '/api/games', {}, g2.cookie);
+  assert.strictEqual((await call('DELETE', '/api/me', {}, g2.cookie)).status, 200);
+  assert.strictEqual((await pool.query('SELECT 1 FROM bank.game WHERE id = $1', [game2.json.id])).rows.length, 0);
+  assert.strictEqual((await call('GET', '/api/me', null, g2.cookie)).json.signedIn, false);
+
+  // an account cannot be made without an email and password except as a guest
+  await assert.rejects(pool.query('INSERT INTO account.player (guest) VALUES (false)'), /player_guest_or_account/);
+});

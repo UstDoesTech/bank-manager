@@ -20,9 +20,13 @@ server records games to Postgres as a working banking system. The design is in
 docker compose up --build          # Postgres + the game server
 ```
 
-Open http://localhost:8080. Without signing in, the game plays offline exactly as before. To record games, choose
-"Sign in to save your games", create an account, and confirm the address. There is no email service locally: the
-confirmation link is written to a table and to the server log.
+Open http://localhost:8080. A game started without signing in is still recorded, anonymously: the server makes a guest
+player (a random key, no name or email, a one-year cookie), the title screen says so, and "Don't record my games" turns it
+off on that device (the game then plays offline as before). Opening the page records nothing; the guest is created when a
+game starts. A guest can sign in or create an account to keep their games (registering claims the same player row), or
+delete their guest games from the account screen. Guests do not get the literacy check, which is for signed-in players.
+To sign in to an account, choose "Sign in to save your games", create one, and confirm the address. There is no email
+service locally: the confirmation link is written to a table and to the server log.
 
 ```
 docker compose logs app                                                         # the confirmation link is in here

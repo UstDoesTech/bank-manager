@@ -17,8 +17,9 @@ class HttpError extends Error {
 
 function register(app, { pool, mailer, config }) {
   const secure = config.baseUrl.startsWith('https');
-  const setCookie = (reply, token) => reply.setCookie(COOKIE, token, {
-    httpOnly: true, sameSite: 'lax', secure, path: '/', maxAge: config.sessionDays * 86400,
+  const guestDays = config.guestDays || 365;            // a guest has no password to get back in with, so the cookie lasts
+  const setCookie = (reply, token, days = config.sessionDays) => reply.setCookie(COOKIE, token, {
+    httpOnly: true, sameSite: 'lax', secure, path: '/', maxAge: days * 86400,
   });
 
   // Every request: resolve the session cookie to a player (or null).
@@ -27,7 +28,7 @@ function register(app, { pool, mailer, config }) {
     const raw = req.cookies && req.cookies[COOKIE];
     if (!raw) return;
     const { rows } = await pool.query(
-      `SELECT p.id, p.player_key, p.email, p.consent_at, p.analysis_opt_out
+      `SELECT p.id, p.player_key, p.email, p.consent_at, p.analysis_opt_out, p.guest
          FROM account.session s JOIN account.player p ON p.id = s.player_id
         WHERE s.token_hash = $1 AND s.expires_at > now()`, [sha(raw)]);
     req.player = rows[0] || null;
@@ -40,12 +41,28 @@ function register(app, { pool, mailer, config }) {
       [sha(token), playerId, kind, hours]);
     return token;
   }
-  async function startSession(reply, playerId) {
+  async function startSession(reply, playerId, days = config.sessionDays) {
     const token = newToken();
     await pool.query('INSERT INTO account.session (token_hash, player_id, expires_at) VALUES ($1, $2, now() + make_interval(days => $3))',
-      [sha(token), playerId, config.sessionDays]);
-    setCookie(reply, token);
+      [sha(token), playerId, days]);
+    setCookie(reply, token, days);
   }
+
+  // Anonymous play. The page asks for this when a game is started without an account; the player is told first and can
+  // decline (the page then plays offline). Limited per address so it cannot be used to fill the table.
+  const guestHits = new Map();
+  app.post('/api/guest', async (req, reply) => {
+    if (req.player) return { ok: true, guest: req.player.guest };
+    const now = Date.now(), hits = (guestHits.get(req.ip) || []).filter((t) => now - t < 3600e3);
+    if (hits.length >= (config.guestsPerHour || 30)) throw new HttpError(429, 'too_many_guests', 'Too many new players from this address. Try again later.');
+    hits.push(now); guestHits.set(req.ip, hits);
+    if (guestHits.size > 5000) for (const [k, v] of guestHits) if (!v.some((t) => now - t < 3600e3)) guestHits.delete(k);
+    const optOut = !!(req.body && req.body.optOut);
+    const { rows } = await pool.query('INSERT INTO account.player (guest, consent_at, analysis_opt_out) VALUES (true, now(), $1) RETURNING id', [optOut]);
+    await startSession(reply, rows[0].id, guestDays);
+    reply.code(201);
+    return { ok: true, guest: true };
+  });
   const creds = (body) => {
     const email = String((body && body.email) || '').trim();
     const password = String((body && body.password) || '');
@@ -62,8 +79,18 @@ function register(app, { pool, mailer, config }) {
     const { email, password } = creds(req.body);
     checkPassword(password);
     const hash = await hashPassword(password);
-    const ins = await pool.query(
-      'INSERT INTO account.player (email, password_hash) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING id', [email, hash]);
+    // A guest who registers keeps their games: the same row gains an email and password. If the address is taken the
+    // answer is the same as for anyone else.
+    let ins = { rows: [] };
+    if (req.player && req.player.guest) {
+      ins = await pool.query(
+        `UPDATE account.player SET email = $2, password_hash = $3, guest = false
+          WHERE id = $1 AND guest AND NOT EXISTS (SELECT 1 FROM account.player WHERE lower(email) = lower($2)) RETURNING id`,
+        [req.player.id, email, hash]).catch((e) => { if (e.code === '23505') return { rows: [] }; throw e; });
+    } else {
+      ins = await pool.query(
+        'INSERT INTO account.player (email, password_hash) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING id', [email, hash]);
+    }
     if (ins.rows[0]) {
       const token = await issueToken(ins.rows[0].id, 'confirm', config.confirmHours);
       await mailer.send({ to: email, subject: 'Confirm your Bank Manager account',
@@ -116,7 +143,7 @@ function register(app, { pool, mailer, config }) {
   app.get('/api/me', async (req) => {
     if (!req.player) return { signedIn: false };
     const p = req.player;
-    return { signedIn: true, email: p.email, consented: !!p.consent_at, analysisOptOut: p.analysis_opt_out };
+    return { signedIn: true, guest: !!p.guest, email: p.email, consented: !!p.consent_at, analysisOptOut: p.analysis_opt_out };
   });
 
   app.post('/api/forgot', async (req, reply) => {
@@ -156,7 +183,7 @@ function register(app, { pool, mailer, config }) {
   app.delete('/api/me', { preHandler: app.requireAuth }, async (req, reply) => {
     const password = String((req.body && req.body.password) || '');
     const { rows } = await pool.query('SELECT password_hash FROM account.player WHERE id = $1', [req.player.id]);
-    if (!(await verifyPassword(rows[0].password_hash, password))) throw new HttpError(401, 'bad_credentials', 'Password is wrong.');
+    if (!req.player.guest && !(await verifyPassword(rows[0].password_hash, password))) throw new HttpError(401, 'bad_credentials', 'Password is wrong.');
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
