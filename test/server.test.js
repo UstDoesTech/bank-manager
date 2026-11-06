@@ -242,7 +242,7 @@ test('portfolio: borrowers, agreements, collateral and month-end cohorts are rec
 test('policy: every game starts on the system pricing and credit policy and cannot change it until it is unlocked', async () => {
   const cookie = await newPlayer('rex@example.com');
   const g = (await call('POST', '/api/games', {}, cookie)).json;
-  assert.deepStrictEqual(g.state.policy.owner, { pricing: 'system', credit: 'system' });
+  assert.deepStrictEqual(g.state.policy.owner, { pricing: 'system', credit: 'system', treasury: 'system', capital: 'system' });
   assert.strictEqual(g.state.policy.pricing.cardRate, 24.9);
   const url = `/api/games/${g.id}/commands`;
   const r = await call('POST', url, { seq: 2, command: { type: 'setPolicy', area: 'pricing', values: { cardRate: 5 } } }, cookie);

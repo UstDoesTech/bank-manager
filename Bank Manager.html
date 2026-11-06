@@ -554,11 +554,15 @@ function systemPolicy(){
   return {
     pricing: { mortgageSpread: 1.05, ltvAdd: [[90, 0.7], [85, 0.4], [75, 0.15]], mortgagePremium: 0.6, personalLow: 8.9, personalHigh: 18.9, cardRate: 24.9 },
     credit: { mortgageMaxLtv: 90, mortgageMaxLti: 5, mortgageMaxAff: 0.45, mortgageMinScore: 520, personalMinScore: 620, personalMaxDebtRatio: 0.5 },
-    owner: { pricing: 'system', credit: 'system' } };
+    treasury: { liquidityTarget: 0.2, longShare: 0 },
+    capital: { capitalTarget: 0.125, capitalAction: 0, raiseAmount: 300 },
+    owner: { pricing: 'system', credit: 'system', treasury: 'system', capital: 'system' } };
 }
 const POLICY_LIMITS = {
   pricing: { mortgageSpread: [0, 6], mortgagePremium: [0, 3], personalLow: [0, 40], personalHigh: [0, 40], cardRate: [0, 40] },
-  credit: { mortgageMaxLtv: [50, 100], mortgageMaxLti: [2, 8], mortgageMaxAff: [0.2, 0.8], mortgageMinScore: [300, 900], personalMinScore: [300, 900], personalMaxDebtRatio: [0.2, 2] } };
+  credit: { mortgageMaxLtv: [50, 100], mortgageMaxLti: [2, 8], mortgageMaxAff: [0.2, 0.8], mortgageMinScore: [300, 900], personalMinScore: [300, 900], personalMaxDebtRatio: [0.2, 2] },
+  treasury: { liquidityTarget: [0.1, 0.5], longShare: [0, 1] },
+  capital: { capitalTarget: [0.105, 0.25], capitalAction: [0, 2], raiseAmount: [100, 1000] } };
 // Prices above the system's lose customers and attract riskier ones; at or below the system's nothing changes.
 // excess() is how many points a price is above the system price; dem() is the share of customers who still say yes;
 // adv() scales default risk for the customers who do. No random draw happens at the system prices.
@@ -568,10 +572,12 @@ const adv = ex => 1 + 0.08 * ex;
 const takeUp = (ex, slope) => ex <= 0 || chance(dem(ex, slope));
 const MORTGAGE_SLOPE = 1.2;   // mortgage customers shop around hard: 0.5 points dearer loses about 40% of them
 /* ---- unlocks: a strong year (rating A or better) hands over the next area, with a briefing letter from the board ---- */
-const UNLOCK_ORDER = ['pricing', 'credit'];
+const UNLOCK_ORDER = ['pricing', 'credit', 'treasury', 'capital'];
 const STRONG = ['AAA', 'AA', 'A'];
 const BRIEFING = {
   pricing: ['Pricing is yours', 'The board was impressed by your year. From now on you set the prices: the mortgage spread over Bank Rate, the personal loan rates and the card rate. Until today the executive team set them. Price too high and customers go elsewhere, and the ones who stay are riskier. Price too low and you give away margin. Open Policy from the menu to change them, or return to the executive team\'s prices at any time.'],
+  treasury: ['Treasury is yours', 'A third strong year. You now set the treasury rules: how much cash the bank keeps as a share of deposits, and how much of any surplus goes into long gilts rather than short ones. Your treasurer follows the rules every month and will sell gilts to restore the cash target. Long gilts pay more but lose value when rates rise. A low cash target earns more and leaves less to meet a run.'],
+  capital: ['Capital is yours', 'You now set the capital rules: the ratio you want to stay above, what to do when you fall below it, and how much to raise. Raising shares dilutes the owners and lowers the return the board sees. Selling mortgages shrinks the bank. Carrying on risks the regulator.'],
   credit: ['Credit policy is yours', 'Another strong year. You now set the credit policy: how much of a home\'s price we lend, how many times income, how much of take-home pay a mortgage may take, and the lowest credit scores we accept. Loosening it wins customers and brings losses a year or two later.'] };
 function grantUnlock(r){
   if (!STRONG.includes(r.letter)) return;
@@ -1176,11 +1182,13 @@ gen.capital = () => {
   return card('capital', { label:'Capital', who:{ name:'Your finance director', sub:'Capital planning', age:0, hue:0 }, note:`Your capital ratio is ${pc(capRatio())}. Below ${pc(MIN_CAP)} the regulator steps in; below ${pc(FAIL_CAP, 0)} they close you.`,
     fields:[ F('Capital', full(capital())), F('Risk-weighted assets', full(rwa()), 'Capital ratio'), F('Capital ratio', pc(capRatio()), 'Capital ratio'), F('Profit so far this year', fmt(metrics().profit, true)) ], opts, h:{} });
 };
+function issueEquity(amt){ news(5, `Counting House asks shareholders for ${fmt(amt)}`, 'The bank says it needs more capital to keep lending.'); je('equity.issue', [['cash', amt], ['equity.paidin', -amt]]); S.injected = (S.injected || 0) + amt; chip('Capital +' + fmt(amt), 'good'); say('Shareholders put in more money. Your profit is now shared across more shares, so each one earns less.'); }
+function sellMortgages(){ const ms = S.loans.filter(l => l.kind === 'mortgage' && l.status === 'current').sort((a, b) => b.bal - a.bal); let sold = 0, target = ms.reduce((a, l) => a + l.bal, 0) / 2;
+  for (const l of ms){ if (sold >= target) break; sold += l.bal; je('loan.sell', [['cash', l.bal * 0.97], ['pl.gilts', l.bal * 0.03], ['loans', -l.bal]]); S.loans = S.loans.filter(x => x !== l); }
+  chip('Mortgages sold ' + fmt(sold), 'neutral'); chip('Loss on sale ' + fmt(-sold * 0.03), 'bad'); say(`Another bank buys ${full(sold)} of mortgages. Less risk on your books, less interest coming in.`); return sold; }
 res.capital = (c, k) => {
-  if (k === 'raise'){ news(5, `Counting House asks shareholders for ${fmt(300)}`, 'The bank says it needs more capital to keep lending.'); je('equity.issue', [['cash', 300], ['equity.paidin', -300]]); S.injected = (S.injected || 0) + 300; chip('Capital +' + fmt(300), 'good'); say('Shareholders put in more money. Your profit is now shared across more shares, so each one earns less.'); }
-  if (k === 'sell'){ const ms = S.loans.filter(l => l.kind === 'mortgage' && l.status === 'current').sort((a, b) => b.bal - a.bal); let sold = 0, target = ms.reduce((a, l) => a + l.bal, 0) / 2;
-    for (const l of ms){ if (sold >= target) break; sold += l.bal; je('loan.sell', [['cash', l.bal * 0.97], ['pl.gilts', l.bal * 0.03], ['loans', -l.bal]]); S.loans = S.loans.filter(x => x !== l); }
-    chip('Mortgages sold ' + fmt(sold), 'neutral'); chip('Loss on sale ' + fmt(-sold * 0.03), 'bad'); say(`Another bank buys ${full(sold)} of mortgages. Less risk on your books, less interest coming in.`); }
+  if (k === 'raise') issueEquity(300);
+  if (k === 'sell') sellMortgages();
   if (k === 'none') say('No action. The regulator will be watching the next set of numbers.');
 };
 
@@ -1280,8 +1288,8 @@ function nextYear(){
   grantUnlock(r);
   buildMonth();
 }
-function migrate(s){ if (!s.policy) s.policy = systemPolicy(); if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
-function buildMonth(){ buildMonthCards(); deskByPolicy(); }
+function migrate(s){ if (!s.policy) s.policy = systemPolicy(); { const sp = systemPolicy(); for (const a of ['treasury', 'capital']) if (!s.policy[a]) s.policy[a] = sp[a]; for (const a of Object.keys(sp.owner)) if (!s.policy.owner[a]) s.policy.owner[a] = 'system'; } if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
+function buildMonth(){ buildMonthCards(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); }
 function buildMonthCards(){
   const m = S.month, lead = [], other = [];
   S.pl = blankPL();
@@ -1294,9 +1302,9 @@ function buildMonthCards(){
   if (S.wm){ if (S.lastMkt < -0.05) lead.push(gen.wmMarket()); if (S.wm.houseAt === m) other.push(gen.wmHouse()); if (S.wm.campAt === m) other.push(gen.wmCampaign()); if (S.sched.pep === m) other.push(gen.wmPep()); }
   if (S.sched.out === m) other.push(gen.outage());
   if (S.sched.sanc.includes(m)) other.push(gen.sanctions());
-  if (capRatio() < 0.125 && m - (S.lastCapCard ?? -9) >= 2) lead.push(gen.capital());
+  if (capRatio() < 0.125 && m - (S.lastCapCard ?? -9) >= 2 && S.policy.owner.capital !== 'player') lead.push(gen.capital());
   if (liqRatio() < 0.16) other.push(gen.funding());
-  else if (S.cash - 0.2 * S.deposits > 1000 && m - S.lastTreasury >= 3) other.push(gen.treasury());
+  else if (S.cash - 0.2 * S.deposits > 1000 && m - S.lastTreasury >= 3 && S.policy.owner.treasury !== 'player') other.push(gen.treasury());
   if (m === 0 && S.tutorial && S.year === 2027 && !S.career.length){
     const T = [
       [gen.onboard({ bad:false, saver:false }), 'Compare the ID, address and device checks, and whether the money expected fits the job. When everything lines up, this is an ordinary customer.'],
@@ -1345,6 +1353,51 @@ function deskByPolicy(){
   S.lastDesk = tally;
   if (tally.approved + tally.declined > 0)
     addMail('Credit team', 'Lending decided by your policy', `${tally.approved} applications approved (${fmt(tally.lent)} lent), ${tally.declined} declined${tally.referred ? `, and ${tally.referred} referred to you at the counter` : ''}${tally.lapsed ? `. ${tally.lapsed} more referrals lapsed because the desk was full` : ''}. These follow the credit policy you set.`, '', S.month, S.year);
+}
+/* ---- treasury and capital by policy ----
+   Once the player owns treasury, the treasurer follows standing rules instead of asking each time: cash above the
+   target share of deposits goes into gilts (long or short as the policy says), and a shortfall is covered by
+   selling gilts at their market value, which realises any loss. Once the player owns capital, falling below the
+   target ratio triggers the chosen action (0 raise shares, 1 sell half the new mortgages, 2 carry on). */
+function buyGilts(kind, amt){
+  const y = giltYield(kind);
+  je('gilts.buy', [['gilts', amt], ['cash', -amt]]); S.gilts.push({ kind, amt, coupon: y, dur: kind === 'long' ? 8.2 : 1.9, y0: y });
+}
+function sellGiltShare(f){
+  const mv = giltMV() * f, bk = giltBook() * f;
+  je('gilts.sell', [['cash', mv], ['gilts', -bk], ['pl.gilts', bk - mv]]);
+  for (const g of S.gilts) g.amt *= 1 - f;
+  S.gilts = S.gilts.filter(g => g.amt > 1e-9);
+  if (mv - bk < -0.5) S.stats.giltLoss = (S.stats.giltLoss || 0) + 1;
+  return mv - bk;
+}
+function treasuryByPolicy(){
+  if (S.policy.owner.treasury !== 'player' || S.over || S.tutorial || S.scenario) return;
+  const tp = S.policy.treasury, target = tp.liquidityTarget * S.deposits, surplus = S.cash - target;
+  S.lastTreasury = S.month;
+  if (surplus > 500){
+    const amt = Math.floor(surplus * 0.6 / 250) * 250, long = Math.round(amt * tp.longShare / 250) * 250;
+    if (long > 0) buyGilts('long', long);
+    if (amt - long > 0) buyGilts('short', amt - long);
+    if (amt > 0) addMail('Your treasurer', 'Surplus cash invested', `${full(amt)} above the ${pc(tp.liquidityTarget, 0)} cash target went into gilts (${full(long)} long, ${full(amt - long)} short), as your treasury policy says.`, '', S.month, S.year);
+  } else if (S.cash < target - 0.04 * S.deposits && giltBook() > 0){
+    const f = clamp((target - S.cash) / Math.max(1, giltMV()), 0, 1), res = sellGiltShare(f);
+    addMail('Your treasurer', 'Gilts sold to restore cash', `Cash was below your ${pc(tp.liquidityTarget, 0)} target, so ${pc(f, 0)} of the gilts were sold${res < -0.5 ? `, at a loss of ${full(-res)}` : ''}.`, res < -0.5 ? 'bad' : '', S.month, S.year);
+  }
+}
+function capitalByPolicy(){
+  if (S.policy.owner.capital !== 'player' || S.over || S.tutorial || S.scenario) return;
+  const cp = S.policy.capital;
+  if (capRatio() >= cp.capitalTarget || S.month - (S.lastCapCard ?? -9) < 2) return;
+  S.lastCapCard = S.month;
+  const act = Math.round(cp.capitalAction), before = capRatio();
+  begin();
+  let what;
+  if (act === 0){ issueEquity(cp.raiseAmount); what = `raised ${full(cp.raiseAmount)} from shareholders`; }
+  else if (act === 1){ const sold = sellMortgages(); what = sold > 0 ? `sold ${full(sold)} of mortgages` : 'had no mortgages to sell'; }
+  else what = 'took no action';
+  OUT = null;
+  addMail('Finance director', 'Capital below target', `The capital ratio was ${pc(before)}, under your ${pc(cp.capitalTarget)} target. As your capital policy says, we ${what}. The ratio is now ${pc(capRatio())}.`, act === 2 ? 'bad' : '', S.month, S.year);
 }
 function current(){ return S.queue.find(c => !c.done) || null; }
 function optionAllowed(o){ return !(o.cash && S.cash < o.cash); }
@@ -2454,7 +2507,16 @@ const POLICY_FIELDS = {
     ['mortgageMinScore', 'Mortgage: lowest credit score', '/ 999', 5, ''],
     ['personalMinScore', 'Personal loan: lowest credit score', '/ 999', 5, ''],
     ['personalMaxDebtRatio', 'Personal loan: most debt against a year\'s income', '×', 0.05, 'Existing debts plus the new loan.']],
-    note: 'Saving these takes over the lending desk. From then on your policy decides each mortgage and personal loan application: approved and declined ones are processed at once, and only the borderline cases reach your counter. The bank also receives more applications than a branch counter would. A policy that is too loose lends to people who default. One that is too tight turns away good customers.' } };
+    note: 'Saving these takes over the lending desk. From then on your policy decides each mortgage and personal loan application: approved and declined ones are processed at once, and only the borderline cases reach your counter. The bank also receives more applications than a branch counter would. A policy that is too loose lends to people who default. One that is too tight turns away good customers.' },
+  treasury: { title: 'Treasury', rows: [
+    ['liquidityTarget', 'Cash to keep, as a share of deposits', 'share', 0.01, 'Cash above this is invested in gilts each month. If cash falls well below it, gilts are sold, at their market value, to restore it.'],
+    ['longShare', 'Share of any surplus put into 10-year gilts', 'share, 0 to 1', 0.1, 'Long gilts pay more but lose value when rates rise. The rest goes into 2-year gilts.']],
+    note: 'Saving these takes over treasury. Your treasurer follows these rules every month and stops asking you each time.' },
+  capital: { title: 'Capital', rows: [
+    ['capitalTarget', 'Capital ratio to stay above', 'ratio', 0.005, 'The regulator steps in below 10.5%. Holding much more than you need lowers the return the board sees.'],
+    ['capitalAction', 'When below it', '0, 1 or 2', 1, '0 raise shares, 1 sell half the new mortgages, 2 carry on.'],
+    ['raiseAmount', 'Amount to raise', '£k', 50, 'Used when the action is 0. Shareholders are diluted.']],
+    note: 'Saving these takes over capital planning. The finance director acts for you when the ratio falls below your target.' } };
 function policyScreen(msg, isErr){
   const sys = systemPolicy(), note = '<div class="msg' + (isErr ? ' err' : '') + '" role="status">' + esc(msg || '') + '</div>';
   const blocks = Object.keys(POLICY_FIELDS).map(area => {

@@ -39,7 +39,7 @@ function validate(state, cmd) {
     if (typeof cmd.key !== 'string') throw new HttpError(400, 'bad_command', 'Missing upgrade key.');
   } else if (cmd.type === 'setPolicy') {
     if (state.over) throw new HttpError(409, 'game_over', 'The year is over.');
-    if (cmd.area !== 'pricing' && cmd.area !== 'credit') throw new HttpError(400, 'bad_command', 'Unknown policy area.');
+    if (!['pricing', 'credit', 'treasury', 'capital'].includes(cmd.area)) throw new HttpError(400, 'bad_command', 'Unknown policy area.');
     if (!state.progress.unlocked.includes(cmd.area)) throw new HttpError(403, 'not_unlocked', 'You do not control that policy yet.');
     if (!cmd.release && (!cmd.values || typeof cmd.values !== 'object' || Array.isArray(cmd.values))) throw new HttpError(400, 'bad_command', 'Missing values.');
   } else if (cmd.type === 'read') {

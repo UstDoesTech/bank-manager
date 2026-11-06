@@ -30,7 +30,7 @@ function sweep() {
 }
 module.exports = { sweep, profit, SWEEPS, SEEDS };
 
-if (require.main === module && !process.argv.includes('--credit')) {
+if (require.main === module && !process.argv.includes('--credit') && !process.argv.includes('--treasury') && !process.argv.includes('--capital')) {
   const res = sweep();
   for (const [key, rows] of Object.entries(res)) {
     console.log('\n' + key);
@@ -59,7 +59,41 @@ function creditRun(values, bot = 'careful') {
   return { mean: total / SEEDS.length, failed, defaults: defaults / SEEDS.length, lent: lent / SEEDS.length };
 }
 module.exports.creditRun = creditRun; module.exports.CREDIT = CREDIT;
-if (require.main === module && process.argv.includes('--credit')) {
+if (require.main === module && process.argv.includes('--credit') && !process.argv.includes('--treasury') && !process.argv.includes('--capital')) {
   console.log('\ncredit policy');
   for (const [name, v] of Object.entries(CREDIT)) { const r = creditRun(v); console.log('  ' + name.padEnd(20) + 'mean profit ' + r.mean.toFixed(1).padStart(8) + '  defaults ' + r.defaults.toFixed(1).padStart(5) + '  lent ' + r.lent.toFixed(0).padStart(7) + (r.failed ? '  failed ' + r.failed : '')); }
+}
+
+// Treasury and capital: standing rules compared over the same games. A low cash target or all-long gilts should not be free money,
+// and neither should never raising capital.
+function areaRun(area, values, bot = 'careful') {
+  let total = 0, failed = 0, breaches = 0, minLiq = 0; const scores = [];
+  for (const seed of SEEDS) {
+    const E = loadEngine(src);
+    const { S } = play(E, seed, bot, YEARS, {}, (run, e) => { e.S.progress.unlocked.push('pricing', 'credit', 'treasury', 'capital'); run({ type: 'setPolicy', area, values }); });
+    total += E.rating().profit; if (YEARS > 1) total += (E.S.career || []).reduce((a, c) => a + c.profit, 0);
+    scores.push(E.rating().score);
+    if (S.over && S.over !== 'done') failed++;
+    breaches += S.stats.capBreach || 0; minLiq += S.history.length ? Math.min(...S.history.map((h) => h.liq)) : 0;
+  }
+  scores.sort((a, b) => a - b);
+  return { mean: total / SEEDS.length, failed, breaches: breaches / SEEDS.length, minLiq: minLiq / SEEDS.length, score: scores.reduce((a, b) => a + b, 0) / scores.length, p10: scores[Math.floor(scores.length * 0.1)] };
+}
+const TREASURY = [
+  ['target 12%, all short', { liquidityTarget: 0.12, longShare: 0 }], ['target 12%, all long', { liquidityTarget: 0.12, longShare: 1 }],
+  ['target 20%, all short', { liquidityTarget: 0.2, longShare: 0 }], ['target 20%, half long', { liquidityTarget: 0.2, longShare: 0.5 }], ['target 20%, all long', { liquidityTarget: 0.2, longShare: 1 }],
+  ['target 35%, all short', { liquidityTarget: 0.35, longShare: 0 }], ['target 50%, all short', { liquidityTarget: 0.5, longShare: 0 }],
+];
+const CAPITAL = [
+  ['target 10.5%, carry on', { capitalTarget: 0.105, capitalAction: 2 }], ['target 12.5%, carry on', { capitalTarget: 0.125, capitalAction: 2 }],
+  ['target 12.5%, raise 300', { capitalTarget: 0.125, capitalAction: 0, raiseAmount: 300 }], ['target 12.5%, sell mortgages', { capitalTarget: 0.125, capitalAction: 1 }],
+  ['target 18%, raise 300', { capitalTarget: 0.18, capitalAction: 0, raiseAmount: 300 }], ['target 18%, raise 1000', { capitalTarget: 0.18, capitalAction: 0, raiseAmount: 1000 }],
+  ['target 25%, raise 1000', { capitalTarget: 0.25, capitalAction: 0, raiseAmount: 1000 }],
+];
+module.exports.areaRun = areaRun; module.exports.TREASURY = TREASURY; module.exports.CAPITAL = CAPITAL;
+for (const [flag, area, rows] of [['--treasury', 'treasury', TREASURY], ['--capital', 'capital', CAPITAL]]) {
+  if (require.main === module && process.argv.includes(flag)) {
+    console.log('\n' + area + ' policy');
+    for (const [name, v] of rows) { const r = areaRun(area, v); console.log('  ' + name.padEnd(28) + 'mean profit ' + r.mean.toFixed(1).padStart(8) + '  cap breaches ' + r.breaches.toFixed(2) + '  rating score ' + r.score.toFixed(1) + ' (worst tenth ' + r.p10.toFixed(1) + ')' + (r.failed ? '  failed ' + r.failed : '')); }
+  }
 }

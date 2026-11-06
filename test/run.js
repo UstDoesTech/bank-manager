@@ -86,7 +86,7 @@ for (const pol of ALL()) for (const seed of [3, 17]){
 //    the verdict separates good applications from bad using only what the applicant shows.
 { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 21 });
   const sys = JSON.parse(JSON.stringify(E.S.policy));
-  assert.strictEqual(JSON.stringify(sys.owner), '{"pricing":"system","credit":"system"}'); n++;
+  assert.strictEqual(JSON.stringify(sys.owner), '{"pricing":"system","credit":"system","treasury":"system","capital":"system"}'); n++;
   const refuses = (cmd, why) => { const snap = JSON.stringify(E.S.policy); assert.throws(() => E.dispatch(cmd), why); assert.strictEqual(JSON.stringify(E.S.policy), snap); n++; };
   refuses({ type: 'setPolicy', area: 'pricing', values: { cardRate: 5 } }, /not unlocked/);
   refuses({ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 99 } }, /not unlocked/);
@@ -118,12 +118,12 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   for (const seed of [4, 8, 15, 16, 23, 42]) for (const bot of ['careful', 'greedy']){
     const a = play(loadEngine(src), seed, bot, 3), S = a.S, strong = (S.career || []).filter(c => ['AAA', 'AA', 'A'].includes(c.letter)).length;
     const unlocked = S.progress.unlocked.filter(x => x !== 'branch');
-    assert.strictEqual(unlocked.length, Math.min(2, strong), 'unlock count should follow strong years: ' + bot + seed);
-    assert.strictEqual(JSON.stringify(unlocked), JSON.stringify(['pricing', 'credit'].slice(0, unlocked.length)));
+    assert.strictEqual(unlocked.length, Math.min(4, strong), 'unlock count should follow strong years: ' + bot + seed);
+    assert.strictEqual(JSON.stringify(unlocked), JSON.stringify(['pricing', 'credit', 'treasury', 'capital'].slice(0, unlocked.length)));
     // the letter arrives with the unlock (the inbox only keeps the latest 60 messages, so check at the moment it happens)
     { const R = loadEngine(src); for (const cmd of a.cmds){ const k = R.S ? R.S.progress.unlocked.length : 0; R.dispatch(cmd);
         if (cmd.type === 'nextYear' && R.S.progress.unlocked.length > k) assert(R.S.inbox.some(m => m.from === 'The board' && /is yours/.test(m.subject) && !m.read), 'briefing letter on unlock'); } }
-    granted += unlocked.length; withheld += 2 - unlocked.length; n++;
+    granted += unlocked.length; withheld += 4 - unlocked.length; n++;
   }
   assert(granted > 0 && withheld > 0, 'need both strong and weak outcomes in the sample: ' + granted + '/' + withheld); n++; }
 // 10. Dearer mortgages lose customers: at four points over the system spread far less is lent, and what is lent is riskier.
@@ -159,4 +159,35 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   const sysP = run({}), looseP = run({ mortgageMaxLtv: 95, mortgageMaxLti: 6.5, mortgageMaxAff: 0.6, mortgageMinScore: 400, personalMinScore: 400, personalMaxDebtRatio: 1.2 }),
     wildP = run({ mortgageMaxLtv: 100, mortgageMaxLti: 8, mortgageMaxAff: 0.8, mortgageMinScore: 300, personalMinScore: 300, personalMaxDebtRatio: 2 });
   assert(sysP > looseP && sysP > wildP && wildP < 0, 'system policy should beat loose and reckless: ' + [sysP, looseP, wildP]); n++; }
+// 12. Treasury and capital by policy: the cards stop when the player owns the area, the standing rules act, the books
+//     still balance (play runs with the strict ledger), and a replay reproduces the game.
+{ const unlockAll = (run, e, area, values) => { e.S.progress.unlocked.push('pricing', 'credit', 'treasury', 'capital'); run({ type: 'setPolicy', area, values }); };
+  const seen = (subject, area, values, seeds = [2, 5, 8, 11]) => { let k = 0;
+    for (const seed of seeds){ const E = loadEngine(src); const a = play(E, seed, 'careful', 2, {}, (run, e) => unlockAll(run, e, area, values)); 
+      // replay, counting the mails as they arrive (the inbox only keeps the latest 60)
+      const R = loadEngine(src); let last = 0;
+      for (const cmd of a.cmds){ if (cmd.type === 'setPolicy') R.S.progress.unlocked.push('pricing', 'credit', 'treasury', 'capital'); R.dispatch(cmd);
+        for (const m of R.S.inbox) if (m.id > last && m.subject === subject) k++; last = R.S.mailId; }
+      assert.strictEqual(hashState(R.S, []), hashState(a.S, []), 'replay ' + area); }
+    return k; };
+  assert(seen('Surplus cash invested', 'treasury', { liquidityTarget: 0.1, longShare: 0.5 }) > 0, 'surplus is invested'); n++;
+  assert(seen('Gilts sold to restore cash', 'treasury', { liquidityTarget: 0.5, longShare: 1 }) > 0, 'gilts are sold to restore the cash target'); n++;
+  assert(seen('Capital below target', 'capital', { capitalTarget: 0.25, capitalAction: 0, raiseAmount: 200 }) > 0, 'capital action fires'); n++;
+  { const E = loadEngine(src); const a = play(E, 5, 'careful', 2, {}, (run, e) => unlockAll(run, e, 'capital', { capitalTarget: 0.25, capitalAction: 2 }));
+    assert(!(a.S.injected > 0) && a.S.inbox.every(m => m.subject !== 'Capital below target' || /took no action/.test(m.body)), 'carry on raises nothing'); n++; }
+  // while the executive team owns an area the old cards still come
+  { const kinds = new Set(); for (const seed of [2, 5, 8, 11]){ const E = loadEngine(src); E.dispatch({ type: 'newGame', seed });
+      for (let m = 0; m < 12 && !E.S.over; m++){ for (const c of E.S.queue) kinds.add(c.kind); for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[c.opts.length - 1].k }); E.dispatch({ type: 'closeMonth' }); } }
+    assert(kinds.has('treasury'), 'treasury cards under the system policy'); n++; }
+  { const kinds = new Set(); for (const seed of [2, 5, 8, 11]){ const E = loadEngine(src); E.dispatch({ type: 'newGame', seed }); E.S.progress.unlocked.push('treasury', 'capital'); E.dispatch({ type: 'setPolicy', area: 'treasury', values: {} }); E.dispatch({ type: 'setPolicy', area: 'capital', values: {} });
+      for (let m = 0; m < 12 && !E.S.over; m++){ if (m > 0) for (const c of E.S.queue) kinds.add(c.kind); for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[c.opts.length - 1].k }); E.dispatch({ type: 'closeMonth' }); } }
+    assert(!kinds.has('treasury') && !kinds.has('capital'), 'no treasury or capital cards once the player owns them'); n++; }
+  // an old save with no treasury or capital policy gets them on migrate
+  { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 3 }); const old = JSON.parse(JSON.stringify(E.S)); delete old.policy.treasury; delete old.policy.capital; delete old.policy.owner.treasury; delete old.policy.owner.capital;
+    const m = loadEngine(src).migrate(old); assert.strictEqual(m.policy.owner.capital, 'system'); assert.strictEqual(m.policy.treasury.liquidityTarget, 0.2); n++; }
+  // cut-offs are range-checked
+  { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 3 }); E.S.progress.unlocked.push('treasury', 'capital');
+    assert.throws(() => E.dispatch({ type: 'setPolicy', area: 'treasury', values: { liquidityTarget: 0.01 } }), /between/);
+    assert.throws(() => E.dispatch({ type: 'setPolicy', area: 'capital', values: { capitalTarget: 0.05 } }), /between/); n++; }
+}
 console.log('ok', n, 'checks');
