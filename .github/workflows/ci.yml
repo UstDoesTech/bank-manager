@@ -1,0 +1,36 @@
+# Engine checks, server tests and the browser test against a throwaway Postgres, plus the Docker image and the Bicep.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      db:
+        image: postgres:17-alpine
+        env: { POSTGRES_USER: bank, POSTGRES_PASSWORD: bank, POSTGRES_DB: bank }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U bank -d bank" --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:server
+      - run: npm run test:browser         # uses the Chrome that ships on the runner
+      - name: Check the Bicep
+        run: az bicep build --file infra/main.bicep --stdout >/dev/null
+      - name: Build the image and start it
+        run: |
+          docker build -t bank-manager .
+          docker run -d --name bm --network host -e DATABASE_URL=postgres://bank:bank@localhost:5432/bank bank-manager
+          for i in $(seq 1 30); do curl -fs localhost:8080/healthz && break; sleep 1; done
+          curl -fs localhost:8080/healthz

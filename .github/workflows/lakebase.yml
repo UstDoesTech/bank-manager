@@ -1,0 +1,53 @@
+# Creates the Lakebase project and database for Bank Manager. Needs the DATABRICKS_* secrets (a workspace-admin
+# service principal). Safe to run again. Results are annotations.
+name: lakebase
+on:
+  workflow_dispatch:
+    inputs:
+      project_id: { default: bank-manager }
+      database: { default: bank }
+permissions:
+  contents: read
+env:
+  DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+  DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+  DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+  PROJECT: ${{ inputs.project_id || 'bank-manager' }}
+  DB: ${{ inputs.database || 'bank' }}
+jobs:
+  lakebase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - name: Create the project
+        run: |
+          set +e
+          if databricks postgres get-project "projects/$PROJECT" >/dev/null 2>&1; then
+            echo "::notice title=project::projects/$PROJECT already exists"; exit 0
+          fi
+          out=$(databricks postgres create-project "$PROJECT" --json '{"spec":{"display_name":"Bank Manager"}}' -o json 2>&1)
+          code=$?
+          echo "::notice title=create-project exit=${code}::$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-1500)"
+          exit $code
+      - name: Branch, endpoint and databases
+        run: |
+          B=$(databricks postgres list-branches "projects/$PROJECT" -o json | jq -r '.[]|select(.name|endswith("/production"))|.name')
+          E=$(databricks postgres list-endpoints "$B" -o json | jq -r '.[0].name')
+          H=$(databricks postgres get-endpoint "$E" -o json | jq -r '.status.hosts.host')
+          echo "$B" > "$RUNNER_TEMP/branch"
+          echo "::notice title=lakebase::branch=$B endpoint=$E host=$H"
+      - name: Create the database
+        run: |
+          set +e
+          B=$(cat "$RUNNER_TEMP/branch")
+          if databricks postgres list-databases "$B" -o json | jq -e --arg d "$DB" '.[]|select(.status.postgres_database==$d)' >/dev/null; then
+            echo "::notice title=database::$DB already exists"; exit 0
+          fi
+          roles=$(databricks postgres list-roles "$B" -o json 2>&1)
+          role=$(printf '%s' "$roles" | jq -r --arg c "$DATABRICKS_CLIENT_ID" '[.[]|select(.status.postgres_role==$c)][0].name // empty')
+          [ -n "$role" ] || role=$(printf '%s' "$roles" | jq -r '.[0].name')
+          out=$(databricks postgres create-database "$B" --database-id "$DB" --json "{\"spec\":{\"postgres_database\":\"$DB\",\"role\":\"$role\"}}" -o json 2>&1)
+          code=$?
+          echo "::notice title=create-database exit=${code}::$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-1500)"
+          exit $code

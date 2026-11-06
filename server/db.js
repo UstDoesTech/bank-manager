@@ -2,8 +2,15 @@
 const fs = require('fs'), path = require('path');
 const { Pool } = require('pg');
 
-function createPool(url) {
-  return new Pool({ connectionString: url, max: 10 });
+// Local and tests: a plain connection string. On Azure: LAKEBASE_ENDPOINT is set and the password is a short-lived
+// credential for the app's service principal (see lakebase.js).
+function createPool(url, env = process.env) {
+  if (!env.LAKEBASE_ENDPOINT) return new Pool({ connectionString: url, max: 10 });
+  const { tokenSource } = require('./lakebase');
+  const password = tokenSource({ host: env.DATABRICKS_HOST, clientId: env.DATABRICKS_CLIENT_ID,
+    clientSecret: env.DATABRICKS_CLIENT_SECRET, endpoint: env.LAKEBASE_ENDPOINT });
+  return new Pool({ host: env.PGHOST, database: env.PGDATABASE, user: env.DATABRICKS_CLIENT_ID, password: () => password(),
+    port: 5432, ssl: { rejectUnauthorized: true }, max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 15000 });
 }
 
 // Runs db/migrations/*.sql in order, once each, under an advisory lock so two servers starting together are safe.

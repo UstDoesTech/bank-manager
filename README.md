@@ -59,8 +59,30 @@ After changing `engine/engine.js`, run `npm run build` so the page picks it up. 
 **Financial literacy.** (1) The year-end screen says that default rates are about three times real-world levels and time is compressed. (2) `makeDebrief()` writes three to five notes at each year end, each tagged with its PISA area and the Lusardi and Mitchell question, ranked so that ideas not yet seen come first; the player reads them from the year-end screen or skips them. (3) Games started from the page's New game button have seven recurring households (`S.households`, only when `opts.households` is set, so tutorials, scenarios and the golden games are unchanged): their money moves each month with unemployment and life events, with the loans the player gives them, and with missed payments and overdraft fees; about a third of mortgage, personal and card applications come from them, with a note on what happened last time; a Customers panel shows each household's budget bar, emergency fund and credit score line, and a name on a document opens it. The cast and each closed month are stored in `bank.household` and `bank.household_month` (migration 005). (4) A five-question check (interest, inflation, diversification, mortgage cost, bond prices) is offered before the first recorded game and again after each year played, from the year-end screen. `server/literacy.js` holds the questions and the answer key, so the page never sees it. Results go in `bank.literacy_check` keyed by the opaque player key (migration 006) and are removed when the player is deleted. Views `literacy_progress`, `literacy_by_concept` and `literacy_with_play` exclude players who keep their games out of analysis, and `db/analysis/literacy.sql` has the example queries (a test runs each one).
 - Reading a message is not sent: it changes no money. The server accepts a `read` command, but the page skips it.
 
+## Deploying to Azure (Container Apps and Lakebase)
+
+Same pattern as the p-doom human app. Nothing here has been run against Azure or Databricks yet; CI checks the Bicep
+syntax and builds the image.
+
+| Thing | Value |
+| --- | --- |
+| Registry, Container Apps environment, resource group | the playground's existing `builtonplayground`, `managedEnvironment-rgpersonalnustu-b3e2`, `rg-personal-n-ust-ust-built-on-playground`. Nothing new is created but a managed identity, its AcrPull role and the app (`infra/main.bicep`). |
+| Database | Databricks Lakebase, project `bank-manager`, database `bank`, created by the `lakebase` workflow. |
+| App sign-in to Postgres | a dedicated service principal. The server asks Databricks for a one-hour database credential and renews it after 45 minutes (`server/lakebase.js`; set `LAKEBASE_ENDPOINT`, `PGHOST`, `PGDATABASE` and the `DATABRICKS_*` login). |
+| Schema changes | applied by the deploy as the admin service principal (`node server/migrate.js`). The app runs with `MIGRATE=off` and its role can read and write the `account` and `bank` schemas but cannot change them. |
+
+First-time order: run the `lakebase` workflow, then `deploy` with `deploy=true`. The deploy applies the migrations, creates the
+app's Postgres role, builds the image in the registry, rolls out the Bicep and runs `scripts/smoke.sh` against the live URL
+(register, confirm, sign in, start a game, delete the test player). Secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+`AZURE_SUBSCRIPTION_ID`, `DATABRICKS_HOST`, `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET` (admin), and
+`BANK_DATABRICKS_CLIENT_ID`, `BANK_DATABRICKS_CLIENT_SECRET` (the app's own service principal, which must be allowed to
+request Lakebase credentials for the project; the workflow does not grant that). `ci` runs all the tests on every push.
+
+Not done: there is no email service, so on Azure the confirmation link is still only in `account.outbox` (the smoke test reads
+it from there). Replace `server/mailer.js` with Azure Communication Services before real players sign up.
+
 ## Things to know
 
 - Game state is stored as `json`, not `jsonb`. Postgres `jsonb` reorders keys and the engine sums floating-point numbers in key order, so a reloaded game could differ by a rounding error from a replayed one.
 - The page does not hide a case's hidden truth from the player, since it plays on its own engine. That is fine for a single-player game but would need changing before any competitive mode.
-- Not built yet: the Azure deployment, Lakebase (it will be a different `DATABASE_URL` and the same migrations), the Azure email service (replace `server/mailer.js`), and the security-holding and hedge tables, which need the treasury work in a later step.
+- Not built yet: the Azure email service (replace `server/mailer.js`), and the security-holding and hedge tables, which need the treasury work in a later step.
