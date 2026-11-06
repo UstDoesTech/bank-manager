@@ -4,7 +4,7 @@ const fs = require('fs'), { loadEngine, play, hashState, ALL } = require('./harn
 const html = fs.readFileSync(process.argv[2], 'utf8');
 const a = html.indexOf('<script id="engine">') + '<script id="engine">'.length, b = html.indexOf('</script>', a);
 const E = loadEngine(html.slice(a, b));
-const IGNORE = ['engine', 'progress', 'inbox', 'mailId'];   // fields added after the original engine
+const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger'];   // fields added after the original engine
 const out = {};
 const add = (bot, seed, opts, tag) => { const { S } = play(E, seed, bot, 3, opts); out[`${bot}:${tag}:${seed}`] = hashState(S, IGNORE); };
 E.dispatch ? E.dispatch({ type: 'newGame', seed: 1 }) : E.newGame(1);

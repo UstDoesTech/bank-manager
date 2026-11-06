@@ -464,11 +464,50 @@ function takeHome(incK){ return incK * 0.72 / 12; }
 function minPayYears(balK, apr){ let b = balK * 1000, n = 0; const r = apr / 1200; while (b > 0.5 && n < 720){ const pay = Math.min(b * (1 + r), Math.max(b * r + b * 0.01, 25)); b = b * (1 + r) - pay; n++; } return n / 12; }
 function say(t, tone){ if (OUT) OUT.lines.push({ t, tone: tone || '' }); }
 function chip(t, c){ if (OUT) OUT.chips.push({ t, c }); }
-function post(key, amt){ S.cash += amt; S.pl[key] += amt; }
+/* ================= LEDGER =================
+   Every change to a balance is a journal entry whose lines sum to zero. Lines are [account, signed amount]:
+   positive = debit, negative = credit. Amounts are £ thousands (converted to whole pence when stored).
+   Accounts: assets cash, gilts (book value), legacy, loans; liabilities deposits, cb (Bank of England);
+   equity.opening, equity.paidin; income and expense pl.<key> (one per profit-and-loss line).
+   S.ledger holds running balances only; entries are streamed to LEDGER_SINK (the game server stores them). */
+var LEDGER_SINK = null, LEDGER_STRICT = false;
+const LEDGER_DIR = { cash:1, legacy:1, deposits:-1, cb:-1 };   // accounts mirrored by a plain state field
+function je(memo, lines, opts){
+  let sum = 0; for (const l of lines) sum += l[1];
+  if (!(Math.abs(sum) < 1e-6)){ if (LEDGER_STRICT) throw new Error('unbalanced journal entry ' + memo + ': ' + sum); }
+  const L = S.ledger, ledgerOnly = opts && opts.ledgerOnly;
+  for (const [a, d] of lines){
+    L.bal[a] = (L.bal[a] || 0) + d;
+    if (ledgerOnly) continue;
+    if (a in LEDGER_DIR) S[a] += LEDGER_DIR[a] * d;
+    else if (a.startsWith('pl.')) S.pl[a.slice(3)] -= d;
+  }
+  L.n++;
+  if (LEDGER_SINK) LEDGER_SINK({ seq: L.n, year: S.year, month: S.month, memo, lines });
+}
+// Posts the current position as one opening entry; equity.opening is the balancing figure.
+function openLedger(memo){
+  if (!S.ledger) S.ledger = { bal:{}, n:0 };
+  const a = [['cash', S.cash], ['gilts', giltBook()], ['legacy', S.legacy], ['loans', loanSum()], ['deposits', -S.deposits], ['cb', -S.cb]];
+  je(memo || 'opening', a.concat([['equity.opening', -a.reduce((t, l) => t + l[1], 0)]]), { ledgerOnly:true });
+}
+// Compares the ledger with the live state; returns a list of problems (empty when everything agrees).
+function ledgerCheck(){
+  const L = S.ledger, bad = [], near = (x, y) => Math.abs(x - y) <= 1e-6 + 1e-9 * Math.abs(y);
+  const chk = (n, ledger, live) => { if (!near(ledger, live)) bad.push(`${n}: ledger ${ledger} vs state ${live}`); };
+  chk('cash', L.bal.cash || 0, S.cash); chk('legacy', L.bal.legacy || 0, S.legacy); chk('deposits', -(L.bal.deposits || 0), S.deposits); chk('cb', -(L.bal.cb || 0), S.cb);
+  chk('gilts', L.bal.gilts || 0, giltBook()); chk('loans', L.bal.loans || 0, loanSum());
+  const total = Object.values(L.bal).reduce((t, x) => t + x, 0);
+  if (!near(total, 0)) bad.push('ledger does not sum to zero: ' + total);
+  const eq = -Object.keys(L.bal).filter(a => a.startsWith('equity.') || a.startsWith('pl.')).reduce((t, a) => t + L.bal[a], 0);
+  chk('equity', eq, capital());
+  return bad;
+}
+function post(key, amt){ je('pl.' + key, [['cash', amt], ['pl.' + key, -amt]]); }
 function money(key, amt, label){ post(key, amt); chip((label ? label + ' ' : '') + fmt(amt, true), amt >= 0 ? 'good' : 'bad'); }
 function dT(d){ d = Math.round(d); if (!d) return; S.trust = clamp(S.trust + d, 0, 100); chip('Customers ' + (d > 0 ? '+' : '−') + Math.abs(d), d > 0 ? 'good' : 'bad'); }
 function dC(d){ d = Math.round(d); if (!d) return; S.comp = clamp(S.comp + d, 0, 100); chip('Regulator ' + (d > 0 ? '+' : '−') + Math.abs(d), d > 0 ? 'good' : 'bad'); }
-function depMove(x){ S.deposits += x; S.cash += x; chip('Deposits ' + fmt(x, true), x >= 0 ? 'good' : 'bad'); }
+function depMove(x){ je('deposit.flow', [['cash', x], ['deposits', -x]]); chip('Deposits ' + fmt(x, true), x >= 0 ? 'good' : 'bad'); }
 function later(n, data){ S.pending.push(Object.assign({ due: S.month + n }, data)); }
 function person(a, b){ return { name: pick(FIRST) + ' ' + pick(LAST), age: ri(a, b), hue: Math.round(R() * 1000) / 1000 }; }
 const first = n => n.split(' ')[0];
@@ -483,9 +522,9 @@ function analyst(pd){ if (!S.up || !S.up.analyst) return null; const v = pd * Ma
 /* loans */
 function book(o){
   const l = Object.assign({ id: S.nextId++, status: 'current', m0: S.month, carded: false, hpi0: hpi() }, o);
-  S.cash -= l.bal; S.loans.push(l); S.stats.loans++; S.stats.lent += l.bal;
+  je('loan.originate', [['loans', l.bal], ['cash', -l.bal]]); S.loans.push(l); S.stats.loans++; S.stats.lent += l.bal;
   chip('Lent ' + fmt(l.bal), 'neutral');
-  const kept = l.bal * (RETAIN[l.kind] || 0.2); S.deposits += kept; S.cash += kept; chip('Deposit created ' + fmt(kept, true), 'neutral');
+  const kept = l.bal * (RETAIN[l.kind] || 0.2); je('deposit.created', [['cash', kept], ['deposits', -kept]]); chip('Deposit created ' + fmt(kept, true), 'neutral');
   if (!S.flags.seenCreate){ S.flags.seenCreate = true; say(`Lending created a new deposit of ${full(l.bal)} in the borrower's account. As they spend it, most moves to other banks and takes your reserves with it. ${full(kept)} is still with you.`); }
   return l;
 }
@@ -496,7 +535,7 @@ function recovery(l){
 }
 function writeOff(l, rec){
   rec = clamp(rec, 0, l.bal); const loss = l.bal - rec;
-  S.cash += rec; S.pl.losses -= loss; S.loans = S.loans.filter(x => x !== l); S.stats.defaults++; S.stats.losses += loss;
+  je('loan.writeoff', [['cash', rec], ['pl.losses', loss], ['loans', -l.bal]]); S.loans = S.loans.filter(x => x !== l); S.stats.defaults++; S.stats.losses += loss;
   return loss;
 }
 function mRate(ltv){ return Math.round((S.base + 1.05 + (ltv > 90 ? 0.7 : ltv > 85 ? 0.4 : ltv > 75 ? 0.15 : 0)) * 100) / 100; }
@@ -782,11 +821,11 @@ res.treasury = (c, k) => {
   const amt = c.h.amt;
   if (k === 'cash'){ say('Cash stays at the Bank of England, earning Bank Rate.'); return; }
   const y = giltYield(k);
-  S.cash -= amt; S.gilts.push({ kind:k, amt, coupon:y, dur: k === 'long' ? 8.2 : 1.9, y0:y });
+  je('gilts.buy', [['gilts', amt], ['cash', -amt]]); S.gilts.push({ kind:k, amt, coupon:y, dur: k === 'long' ? 8.2 : 1.9, y0:y });
   chip(`Gilts +${fmt(amt)}`, 'neutral'); say(`Bought ${full(amt)} of ${k === 'long' ? '10' : '2'}-year gilts at ${y.toFixed(2)}%.`);
 };
 
-function sellGilts(){ const mv = giltMV(), bk = giltBook(); S.gilts = []; S.cash += mv; S.pl.gilts += (mv - bk); if (mv - bk < -0.5) S.stats.giltLoss = (S.stats.giltLoss || 0) + 1; return mv - bk; }
+function sellGilts(){ const mv = giltMV(), bk = giltBook(); je('gilts.sell', [['cash', mv], ['gilts', -bk], ['pl.gilts', bk - mv]]); S.gilts = []; if (mv - bk < -0.5) S.stats.giltLoss = (S.stats.giltLoss || 0) + 1; return mv - bk; }
 gen.liqshock = () => {
   const out = Math.round(S.deposits * rf(0.07, 0.13) * (1.4 - S.trust / 100) * (P().liqMult || 1));
   const t = pick([
@@ -806,7 +845,7 @@ res.liqshock = (c, k) => {
   depMove(-out);
   if (k === 'pay') say(`${full(out)} paid out from reserves.`);
   if (k === 'gilts'){ const g = sellGilts(); say(`Gilts sold. ${g < -0.5 ? `Rates have moved since you bought them: a ${fmt(-g)} loss is now real.` : 'Sold at about what you paid.'}`, g < -0.5 ? 'bad' : ''); if (Math.abs(g) > 0.5) chip('Gilt sale ' + fmt(g, true), g >= 0 ? 'good' : 'bad'); }
-  if (k === 'boe'){ S.cb += out; S.cash += out; S.stats.boe++; chip('Bank of England loan ' + fmt(out), 'neutral'); say(`The Bank of England lends you ${full(out)} against your loan book, at Bank Rate plus 1%.`); }
+  if (k === 'boe'){ je('boe.draw', [['cash', out], ['cb', -out]]); S.stats.boe++; chip('Bank of England loan ' + fmt(out), 'neutral'); say(`The Bank of England lends you ${full(out)} against your loan book, at Bank Rate plus 1%.`); }
 };
 
 gen.funding = () => {
@@ -819,7 +858,7 @@ res.funding = (c, k) => {
   const need = c.h.need;
   if (k === 'raise'){ S.savRate = Math.round((S.savRate + 0.4) * 100) / 100; say(`Savings rate now ${S.savRate.toFixed(2)}%. New money should follow over the coming months.`); chip(`Savings ${S.savRate.toFixed(2)}%`, 'neutral'); }
   if (k === 'bond'){ money('costs', -15, 'Marketing'); depMove(need); S.savRate = Math.round((S.savRate + 0.15) * 100) / 100; say('Savers lock in for a year. Your average funding cost edges up.'); }
-  if (k === 'boe'){ S.cb += need; S.cash += need; S.stats.boe++; chip('Bank of England loan ' + fmt(need), 'neutral'); say('Borrowed at Bank Rate plus 1%. Repaid automatically when liquidity recovers.'); }
+  if (k === 'boe'){ je('boe.draw', [['cash', need], ['cb', -need]]); S.stats.boe++; chip('Bank of England loan ' + fmt(need), 'neutral'); say('Borrowed at Bank Rate plus 1%. Repaid automatically when liquidity recovers.'); }
   if (k === 'none') say('No change.');
 };
 
@@ -1042,9 +1081,9 @@ gen.capital = () => {
     fields:[ F('Capital', full(capital())), F('Risk-weighted assets', full(rwa()), 'Capital ratio'), F('Capital ratio', pc(capRatio()), 'Capital ratio'), F('Profit so far this year', fmt(metrics().profit, true)) ], opts, h:{} });
 };
 res.capital = (c, k) => {
-  if (k === 'raise'){ news(5, `Counting House asks shareholders for ${fmt(300)}`, 'The bank says it needs more capital to keep lending.'); S.cash += 300; S.injected = (S.injected || 0) + 300; chip('Capital +' + fmt(300), 'good'); say('Shareholders put in more money. Your profit is now shared across more shares, so each one earns less.'); }
+  if (k === 'raise'){ news(5, `Counting House asks shareholders for ${fmt(300)}`, 'The bank says it needs more capital to keep lending.'); je('equity.issue', [['cash', 300], ['equity.paidin', -300]]); S.injected = (S.injected || 0) + 300; chip('Capital +' + fmt(300), 'good'); say('Shareholders put in more money. Your profit is now shared across more shares, so each one earns less.'); }
   if (k === 'sell'){ const ms = S.loans.filter(l => l.kind === 'mortgage' && l.status === 'current').sort((a, b) => b.bal - a.bal); let sold = 0, target = ms.reduce((a, l) => a + l.bal, 0) / 2;
-    for (const l of ms){ if (sold >= target) break; sold += l.bal; S.cash += l.bal * 0.97; S.pl.gilts -= l.bal * 0.03; S.loans = S.loans.filter(x => x !== l); }
+    for (const l of ms){ if (sold >= target) break; sold += l.bal; je('loan.sell', [['cash', l.bal * 0.97], ['pl.gilts', l.bal * 0.03], ['loans', -l.bal]]); S.loans = S.loans.filter(x => x !== l); }
     chip('Mortgages sold ' + fmt(sold), 'neutral'); chip('Loss on sale ' + fmt(-sold * 0.03), 'bad'); say(`Another bank buys ${full(sold)} of mortgages. Less risk on your books, less interest coming in.`); }
   if (k === 'none') say('No action. The regulator will be watching the next set of numbers.');
 };
@@ -1110,11 +1149,12 @@ function newGame(seed, opts = {}){
     trust:60, comp:80, flags:{}, queue:[], qi:0, pending:[], pl:blankPL(), last:null, history:[], over:null, nextId:1,
     lastTreasury:-9, prodOrder:[], prodUsed:[], sched:{}, y0:{ base:4, u:4.3, h:1 }, career:[], divPaid:0, wm:null, wmOffer:2, mkt:100, mktY0:100, mktHist:[100], lastMkt:0,
     stats: freshStats(), up:{}, news:[], tutorial: !!opts.tutorial, scenario: opts.scenario || null,
-    engine:ENGINE_VERSION, progress:{ unlocked:['branch'] } };
+    engine:ENGINE_VERSION, progress:{ unlocked:['branch'] }, ledger:{ bal:{}, n:0 } };
   S.path = pick(['soft', 'sticky', 'downturn']);
   S.prodOrder = shuffle(['fraudModel','ob','od','branch','cyber','campaign']).concat(shuffle(['broker','ggs']));
   if (S.scenario){ const sc = SCENARIOS[S.scenario]; S.path = 'sc'; S.year = sc.year; S.tutorial = false; S.sched = makeSched(); sc.setup(); S.goals = sc.goals.map(g => ({ id:g.id, label:g.label, ok:null })); }
   else S.sched = makeSched();
+  openLedger('opening');
   S.startCap = capital();
   S.stats.minCap = capRatio();
   buildMonth();
@@ -1143,7 +1183,7 @@ function nextYear(){
   S.sched = makeSched();
   buildMonth();
 }
-function migrate(s){ if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { welcomeMail(); } finally { S = keep; } return s; }
+function migrate(s){ if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
 function buildMonth(){
   const m = S.month, lead = [], other = [];
   S.pl = blankPL();
@@ -1203,13 +1243,13 @@ function closeMonth(){
   // older book (variable rate)
   S.legacyRate = S.base + 2.0;
   post('intLoans', S.legacy * S.legacyRate / 1200);
-  const am = S.legacy * 0.008; S.legacy -= am; S.cash += am;
-  const ll = S.legacy * 0.0004 * u; S.legacy -= ll; S.pl.losses -= ll;
+  const am = S.legacy * 0.008; je('legacy.repay', [['cash', am], ['legacy', -am]]);
+  const ll = S.legacy * 0.0004 * u; je('legacy.loss', [['legacy', -ll], ['pl.losses', ll]]);
   // new loans
   for (const l of [...S.loans]){
     if (l.status === 'current'){
       post('intLoans', l.bal * l.rate / 1200);
-      const a = l.bal * AMORT[l.kind]; l.bal -= a; S.cash += a;
+      const a = l.bal * AMORT[l.kind]; je('loan.repay', [['cash', a], ['loans', -a]]); l.bal -= a;
       const pm = (1 - Math.pow(1 - l.pd, 1 / 12)) * AMP * u * (1 + Math.max(0, S.base - S.y0.base) * (P().stress || 0));
       if (l.m0 !== m && R() < pm){ l.status = 'arrears'; l.since = m; l.carded = false; ev(`${l.name} fell behind on their ${KNAME[l.kind]}.`, 'bad'); }
     } else if (l.status === 'plan'){
@@ -1232,7 +1272,7 @@ function closeMonth(){
   }
   // deposit flows
   const fr = clamp(-((P().drain || [])[m] || 0) + 0.012 * (S.savRate - mkt()) + 0.0005 * (S.trust - 55) + (owned('refurb') ? 0.0025 : 0) + (owned('app') ? 0.003 : 0) + gauss(0, 0.003), -0.04, 0.03);
-  const flow = S.deposits * fr; S.deposits += flow; S.cash += flow;
+  const flow = S.deposits * fr; je('deposit.flow', [['cash', flow], ['deposits', -flow]]);
   if (Math.abs(flow) >= 10) ev(`Deposits ${flow > 0 ? 'grew' : 'fell'} by ${fmt(Math.abs(flow))}${S.savRate - mkt() > 0.3 && flow > 0 ? ': your savings rate is drawing money in' : S.savRate < mkt() - 0.3 && flow < 0 ? ': savers are finding better rates elsewhere' : ''}.`, flow > 0 ? 'good' : 'bad');
   // delayed consequences
   const due = S.pending.filter(p => p.due <= m); S.pending = S.pending.filter(p => p.due > m);
@@ -1246,9 +1286,9 @@ function closeMonth(){
     ev(p.text + (p.cash ? ` (${fmt(p.cash, true)})` : ''), p.tone);
   }
   // funding plumbing
-  if (S.cash < 0){ const need = -S.cash + S.deposits * 0.05; S.cb += need; S.cash += need; S.trust = clamp(S.trust - 3, 0, 100); S.stats.emergency++; news(9, 'Counting House forced into emergency borrowing', 'The bank ran out of cash and turned to the Bank of England.'); ev(`You ran out of cash. Emergency borrowing from the Bank of England: ${fmt(need)}.`, 'bad'); }
-  else if (S.cb > 0 && liqRatio() > 0.2){ const rpy = Math.min(S.cb, S.cash - 0.15 * S.deposits); if (rpy > 0){ S.cb -= rpy; S.cash -= rpy; ev(`Repaid ${fmt(rpy)} to the Bank of England.`, 'good'); } }
-  if (S.trust <= 10){ const run = S.deposits * 0.25; S.deposits -= run; S.cash -= run; ev(`Customers have lost faith. ${fmt(run)} withdrawn in a week.`, 'bad'); if (S.cash < 0){ S.over = 'run'; } }
+  if (S.cash < 0){ const need = -S.cash + S.deposits * 0.05; je('boe.draw', [['cash', need], ['cb', -need]]); S.trust = clamp(S.trust - 3, 0, 100); S.stats.emergency++; news(9, 'Counting House forced into emergency borrowing', 'The bank ran out of cash and turned to the Bank of England.'); ev(`You ran out of cash. Emergency borrowing from the Bank of England: ${fmt(need)}.`, 'bad'); }
+  else if (S.cb > 0 && liqRatio() > 0.2){ const rpy = Math.min(S.cb, S.cash - 0.15 * S.deposits); if (rpy > 0){ je('boe.repay', [['cb', rpy], ['cash', -rpy]]); ev(`Repaid ${fmt(rpy)} to the Bank of England.`, 'good'); } }
+  if (S.trust <= 10){ const run = S.deposits * 0.25; je('deposit.run', [['deposits', run], ['cash', -run]]); ev(`Customers have lost faith. ${fmt(run)} withdrawn in a week.`, 'bad'); if (S.cash < 0){ S.over = 'run'; } }
   // checks
   const cr = capRatio(), lq = liqRatio();
   S.stats.minCap = Math.min(S.stats.minCap, cr);
@@ -1339,6 +1379,11 @@ function markRead(key){ const id = +key.slice(1); const it = key[0] === 'c' ? S.
 /* ---- command interface: the only way the outside world changes the game ----
    A game is fully defined by its seed, engine version and the ordered list of commands. */
 function dispatch(cmd){
+  const out = dispatchInner(cmd);
+  if (LEDGER_STRICT && S && S.ledger){ const bad = ledgerCheck(); if (bad.length) throw new Error('ledger check failed after ' + cmd.type + ': ' + bad.join('; ')); }
+  return out;
+}
+function dispatchInner(cmd){
   switch (cmd.type){
     case 'newGame': return newGame(cmd.seed, cmd.opts || {});
     case 'resolve': { const c = S.queue.find(x => x.id === cmd.id); return resolveCard(c, cmd.k); }
