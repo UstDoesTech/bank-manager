@@ -190,4 +190,38 @@ for (const pol of ALL()) for (const seed of [3, 17]){
     assert.throws(() => E.dispatch({ type: 'setPolicy', area: 'treasury', values: { liquidityTarget: 0.01 } }), /between/);
     assert.throws(() => E.dispatch({ type: 'setPolicy', area: 'capital', values: { capitalTarget: 0.05 } }), /between/); n++; }
 }
+// 13. Fair value and quiet months.
+{ // gilts at market value only for a treasury owner; the ledger follows, and handing treasury back returns to cost
+  const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 7 }); E.S.path = 'sticky';
+  const cost = E.S.gilts.reduce((a, g) => a + g.amt, 0);
+  assert(Math.abs(E.S.ledger.bal.gilts - cost) < 1e-9); n++;
+  E.S.progress.unlocked.push('treasury'); E.dispatch({ type: 'setPolicy', area: 'treasury', values: { liquidityTarget: 0.3, longShare: 1 } });
+  let moved = false;
+  for (let m = 0; m < 8 && !E.S.over; m++){ for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[c.opts.length - 1].k }); E.dispatch({ type: 'closeMonth' });
+    if (!E.S.over){ assert(Math.abs(E.S.ledger.bal.gilts - E.giltMV()) < 1e-6, 'ledger carries gilts at market value'); if (Math.abs(E.giltMV() - E.giltBook()) > 1) moved = true; } }
+  assert(moved, 'market value should move away from cost in a sticky year'); n++;
+  E.dispatch({ type: 'setPolicy', area: 'treasury', release: true });
+  assert(Math.abs(E.S.ledger.bal.gilts - E.giltBook()) < 1e-6, 'handed back: gilts return to cost'); n++; }
+{ // a treasury owner's capital drops when long gilts lose value; a non-owner's does not (until the gilts are sold)
+  const run = (own) => { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 9 }); E.S.path = 'sticky';
+    E.S.gilts = [{ kind: 'long', amt: 3000, coupon: 4.8, dur: 8.2, y0: 4.65 }];
+    // keep the ledger honest: restate the gilt balance and cash for the bigger holding
+    const d = 3000 - E.S.ledger.bal.gilts; E.S.cash -= d; E.S.ledger.bal.cash -= d; E.S.ledger.bal.gilts += d;
+    if (own){ E.S.progress.unlocked.push('treasury'); E.dispatch({ type: 'setPolicy', area: 'treasury', values: { liquidityTarget: 0.1, longShare: 1 } }); }
+    for (let m = 0; m < 10 && !E.S.over; m++){ for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[c.opts.length - 1].k }); E.dispatch({ type: 'closeMonth' }); }
+    return { cap: E.capRatio(), gap: E.giltBook() - E.giltMV() }; };
+  const a = run(false), b = run(true);
+  assert(a.gap > 10, 'rates rose so the gilts lost value: ' + a.gap); n++;
+  assert(b.cap < a.cap, 'fair value should lower capital after a loss in value: ' + [a.cap, b.cap]); n++; }
+{ // three quiet months after taking over an area: scheduled shocks move out of the window and come back after it
+  const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 13 });
+  E.S.sched.liq = [2]; E.S.sched.out = 1; E.S.sched.crash = 3;
+  E.S.progress.unlocked.push('pricing'); E.dispatch({ type: 'setPolicy', area: 'pricing', values: {} });
+  assert.strictEqual(E.quietLeft(), 4); assert(E.S.inbox.some(m => m.subject === 'Three quiet months')); n++;
+  assert(E.S.sched.liq.every(m => m >= 4) && E.S.sched.out >= 4 && E.S.sched.crash >= 4, 'shocks moved after the quiet months: ' + JSON.stringify(E.S.sched)); n++;
+  const kinds = []; for (let m = 1; m <= 5; m++){ for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[c.opts.length - 1].k }); E.dispatch({ type: 'closeMonth' }); kinds.push(E.S.queue.map(c => c.kind)); }
+  assert(!kinds.slice(0, 3).some(k => k.includes('liqshock') || k.includes('outage')), 'no liquidity shock or outage in the quiet months'); n++;
+  assert(kinds[3].includes('liqshock') || kinds[3].includes('outage'), 'the shocks arrive after the quiet months'); n++;
+  // taking over again does not restart it, and a second area gets its own quiet months
+  E.dispatch({ type: 'setPolicy', area: 'pricing', values: { cardRate: 25 } }); assert(E.quietLeft() <= 1); n++; }
 console.log('ok', n, 'checks');
