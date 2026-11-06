@@ -134,4 +134,29 @@ for (const pol of ALL()) for (const seed of [3, 17]){
     return { bal, pd: k ? pd / k : 0 }; };
   const sys = lent(1.05), dear = lent(5.05);
   assert(dear.bal < sys.bal * 0.5, 'dear mortgages should lose most of the volume: ' + dear.bal + ' vs ' + sys.bal); n++; }
+// 11. The desk by policy: off until the player takes over credit policy; then applications are decided by the policy,
+//     only referrals reach the counter, the books still balance, a replay agrees, and handing it back stops it.
+{ const take = (E, values = {}) => { E.S.progress.unlocked.push('pricing', 'credit'); E.dispatch({ type: 'setPolicy', area: 'credit', values }); };
+  const off = play(loadEngine(src), 12, 'careful', 1), on = loadEngine(src);
+  const a = play(on, 12, 'careful', 1, {}, (run, e) => { e.S.progress.unlocked.push('pricing', 'credit'); run({ type: 'setPolicy', area: 'credit', values: {} }); });
+  assert(!off.S.lastDesk, 'no desk without taking over'); assert(a.S.lastDesk && a.S.lastDesk.approved + a.S.lastDesk.declined > 0, 'desk decided applications'); n += 2;
+  assert(a.S.inbox.some(m => m.from === 'Credit team') || a.S.lastDesk, 'summary mail'); n++;
+  assert(a.S.stats.loans > off.S.stats.loans, 'the desk lends more than one branch counter'); n++;
+  // replay reproduces the game exactly with the desk on
+  const R = loadEngine(src); for (const cmd of a.cmds){ if (cmd.type === 'setPolicy'){ R.S.progress.unlocked.push('pricing', 'credit'); } R.dispatch(cmd); }
+  assert.strictEqual(hashState(R.S, []), hashState(a.S, [])); n++;
+  // the month's counter holds only referrals for loans
+  { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 31 }); take(E);
+    for (let m = 0; m < 4; m++){ for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' });
+      for (const c of E.S.queue.filter(c => (c.kind === 'mortgage' || c.kind === 'personal') && !c.done)) assert.strictEqual(E.policyVerdict(c), 'refer', 'only referrals reach the counter'); }
+    n++;
+    E.dispatch({ type: 'setPolicy', area: 'credit', release: true });
+    assert.strictEqual(E.S.policy.owner.credit, 'system'); assert.strictEqual(E.S.policy.credit.mortgageMaxLtv, 90); n++; }
+  // balance: the executive team's cut-offs beat both a loose and a reckless policy over the same games
+  const run = (values) => { let p = 0; for (const seed of [3, 6, 9, 12, 15, 18, 21, 24]){ const E = loadEngine(src);
+      const { S } = play(E, seed, 'careful', 2, {}, (r, e) => { e.S.progress.unlocked.push('pricing', 'credit'); r({ type: 'setPolicy', area: 'credit', values }); });
+      p += E.rating().profit + (S.career || []).reduce((t, c) => t + c.profit, 0); } return p; };
+  const sysP = run({}), looseP = run({ mortgageMaxLtv: 95, mortgageMaxLti: 6.5, mortgageMaxAff: 0.6, mortgageMinScore: 400, personalMinScore: 400, personalMaxDebtRatio: 1.2 }),
+    wildP = run({ mortgageMaxLtv: 100, mortgageMaxLti: 8, mortgageMaxAff: 0.8, mortgageMinScore: 300, personalMinScore: 300, personalMaxDebtRatio: 2 });
+  assert(sysP > looseP && sysP > wildP && wildP < 0, 'system policy should beat loose and reckless: ' + [sysP, looseP, wildP]); n++; }
 console.log('ok', n, 'checks');

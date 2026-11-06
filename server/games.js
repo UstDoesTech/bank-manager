@@ -41,7 +41,7 @@ function validate(state, cmd) {
     if (state.over) throw new HttpError(409, 'game_over', 'The year is over.');
     if (cmd.area !== 'pricing' && cmd.area !== 'credit') throw new HttpError(400, 'bad_command', 'Unknown policy area.');
     if (!state.progress.unlocked.includes(cmd.area)) throw new HttpError(403, 'not_unlocked', 'You do not control that policy yet.');
-    if (!cmd.values || typeof cmd.values !== 'object' || Array.isArray(cmd.values)) throw new HttpError(400, 'bad_command', 'Missing values.');
+    if (!cmd.release && (!cmd.values || typeof cmd.values !== 'object' || Array.isArray(cmd.values))) throw new HttpError(400, 'bad_command', 'Missing values.');
   } else if (cmd.type === 'read') {
     if (typeof cmd.key !== 'string' || !/^[cm]\d+$/.test(cmd.key)) throw new HttpError(400, 'bad_command', 'Bad message key.');
   }
@@ -52,7 +52,7 @@ function cleanCommand(cmd) {
   const out = { type: cmd.type };
   if (cmd.type === 'resolve') { out.id = cmd.id; out.k = cmd.k; }
   if (cmd.type === 'buy' || cmd.type === 'read') out.key = cmd.key;
-  if (cmd.type === 'setPolicy') { out.area = cmd.area; out.values = cmd.values; }
+  if (cmd.type === 'setPolicy') { out.area = cmd.area; out.values = cmd.values; if (cmd.release) out.release = true; }
   if (cmd.type === 'newGame') { out.seed = cmd.seed; out.opts = cmd.opts || {}; }
   return out;
 }
@@ -250,4 +250,4 @@ function register(app, { pool, host }) {
   });
 }
 
-module.exports = { register, toPence, validate };
+module.exports = { register, toPence, validate, cleanCommand };

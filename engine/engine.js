@@ -151,12 +151,12 @@ function writeOff(l, rec){
 function systemPolicy(){
   return {
     pricing: { mortgageSpread: 1.05, ltvAdd: [[90, 0.7], [85, 0.4], [75, 0.15]], mortgagePremium: 0.6, personalLow: 8.9, personalHigh: 18.9, cardRate: 24.9 },
-    credit: { mortgageMaxLtv: 90, mortgageMaxLti: 5, mortgageMaxAff: 0.45, mortgageMinScore: 520, personalMinScore: 540 },
+    credit: { mortgageMaxLtv: 90, mortgageMaxLti: 5, mortgageMaxAff: 0.45, mortgageMinScore: 520, personalMinScore: 620, personalMaxDebtRatio: 0.5 },
     owner: { pricing: 'system', credit: 'system' } };
 }
 const POLICY_LIMITS = {
   pricing: { mortgageSpread: [0, 6], mortgagePremium: [0, 3], personalLow: [0, 40], personalHigh: [0, 40], cardRate: [0, 40] },
-  credit: { mortgageMaxLtv: [50, 100], mortgageMaxLti: [2, 8], mortgageMaxAff: [0.2, 0.8], mortgageMinScore: [300, 900], personalMinScore: [300, 900] } };
+  credit: { mortgageMaxLtv: [50, 100], mortgageMaxLti: [2, 8], mortgageMaxAff: [0.2, 0.8], mortgageMinScore: [300, 900], personalMinScore: [300, 900], personalMaxDebtRatio: [0.2, 2] } };
 // Prices above the system's lose customers and attract riskier ones; at or below the system's nothing changes.
 // excess() is how many points a price is above the system price; dem() is the share of customers who still say yes;
 // adv() scales default risk for the customers who do. No random draw happens at the system prices.
@@ -178,10 +178,11 @@ function grantUnlock(r){
   S.progress.unlocked.push(next);
   addMail('The board', BRIEFING[next][0], BRIEFING[next][1], 'good', 0, S.year);
 }
-function setPolicy(area, values){
+function setPolicy(area, values, release){
   const lim = POLICY_LIMITS[area];
   if (!lim) throw new Error('unknown policy area ' + area);
   if (!S.progress.unlocked.includes(area)) throw new Error(area + ' policy is not unlocked');
+  if (release){ S.policy[area] = systemPolicy()[area]; S.policy.owner[area] = 'system'; return S.policy[area]; }   // hand the area back to the executive team
   if (!values || typeof values !== 'object') throw new Error('no values');
   for (const [k, v] of Object.entries(values)){
     if (!lim[k]) throw new Error('unknown setting ' + k);
@@ -200,7 +201,13 @@ function policyVerdict(c){
     if (m.ltv > cp.mortgageMaxLtv - 5 || lti > cp.mortgageMaxLti - 0.5 || m.aff > cp.mortgageMaxAff - 0.05 || score < cp.mortgageMinScore + 60 || h.missed >= 2) return 'refer';
     return 'approve';
   }
-  if (c.kind === 'personal'){ const score = num('Credit score'); return score < cp.personalMinScore ? 'decline' : score < cp.personalMinScore + 60 ? 'refer' : 'approve'; }
+  if (c.kind === 'personal'){
+    // debts plus this loan against a year's income; borrowing to clear an overdraft or other credit is a warning sign
+    const score = num('Credit score'), debt = /None/.test(fv(c, 'Other debts')) ? 0 : num('Other debts');
+    const ratio = (debt + num('Amount')) / num('Income') + (/overdraft|Consolidate/.test(c.who.sub || '') ? 0.1 : 0);
+    if (score < cp.personalMinScore || ratio > cp.personalMaxDebtRatio) return 'decline';
+    return score < cp.personalMinScore + 60 || ratio > cp.personalMaxDebtRatio - 0.1 ? 'refer' : 'approve';
+  }
   return 'refer';
 }
 
@@ -872,7 +879,8 @@ function nextYear(){
   buildMonth();
 }
 function migrate(s){ if (!s.policy) s.policy = systemPolicy(); if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
-function buildMonth(){
+function buildMonth(){ buildMonthCards(); deskByPolicy(); }
+function buildMonthCards(){
   const m = S.month, lead = [], other = [];
   S.pl = blankPL();
   const nr = rateAt(m);
@@ -906,6 +914,35 @@ function buildMonth(){
   while (lead.length + other.length < 6) other.push(gen[wpick(w)]());
   if (owned('cashier')) for (let i = 0; i < 2; i++) other.push(gen[wpick(w.filter(([k]) => PHYS[k]))]());
   S.queue = lead.concat(shuffle(other)); S.qi = 0;
+}
+/* ---- the desk by policy ----
+   Once the player has taken over credit policy (owner 'player'), the bank no longer waits for them to decide each
+   mortgage and personal loan. Each application is decided by the policy: approved and declined ones are processed
+   at once, and only the 'refer' cases reach the counter. The bank also receives more applications than a branch
+   would, so the policy decides a few each month. A policy that is too loose lends to people who default; too
+   tight turns away good customers and the board notices. */
+const DESK_VOLUME = { mortgage: 3, personal: 5 }, DESK_REFER_CAP = 3;
+function deskByPolicy(){
+  if (S.policy.owner.credit !== 'player' || S.tutorial || S.scenario || S.over) return;
+  const tally = { approved: 0, declined: 0, referred: 0, lapsed: 0, lent: 0 };
+  const decide = c => {
+    const v = policyVerdict(c);
+    if (v === 'refer') return false;
+    const before = loanSum(); resolveCard(c, v === 'approve' ? (c.kind === 'mortgage' ? 'yes' : 'low') : 'no');
+    if (v === 'approve'){ tally.approved++; tally.lent += loanSum() - before; } else tally.declined++;
+    return true;
+  };
+  for (const c of S.queue) if ((c.kind === 'mortgage' || c.kind === 'personal') && !c.done) decide(c);
+  const extra = [];
+  for (let i = 0; i < DESK_VOLUME.mortgage; i++) extra.push(gen.mortgage());
+  for (let i = 0; i < DESK_VOLUME.personal; i++) extra.push(gen.personal());
+  let queued = 0;
+  for (const c of extra) if (!decide(c)){ if (queued < DESK_REFER_CAP){ S.queue.push(c); queued++; } else tally.lapsed++; }
+  tally.referred = S.queue.filter(c => (c.kind === 'mortgage' || c.kind === 'personal') && !c.done).length;
+  S.qi = S.queue.filter(x => x.done).length;
+  S.lastDesk = tally;
+  if (tally.approved + tally.declined > 0)
+    addMail('Credit team', 'Lending decided by your policy', `${tally.approved} applications approved (${fmt(tally.lent)} lent), ${tally.declined} declined${tally.referred ? `, and ${tally.referred} referred to you at the counter` : ''}${tally.lapsed ? `. ${tally.lapsed} more referrals lapsed because the desk was full` : ''}. These follow the credit policy you set.`, '', S.month, S.year);
 }
 function current(){ return S.queue.find(c => !c.done) || null; }
 function optionAllowed(o){ return !(o.cash && S.cash < o.cash); }
@@ -1079,7 +1116,7 @@ function dispatchInner(cmd){
     case 'read': return markRead(cmd.key);
     case 'nextYear': return nextYear();
     case 'buy': return buyUpgrade(cmd.key);
-    case 'setPolicy': return setPolicy(cmd.area, cmd.values);
+    case 'setPolicy': return setPolicy(cmd.area, cmd.values, cmd.release);
     default: throw new Error('unknown command ' + cmd.type);
   }
 }

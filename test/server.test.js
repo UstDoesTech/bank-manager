@@ -251,6 +251,13 @@ test('policy: every game starts on the system pricing and credit policy and cann
   assert.strictEqual(bad.status, 400);
   assert.strictEqual((await pool.query('SELECT last_seq FROM bank.game WHERE id = $1', [g.id])).rows[0].last_seq, 1);
   assert.strictEqual((await call('GET', `/api/games/${g.id}`, null, cookie)).json.state.policy.pricing.cardRate, 24.9);
+  // once an area is unlocked the server accepts taking it over and handing it back; the stored command keeps only what matters
+  const { validate, cleanCommand } = require('../server/games');
+  const open = { over: null, progress: { unlocked: ['branch', 'pricing', 'credit'] } };
+  validate(open, { type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 80 } });
+  validate(open, { type: 'setPolicy', area: 'credit', release: true });
+  assert.throws(() => validate(open, { type: 'setPolicy', area: 'credit', values: [1] }), /Missing values/);
+  assert.deepStrictEqual(cleanCommand({ type: 'setPolicy', area: 'credit', release: true, evil: 1 }), { type: 'setPolicy', area: 'credit', values: undefined, release: true });
 });
 
 test('games: bad, repeated, out-of-order and foreign commands are refused and change nothing', async () => {
