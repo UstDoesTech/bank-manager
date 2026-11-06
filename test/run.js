@@ -4,7 +4,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), '
 const golden = JSON.parse(fs.readFileSync(path.join(__dirname, 'golden.json'), 'utf8'));
 let n = 0;
 // 1. Behaviour is unchanged against snapshots from the original engine (all bots, scenarios, tutorial).
-const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy'];
+const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households'];
 { const Eg = loadEngine(src); Eg.dispatch({ type: 'newGame', seed: 1 });
   for (const [key, want] of Object.entries(golden)){
     const [bot, tag, seed] = key.split(':');
@@ -86,7 +86,7 @@ for (const pol of ALL()) for (const seed of [3, 17]){
 //    the verdict separates good applications from bad using only what the applicant shows.
 { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 21 });
   const sys = JSON.parse(JSON.stringify(E.S.policy));
-  assert.strictEqual(JSON.stringify(sys.owner), '{"pricing":"system","credit":"system","treasury":"system","capital":"system"}'); n++;
+  assert.strictEqual(JSON.stringify(sys.owner), '{"pricing":"system","credit":"system","treasury":"system","funding":"system","capital":"system"}'); n++;
   const refuses = (cmd, why) => { const snap = JSON.stringify(E.S.policy); assert.throws(() => E.dispatch(cmd), why); assert.strictEqual(JSON.stringify(E.S.policy), snap); n++; };
   refuses({ type: 'setPolicy', area: 'pricing', values: { cardRate: 5 } }, /not unlocked/);
   refuses({ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 99 } }, /not unlocked/);
@@ -118,12 +118,12 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   for (const seed of [4, 8, 15, 16, 23, 42]) for (const bot of ['careful', 'greedy']){
     const a = play(loadEngine(src), seed, bot, 3), S = a.S, strong = (S.career || []).filter(c => ['AAA', 'AA', 'A'].includes(c.letter)).length;
     const unlocked = S.progress.unlocked.filter(x => x !== 'branch');
-    assert.strictEqual(unlocked.length, Math.min(4, strong), 'unlock count should follow strong years: ' + bot + seed);
-    assert.strictEqual(JSON.stringify(unlocked), JSON.stringify(['pricing', 'credit', 'treasury', 'capital'].slice(0, unlocked.length)));
+    assert.strictEqual(unlocked.length, Math.min(5, strong), 'unlock count should follow strong years: ' + bot + seed);
+    assert.strictEqual(JSON.stringify(unlocked), JSON.stringify(['pricing', 'credit', 'treasury', 'funding', 'capital'].slice(0, unlocked.length)));
     // the letter arrives with the unlock (the inbox only keeps the latest 60 messages, so check at the moment it happens)
     { const R = loadEngine(src); for (const cmd of a.cmds){ const k = R.S ? R.S.progress.unlocked.length : 0; R.dispatch(cmd);
         if (cmd.type === 'nextYear' && R.S.progress.unlocked.length > k) assert(R.S.inbox.some(m => m.from === 'The board' && /is yours/.test(m.subject) && !m.read), 'briefing letter on unlock'); } }
-    granted += unlocked.length; withheld += 4 - unlocked.length; n++;
+    granted += unlocked.length; withheld += 5 - unlocked.length; n++;
   }
   assert(granted > 0 && withheld > 0, 'need both strong and weak outcomes in the sample: ' + granted + '/' + withheld); n++; }
 // 10. Dearer mortgages lose customers: at four points over the system spread far less is lent, and what is lent is riskier.
@@ -224,4 +224,110 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   assert(kinds[3].includes('liqshock') || kinds[3].includes('outage'), 'the shocks arrive after the quiet months'); n++;
   // taking over again does not restart it, and a second area gets its own quiet months
   E.dispatch({ type: 'setPolicy', area: 'pricing', values: { cardRate: 25 } }); assert(E.quietLeft() <= 1); n++; }
+// 14. Funding and dividends.
+{ const ALL5 = ['pricing', 'credit', 'treasury', 'funding', 'capital'];
+  const start = (seed, tweak) => { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed }); E.S.progress.unlocked.push(...ALL5); if (tweak) tweak(E); return E; };
+  const month = E => { for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[c.opts.length - 1].k }); E.dispatch({ type: 'closeMonth' }); };
+  // the savings rate follows the market plus the chosen gap, and the Bank Rate card is replaced by a mail
+  { const E = start(4); E.dispatch({ type: 'setPolicy', area: 'funding', values: { savingsSpread: 0.5 } });
+    for (let m = 0; m < 6 && !E.S.over; m++){ month(E); if (!E.S.over) assert(Math.abs(E.S.savRate - Math.max(0.1, E.mkt() + 0.5)) < 0.011, 'savings rate follows the rule: ' + E.S.savRate); }
+    assert(E.S.queue.every(c => c.kind !== 'rate')); n++; }
+  // wholesale borrowing: tranches add up to the balance, the ledger agrees, it costs money, and it runs off at maturity
+  { const E = start(6); E.dispatch({ type: 'setPolicy', area: 'funding', values: { wholesaleTarget: 0.2 } });
+    let peak = 0; for (let m = 0; m < 9 && !E.S.over; m++){ month(E); peak = Math.max(peak, E.S.wholesale);
+      assert(Math.abs(E.S.wholesale - E.S.wsTranches.reduce((a, w) => a + w.amt, 0)) < 1e-6, 'tranches add up'); }
+    assert(peak > 1000, 'wholesale was borrowed: ' + peak); assert(E.S.stats !== undefined); n++;
+    E.dispatch({ type: 'setPolicy', area: 'funding', release: true });
+    for (let m = 0; m < 5 && !E.S.over; m++) month(E);
+    assert(E.S.wholesale < 1e-6 && E.S.wsTranches.length === 0, 'handed back: wholesale runs off'); n++; }
+  // a freeze: nothing is renewed, so wholesale shrinks and the treasurer says so
+  { const E = start(8, e => { e.S.sched.liq = [6]; e.S.sched.crash = -1; e.S.sched.out = -1; }); E.dispatch({ type: 'setPolicy', area: 'funding', values: { wholesaleTarget: 0.3 } });
+    let before = 0, after = 0, warned = false, last = 0;
+    for (let m = 0; m < 10 && !E.S.over; m++){ month(E); if (E.S.month === 5) before = E.S.wholesale; if (E.S.month === 8) after = E.S.wholesale;
+      for (const x of E.S.inbox) if (x.id > last && x.subject === 'Wholesale markets are frozen') warned = true; last = E.S.mailId; }
+    assert(warned, 'freeze mail'); assert(after < before, 'wholesale shrinks in a freeze: ' + [before, after]); n++; }
+  // dividends: paid from profit, journaled, counted in the rating, and a replay agrees
+  { const a = play(loadEngine(src), 5, 'careful', 2, {}, (run, e) => { e.S.progress.unlocked.push(...ALL5); run({ type: 'setPolicy', area: 'capital', values: { dividendPayout: 0.5 } }); });
+    const R = loadEngine(src);
+    for (const cmd of a.cmds){ if (cmd.type === 'setPolicy') R.S.progress.unlocked.push(...ALL5); R.dispatch(cmd); }
+    assert.strictEqual(hashState(R.S, []), hashState(a.S, [])); n++;
+    assert(R.S.ledger.bal['equity.dividend'] > 0, 'dividends were journaled'); n++;
+    const b = play(loadEngine(src), 5, 'careful', 1, {}, (run, e) => { e.S.progress.unlocked.push(...ALL5); run({ type: 'setPolicy', area: 'capital', values: { dividendPayout: 0.5 } }); });
+    const E1 = loadEngine(src); E1.S = b.S; assert(E1.rating().pD > 0, 'dividends lift the rating'); n++; }
+  // an old save gains the funding policy and the wholesale fields
+  { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 3 }); const old = JSON.parse(JSON.stringify(E.S)); delete old.policy.funding; delete old.policy.owner.funding; delete old.wholesale; delete old.wsTranches; delete old.policy.capital.dividendPayout;
+    const m = loadEngine(src).migrate(old); assert.strictEqual(m.wholesale, 0); assert.strictEqual(m.policy.funding.wholesaleTarget, 0); assert.strictEqual(m.policy.capital.dividendPayout, 0); assert.strictEqual(m.policy.owner.funding, 'system'); n++; }
+}
+// 15. Bonds, large depositors and mortgage pool sales.
+{ const ALL5 = ['pricing', 'credit', 'treasury', 'funding', 'capital'];
+  const start = (seed, tweak) => { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed }); E.S.progress.unlocked.push(...ALL5); if (tweak) tweak(E); return E; };
+  const month = E => { for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[c.opts.length - 1].k }); E.dispatch({ type: 'closeMonth' }); };
+  const watch = (E, subjectRe, months, onMonth) => { let last = E.S.mailId, hits = 0; for (let m = 0; m < months && !E.S.over; m++){ month(E); if (onMonth) onMonth(E); for (const x of E.S.inbox) if (x.id > last && subjectRe.test(x.body + ' ' + x.subject)) hits++; last = E.S.mailId; } return hits; };
+  // bonds: issued to the target, locked for the term, interest paid, refinanced at maturity, runs off when handed back
+  { const E = start(4); E.dispatch({ type: 'setPolicy', area: 'funding', values: { bondTarget: 0.15, bondTermYears: 1, bondPremium: 0.5 } });
+    let peak = 0; watch(E, /x^/, 15, e => { peak = Math.max(peak, e.S.bonds); assert(Math.abs(e.S.bonds - e.S.bondTranches.reduce((a, b) => a + b.amt, 0)) < 1e-6, 'bond tranches add up'); });
+    assert(peak > 1500, 'bonds were issued: ' + peak); assert(E.S.bondTranches.some(b => b.due > E.S.year * 12 + E.S.month), 'refinanced at maturity'); n += 2;
+    E.dispatch({ type: 'setPolicy', area: 'funding', release: true }); watch(E, /x^/, 2); assert(E.S.bonds > 0, 'locked bonds do not leave early'); n++; }
+  // large depositors: they arrive up to the cap, and a freeze makes them leave
+  { let arrived = 0, left = 0, over = 0;
+    for (const seed of [2, 3, 5, 7, 11]){ const E = start(seed, e => { e.S.sched.liq = [5]; e.S.sched.crash = -1; e.S.sched.out = -1; }); E.dispatch({ type: 'setPolicy', area: 'funding', values: { largeCap: 0.3 } });
+      watch(E, /x^/, 10, e => { const share = e.S.large.reduce((a, d) => a + d.amt, 0) / e.S.deposits; if (share > 0.3 + 0.12) over++; arrived = Math.max(arrived, e.S.large.length); });
+      left += E.S.inbox.filter(x => /has withdrawn/.test(x.body)).length; }
+    assert(arrived > 0, 'large depositors arrived'); assert(over === 0, 'the cap held'); n += 2; }
+  { const E = start(6); E.dispatch({ type: 'setPolicy', area: 'funding', values: { largeCap: 0 } }); watch(E, /x^/, 8); assert.strictEqual(E.S.large.length, 0, 'a cap of zero takes none'); n++; }
+  // pool sale: the bank keeps 5% as a first-loss slice, capital improves, losses hit the slice first, the books balance
+  { const E = loadEngine(src); play(E, 9, 'first', 1); E.dispatch({ type: 'nextYear' }); E.S.progress.unlocked.push(...ALL5);
+    const mort = E.S.loans.filter(l => l.kind === 'mortgage' && l.status === 'current').reduce((a, l) => a + l.bal, 0), capBefore = E.capRatio();
+    assert(mort > 800, 'need mortgages to sell: ' + mort);
+    E.S.progress.unlocked.push('capital'); E.dispatch({ type: 'setPolicy', area: 'capital', values: { capitalTarget: 0.25, capitalAction: 3 } });
+    let sold = 0; const hits = watch(E, /pool of mortgages/, 3, e => { sold = Math.max(sold, e.S.pools.length); });
+    assert(hits > 0 && sold > 0, 'a pool was sold'); assert(E.S.retained > 0, 'a slice was retained'); n += 2;
+    const p = E.S.pools[0]; assert(Math.abs(p.ret - 0.05 / 0.95 * p.bal) / p.ret < 0.1 || p.lost > 0, 'the slice is 5% of the loans sold');
+    assert(Math.abs(E.S.ledger.bal.retained - E.S.retained) < 1e-6); n++;
+    // losses beyond the slice fall on investors: the bank's loss from a pool never exceeds its slice
+    for (let m = 0; m < 8 && !E.S.over; m++) month(E);
+    for (const q of E.S.pools) assert(q.lost <= q.orig * 0.05 + 1e-6, 'bank loss limited to the retained slice'); n++; }
+  // a replay with all of it on reproduces the game
+  { const a = play(loadEngine(src), 7, 'careful', 2, {}, (run, e) => { e.S.progress.unlocked.push(...ALL5);
+      run({ type: 'setPolicy', area: 'funding', values: { bondTarget: 0.1, wholesaleTarget: 0.1, largeCap: 0.25, poolWhenShort: 1 } }); run({ type: 'setPolicy', area: 'capital', values: { capitalTarget: 0.2, capitalAction: 3 } }); });
+    const R = loadEngine(src); for (const cmd of a.cmds){ if (cmd.type === 'setPolicy' && R.S.progress.unlocked.length === 1) R.S.progress.unlocked.push(...ALL5); R.dispatch(cmd); }
+    assert.strictEqual(hashState(R.S, []), hashState(a.S, [])); n++; }
+  // an old save gains the new fields
+  { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 3 }); const old = JSON.parse(JSON.stringify(E.S)); for (const k of ['bonds', 'bondTranches', 'retained', 'pools', 'large']) delete old[k]; delete old.policy.funding.bondTarget; delete old.policy.funding.poolMode;
+    const m = loadEngine(src).migrate(old); assert.strictEqual(m.bonds, 0); assert.strictEqual(m.large.length, 0); assert.strictEqual(m.policy.funding.poolShare, 0.25); assert.strictEqual(m.policy.funding.bondTermYears, 1); n++; }
+}
+// 16. Year-end debrief: three to five tagged notes, rotating through the concepts over several years.
+{ for (const bot of ['careful', 'greedy']) for (const seed of [4, 9]){
+    const E = loadEngine(src); const concepts = new Set(); let years = 0;
+    play(E, seed, bot, 1); // first year
+    const check = () => { const d = E.S.debrief; assert(Array.isArray(d) && d.length >= 3 && d.length <= 5, 'three to five notes: ' + (d && d.length));
+      for (const c of d){ for (const k of ['concept', 'area', 'big', 'what', 'why', 'ask']) assert(typeof c[k] === 'string' && c[k].length > 8, 'note field ' + k); assert(!/NaN|undefined/.test(JSON.stringify(c)), 'no NaN in a note: ' + JSON.stringify(c)); concepts.add(c.concept); } years++; };
+    check();
+    for (let y = 0; y < 2 && E.S.over === 'done'; y++){ E.dispatch({ type: 'nextYear' }); while (!E.S.over){ for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' }); } if (E.S.over === 'done') check(); }
+    if (years >= 3) assert(concepts.size >= 5, 'notes rotate through the ideas: ' + [...concepts]);
+    n++; } }
+// 17. Recurring households: a cast of seven in games started with them, none otherwise; they move with the economy and
+//     with the player's decisions; some applications come from them; and replay reproduces them.
+{ const plain = loadEngine(src); plain.dispatch({ type: 'newGame', seed: 5 }); assert(!plain.S.households); n++;
+  const tut = loadEngine(src); tut.dispatch({ type: 'newGame', seed: 5, opts: { households: true, tutorial: true } }); assert(!tut.S.households); n++;
+  const a = play(loadEngine(src), 6, 'first', 2, { households: true });
+  const cast = a.S.households; assert.strictEqual(cast.length, 7); assert.strictEqual(new Set(cast.map(h => h.name)).size, 7, 'distinct names'); n++;
+  assert(cast.every(h => h.hist.length > 0 && h.hist.length <= 36 && h.score >= 300 && h.score <= 999 && Number.isFinite(h.cash)), 'households have a finite history'); n++;
+  const linked = cast.filter(h => h.loanId != null); assert(linked.length >= 1, 'some applications came from the cast and were approved');
+  for (const h of linked){ const l = a.S.loans.find(x => x.id === h.loanId); if (l) assert.strictEqual(l.hh, h.id); } n++;
+  assert(cast.some(h => h.notes.length > 0), 'things happened to them'); assert(!/NaN|undefined/.test(JSON.stringify(cast)), 'no NaN in households'); n++;
+  // a missed payment costs credit score and is remembered
+  { const E = loadEngine(src); const g = play(E, 6, 'first', 1, { households: true }); E.dispatch({ type: 'nextYear' });
+    const h = E.S.households.find(x => x.loanId != null && E.S.loans.some(l => l.id === x.loanId && l.status === 'current'));
+    assert(h, 'a household with a performing loan'); { const l = E.S.loans.find(x => x.id === h.loanId), before = h.score; l.status = 'arrears'; l.since = E.S.month; l.carded = true;
+      for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[c.opts.length - 1].k }); E.dispatch({ type: 'closeMonth' });
+      assert(h.score < before - 30, 'a missed payment cuts the score: ' + [before, h.score]); assert(h.notes.some(x => /Fell behind/.test(x.t))); n++; } }
+  // replay reproduces the cast
+  const R = loadEngine(src); for (const cmd of a.cmds) R.dispatch(cmd);
+  assert.strictEqual(hashState(R.S, []), hashState(a.S, [])); n++;
+  // the cards say who they are
+  { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 12, opts: { households: true } }); let seen = 0;
+    for (let m = 0; m < 6 && !E.S.over; m++){ for (const c of E.S.queue) if (c.h && c.h.hh != null){ seen++; assert(c.who.name === E.S.households.find(h => h.id === c.h.hh).name && c.h.name === c.who.name && /regular customer/.test(c.note)); }
+      for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' }); }
+    assert(seen > 0, 'regular customers appear at the counter'); n++; } }
 console.log('ok', n, 'checks');

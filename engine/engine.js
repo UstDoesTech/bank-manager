@@ -60,11 +60,11 @@ function syncGilts(){
   const d = giltCarry() - (S.ledger.bal.gilts || 0);
   if (Math.abs(d) > 1e-9) je('gilts.revalue', [['gilts', d], ['pl.gilts', -d]]);
 }
-function assets(){ return S.cash + giltCarry() + S.legacy + loanSum(); }
-function capital(){ return assets() - S.deposits - S.cb; }
-function rwa(){ let r = S.legacy * 0.75 + 1000 + aum() * 0.005; for (const l of S.loans) r += l.bal * (l.kind === 'mortgage' ? (l.ltv > 80 ? 0.5 : 0.35) : 1); return r; }
+function assets(){ return S.cash + giltCarry() + S.legacy + loanSum() + (S.retained || 0); }
+function capital(){ return assets() - S.deposits - S.cb - (S.wholesale || 0) - (S.bonds || 0); }
+function rwa(){ let r = S.legacy * 0.75 + 1000 + aum() * 0.005 + (S.retained || 0) * 2; for (const l of S.loans) r += l.bal * (l.kind === 'mortgage' ? (l.ltv > 80 ? 0.5 : 0.35) : 1); return r; }
 function capRatio(){ return capital() / rwa(); }
-function liqRatio(){ return (S.cash + giltMV()) / S.deposits; }
+function liqRatio(){ return (S.cash + giltMV()) / (S.deposits + (S.wholesale || 0)); }
 function metrics(){ return { profit: capital() - S.startCap + (S.divPaid || 0) - (S.injected || 0), cap: capRatio(), liq: liqRatio(), trust: S.trust, comp: S.comp, cash: S.cash }; }
 function regStatus(){ return S.comp >= 70 ? ['Good', 'ok'] : S.comp >= 40 ? ['Watching', 'watch'] : ['Enforcement', 'alarm']; }
 const MIN_CAP = 0.105, FAIL_CAP = 0.08, MIN_LIQ = 0.10;
@@ -85,7 +85,7 @@ function chip(t, c){ if (OUT) OUT.chips.push({ t, c }); }
    equity.opening, equity.paidin; income and expense pl.<key> (one per profit-and-loss line).
    S.ledger holds running balances only; entries are streamed to LEDGER_SINK (the game server stores them). */
 var LEDGER_SINK = null, LEDGER_STRICT = false;
-const LEDGER_DIR = { cash:1, legacy:1, deposits:-1, cb:-1 };   // accounts mirrored by a plain state field
+const LEDGER_DIR = { cash:1, legacy:1, deposits:-1, cb:-1, wholesale:-1, bonds:-1, retained:1 };   // accounts mirrored by a plain state field
 function je(memo, lines, opts){
   let sum = 0; for (const l of lines) sum += l[1];
   if (!(Math.abs(sum) < 1e-6)){ if (LEDGER_STRICT) throw new Error('unbalanced journal entry ' + memo + ': ' + sum); }
@@ -102,14 +102,14 @@ function je(memo, lines, opts){
 // Posts the current position as one opening entry; equity.opening is the balancing figure.
 function openLedger(memo){
   if (!S.ledger) S.ledger = { bal:{}, n:0 };
-  const a = [['cash', S.cash], ['gilts', giltBook()], ['legacy', S.legacy], ['loans', loanSum()], ['deposits', -S.deposits], ['cb', -S.cb]];
+  const a = [['cash', S.cash], ['gilts', giltBook()], ['legacy', S.legacy], ['loans', loanSum()], ['deposits', -S.deposits], ['cb', -S.cb]].concat(S.wholesale ? [['wholesale', -S.wholesale]] : [], S.bonds ? [['bonds', -S.bonds]] : [], S.retained ? [['retained', S.retained]] : []);
   je(memo || 'opening', a.concat([['equity.opening', -a.reduce((t, l) => t + l[1], 0)]]), { ledgerOnly:true });
 }
 // Compares the ledger with the live state; returns a list of problems (empty when everything agrees).
 function ledgerCheck(){
   const L = S.ledger, bad = [], near = (x, y) => Math.abs(x - y) <= 1e-6 + 1e-9 * Math.abs(y);
   const chk = (n, ledger, live) => { if (!near(ledger, live)) bad.push(`${n}: ledger ${ledger} vs state ${live}`); };
-  chk('cash', L.bal.cash || 0, S.cash); chk('legacy', L.bal.legacy || 0, S.legacy); chk('deposits', -(L.bal.deposits || 0), S.deposits); chk('cb', -(L.bal.cb || 0), S.cb);
+  chk('cash', L.bal.cash || 0, S.cash); chk('legacy', L.bal.legacy || 0, S.legacy); chk('deposits', -(L.bal.deposits || 0), S.deposits); chk('cb', -(L.bal.cb || 0), S.cb); chk('wholesale', -(L.bal.wholesale || 0), S.wholesale || 0); chk('bonds', -(L.bal.bonds || 0), S.bonds || 0); chk('retained', L.bal.retained || 0, S.retained || 0);
   chk('gilts', L.bal.gilts || 0, giltCarry()); chk('loans', L.bal.loans || 0, loanSum());
   const total = Object.values(L.bal).reduce((t, x) => t + x, 0);
   if (!near(total, 0)) bad.push('ledger does not sum to zero: ' + total);
@@ -136,7 +136,7 @@ function analyst(pd){ if (!S.up || !S.up.analyst) return null; const v = pd * Ma
 /* loans */
 function book(o){
   const l = Object.assign({ id: S.nextId++, status: 'current', m0: S.month, carded: false, hpi0: hpi() }, o);
-  je('loan.originate', [['loans', l.bal], ['cash', -l.bal]]); S.loans.push(l); S.stats.loans++; S.stats.lent += l.bal;
+  je('loan.originate', [['loans', l.bal], ['cash', -l.bal]]); S.loans.push(l); S.stats.loans++; S.stats.lent += l.bal; if (l.hh != null) hhBooked(l);
   chip('Lent ' + fmt(l.bal), 'neutral');
   const kept = l.bal * (RETAIN[l.kind] || 0.2); je('deposit.created', [['cash', kept], ['deposits', -kept]]); chip('Deposit created ' + fmt(kept, true), 'neutral');
   if (!S.flags.seenCreate){ S.flags.seenCreate = true; say(`Lending created a new deposit of ${full(l.bal)} in the borrower's account. As they spend it, most moves to other banks and takes your reserves with it. ${full(kept)} is still with you.`); }
@@ -161,14 +161,16 @@ function systemPolicy(){
     pricing: { mortgageSpread: 1.05, ltvAdd: [[90, 0.7], [85, 0.4], [75, 0.15]], mortgagePremium: 0.6, personalLow: 8.9, personalHigh: 18.9, cardRate: 24.9 },
     credit: { mortgageMaxLtv: 90, mortgageMaxLti: 5, mortgageMaxAff: 0.45, mortgageMinScore: 520, personalMinScore: 620, personalMaxDebtRatio: 0.5 },
     treasury: { liquidityTarget: 0.2, longShare: 0 },
-    capital: { capitalTarget: 0.125, capitalAction: 0, raiseAmount: 300 },
-    owner: { pricing: 'system', credit: 'system', treasury: 'system', capital: 'system' } };
+    funding: { savingsSpread: 0, wholesaleTarget: 0, bondTarget: 0, bondTermYears: 1, bondPremium: 0.5, largeCap: 0, poolWhenShort: 0, poolShare: 0.25, poolMode: 0 },
+    capital: { capitalTarget: 0.125, capitalAction: 0, raiseAmount: 300, dividendPayout: 0 },
+    owner: { pricing: 'system', credit: 'system', treasury: 'system', funding: 'system', capital: 'system' } };
 }
 const POLICY_LIMITS = {
   pricing: { mortgageSpread: [0, 6], mortgagePremium: [0, 3], personalLow: [0, 40], personalHigh: [0, 40], cardRate: [0, 40] },
   credit: { mortgageMaxLtv: [50, 100], mortgageMaxLti: [2, 8], mortgageMaxAff: [0.2, 0.8], mortgageMinScore: [300, 900], personalMinScore: [300, 900], personalMaxDebtRatio: [0.2, 2] },
   treasury: { liquidityTarget: [0.1, 0.5], longShare: [0, 1] },
-  capital: { capitalTarget: [0.105, 0.25], capitalAction: [0, 2], raiseAmount: [100, 1000] } };
+  funding: { savingsSpread: [-1.5, 2], wholesaleTarget: [0, 0.35], bondTarget: [0, 0.3], bondTermYears: [1, 3], bondPremium: [0, 2], largeCap: [0, 0.5], poolWhenShort: [0, 1], poolShare: [0.05, 0.5], poolMode: [0, 2] },
+  capital: { capitalTarget: [0.105, 0.25], capitalAction: [0, 3], raiseAmount: [100, 1000], dividendPayout: [0, 1] } };
 // Prices above the system's lose customers and attract riskier ones; at or below the system's nothing changes.
 // excess() is how many points a price is above the system price; dem() is the share of customers who still say yes;
 // adv() scales default risk for the customers who do. No random draw happens at the system prices.
@@ -178,12 +180,13 @@ const adv = ex => 1 + 0.08 * ex;
 const takeUp = (ex, slope) => ex <= 0 || chance(dem(ex, slope));
 const MORTGAGE_SLOPE = 1.2;   // mortgage customers shop around hard: 0.5 points dearer loses about 40% of them
 /* ---- unlocks: a strong year (rating A or better) hands over the next area, with a briefing letter from the board ---- */
-const UNLOCK_ORDER = ['pricing', 'credit', 'treasury', 'capital'];
+const UNLOCK_ORDER = ['pricing', 'credit', 'treasury', 'funding', 'capital'];
 const STRONG = ['AAA', 'AA', 'A'];
 const BRIEFING = {
   pricing: ['Pricing is yours', 'The board was impressed by your year. From now on you set the prices: the mortgage spread over Bank Rate, the personal loan rates and the card rate. Until today the executive team set them. Price too high and customers go elsewhere, and the ones who stay are riskier. Price too low and you give away margin. Open Policy from the menu to change them, or return to the executive team\'s prices at any time.'],
   treasury: ['Treasury is yours', 'A third strong year. You now set the treasury rules: how much cash the bank keeps as a share of deposits, and how much of any surplus goes into long gilts rather than short ones. Your treasurer follows the rules every month and will sell gilts to restore the cash target. From the day you take it over, gilts are counted at market value, so a fall in their value shows in your capital straight away instead of only when they are sold. Long gilts pay more but lose value when rates rise. A low cash target earns more and leaves less to meet a run.'],
-  capital: ['Capital is yours', 'You now set the capital rules: the ratio you want to stay above, what to do when you fall below it, and how much to raise. Raising shares dilutes the owners and lowers the return the board sees. Selling mortgages shrinks the bank. Carrying on risks the regulator.'],
+  funding: ['Funding is yours', 'You now decide where the money comes from. Your savings rate is set as a gap to the market rate, and your funding team can also borrow from other banks (wholesale) up to a share of your deposits, in three-month loans that must be renewed. Wholesale money is dearer than savings and it can disappear: when markets freeze, nobody renews, and the money you were counting on has to be repaid. You can also issue fixed-term bonds for one to three years, which cannot leave early but must be repaid or refinanced when they mature, so watch for many falling due together. Large depositors such as housing associations and councils will offer big sums at a good rate, and one of them can take it all away at once, so set a cap on how much of your deposits they may hold. If liquidity runs short you can sell a pool of mortgages to investors: you get cash and free up capital, but you keep a slice of the risk and the first losses, and the price falls in a stressed market. Watch how much of your funding is wholesale and how much falls due soon.'],
+  capital: ['Capital is yours', 'You now set the capital rules: the ratio you want to stay above, what to do when you fall below it, how much to raise, and what share of each month\'s profit to pay out as dividends. Dividends please shareholders and the board, and they leave the bank with less capital. Paying them while thin on capital annoys the regulator. Raising shares dilutes the owners and lowers the return the board sees. Selling mortgages shrinks the bank. Carrying on risks the regulator.'],
   credit: ['Credit policy is yours', 'Another strong year. You now set the credit policy: how much of a home\'s price we lend, how many times income, how much of take-home pay a mortgage may take, and the lowest credit scores we accept. Loosening it wins customers and brings losses a year or two later.'] };
 function grantUnlock(r){
   if (!STRONG.includes(r.letter)) return;
@@ -206,9 +209,10 @@ function applyQuiet(){
   S.sched.liq = S.sched.liq.map(move).filter(m => m >= 0);
 }
 function startQuiet(area){
-  S.progress.quiet = { area, until: S.year * 12 + S.month + 1 + QUIET_MONTHS };
+  const mo = Math.min(S.month, 11);       // at the year-end screen the month is 12
+  S.progress.quiet = { area, until: S.year * 12 + mo + 1 + QUIET_MONTHS };
   applyQuiet();
-  addMail('The board', 'Three quiet months', `You have taken over ${area}. For the next three months nothing outside the bank will go wrong: no run on deposits, no market crash, no outage. Use the time to see what your new rules do.`, 'good', S.month, S.year);
+  addMail('The board', 'Three quiet months', `You have taken over ${area}. For the next three months nothing outside the bank will go wrong: no run on deposits, no market crash, no outage. Use the time to see what your new rules do.`, 'good', mo, S.year);
 }
 function setPolicy(area, values, release){
   const lim = POLICY_LIMITS[area];
@@ -338,7 +342,7 @@ function mortgageRisk(h, loan = h.loan){
 }
 res.mortgage = (c, k) => {
   const h = c.h, nm = first(h.name), spreadEx = excess('mortgageSpread');
-  const doBook = (loan, extra = 0) => { const m = mortgageRisk(h, loan); { const pay = annuity(loan, m.rate + extra, h.term); custSay(`${full(pay)} a month at ${(m.rate + extra).toFixed(2)}%, ${pc(pay / takeHome(h.inc), 0)} of take-home pay. Over ${h.term} years they repay ${full(pay * h.term * 12)} for a ${full(loan)} loan, if the rate stayed the same.`); } book({ kind:'mortgage', name:h.name, bal:loan, rate:m.rate + extra, pd: Math.min(0.95, m.pd * (extra ? 1.25 : 1) * adv(spreadEx)), prop:h.price, ltv:m.ltv }); money('fees', 0.999 - (h.broker ? loan * 0.0035 : 0), h.broker ? 'Fee less broker' : 'Fee'); };
+  const doBook = (loan, extra = 0) => { const m = mortgageRisk(h, loan); { const pay = annuity(loan, m.rate + extra, h.term); custSay(`${full(pay)} a month at ${(m.rate + extra).toFixed(2)}%, ${pc(pay / takeHome(h.inc), 0)} of take-home pay. Over ${h.term} years they repay ${full(pay * h.term * 12)} for a ${full(loan)} loan, if the rate stayed the same.`); } book({ hh:h.hh, kind:'mortgage', name:h.name, bal:loan, rate:m.rate + extra, pd: Math.min(0.95, m.pd * (extra ? 1.25 : 1) * adv(spreadEx)), prop:h.price, ltv:m.ltv }); money('fees', 0.999 - (h.broker ? loan * 0.0035 : 0), h.broker ? 'Fee less broker' : 'Fee'); };
   if (k === 'yes'){ if (takeUp(spreadEx, MORTGAGE_SLOPE)){ doBook(h.loan); say(`Offer issued. ${nm} gets the keys next month.`); } else say(`${nm} found a cheaper mortgage at another lender.`); }
   if (k === 'prem'){ const pd = mortgageRisk(h).pd; if (chance(clamp(0.22 + pd * 4, 0.22, 0.9) * dem(spreadEx + excess('mortgagePremium'), MORTGAGE_SLOPE))) { doBook(h.loan, S.policy.pricing.mortgagePremium); say(`${nm} accepts the higher rate. ${pd > 0.05 ? 'Nobody else offered them anything.' : 'They didn\'t shop around.'}`); } else say(`${nm} found the market rate at another lender.`); }
   if (k === 'less'){ if (chance(0.45)) { doBook(h.alt); say(`${nm} found the extra deposit with help from family. Smaller loan agreed.`); } else { say(`${nm} took a bigger loan from another lender.`); dT(-1); } }
@@ -362,8 +366,8 @@ gen.personal = (o = {}) => {
 res.personal = (c, k) => {
   const h = c.h, nm = first(h.name), pr = S.policy.pricing;
   const cv = r => { const yrs = h.yrs || 4, pay = annuity(h.amt, r, yrs), tot = pay * yrs * 12; custSay(`Over ${yrs} years at ${r}% they repay ${full(tot)} for ${full(h.amt)}: ${full(tot - h.amt)} in interest. Repayments take ${pc(pay / takeHome(h.inc || 30), 0)} of take-home pay.`); };
-  if (k === 'low'){ if (takeUp(excess('personalLow'))){ cv(pr.personalLow); book({ kind:'personal', name:h.name, bal:h.amt, rate:pr.personalLow, pd:h.pd * adv(excess('personalLow')) }); say(`Money in ${nm}'s account within the hour.`); dT(h.pd < 0.08 ? 1 : 0); } else say(`${nm} took a cheaper loan from a lender down the road.`); }
-  if (k === 'high'){ if (chance(clamp(0.25 + h.pd * 4, 0.25, 0.92) * dem(excess('personalHigh')))) { cv(pr.personalHigh); book({ kind:'personal', name:h.name, bal:h.amt, rate:pr.personalHigh, pd: Math.min(0.95, h.pd * 1.3 * adv(excess('personalHigh'))) }); say(`${nm} signs at ${pr.personalHigh}%.${h.pd > 0.08 ? ' Nobody else would lend to them.' : ''}`); if (h.pd < 0.06) dT(-1); } else say(`${nm} took ${pr.personalLow}% from a lender down the road.`); }
+  if (k === 'low'){ if (takeUp(excess('personalLow'))){ cv(pr.personalLow); book({ hh:h.hh, kind:'personal', name:h.name, bal:h.amt, rate:pr.personalLow, pd:h.pd * adv(excess('personalLow')) }); say(`Money in ${nm}'s account within the hour.`); dT(h.pd < 0.08 ? 1 : 0); } else say(`${nm} took a cheaper loan from a lender down the road.`); }
+  if (k === 'high'){ if (chance(clamp(0.25 + h.pd * 4, 0.25, 0.92) * dem(excess('personalHigh')))) { cv(pr.personalHigh); book({ hh:h.hh, kind:'personal', name:h.name, bal:h.amt, rate:pr.personalHigh, pd: Math.min(0.95, h.pd * 1.3 * adv(excess('personalHigh'))) }); say(`${nm} signs at ${pr.personalHigh}%.${h.pd > 0.08 ? ' Nobody else would lend to them.' : ''}`); if (h.pd < 0.06) dT(-1); } else say(`${nm} took ${pr.personalLow}% from a lender down the road.`); }
   if (k === 'no'){ say(`${nm} leaves. ${pick(['They mention a lender that advertises on daytime TV.','They will ask family instead.','They will try their old bank.'])}`); if (h.pd < 0.04) { dT(-1); S.stats.wrongNo++; } }
 };
 
@@ -382,7 +386,7 @@ res.card = (c, k) => {
   if (k === 'up'){
     const bal = (h.nl - h.lim) * (h.persist ? 0.9 : 0.25);
     custSay(`Carrying an extra ${full(bal)} at ${S.policy.pricing.cardRate}% costs about ${full(bal * S.policy.pricing.cardRate / 100)} a year in interest. Paying only the minimum, it would take about ${Math.round(minPayYears(bal, S.policy.pricing.cardRate))} years to clear.`);
-    const cex = excess('cardRate'); book({ kind:'card', name:h.name, bal, rate:S.policy.pricing.cardRate, pd: (h.persist ? 0.32 : 0.025) * adv(cex) });
+    const cex = excess('cardRate'); book({ hh:h.hh, kind:'card', name:h.name, bal, rate:S.policy.pricing.cardRate, pd: (h.persist ? 0.32 : 0.025) * adv(cex) });
     if (cex > 0) later(ri(2, 4), { text:'Regulator review of your credit card pricing.', comp:-3, tone:'bad', p: Math.min(0.9, 0.12 * cex) });
     say(h.persist ? `Limit raised. ${nm} uses most of it within a fortnight.` : `Limit raised. ${nm} buys a sofa and pays most of it off.`);
     if (h.persist) later(ri(2, 4), { text:`Regulator file review: limits raised for customers in persistent debt, including ${h.name}.`, comp:-4, trust:-1, tone:'bad', p:0.4 });
@@ -875,13 +879,14 @@ function evalGoals(h, final){
 /* ============ GAME FLOW ============ */
 function newGame(seed, opts = {}){
   seed = (seed == null ? (Date.now() & 0x7fffffff) : seed) | 0;
-  S = { v:2, rs:seed, seed, month:0, year:2027, path:'soft', cash:5000, gilts:[{ kind:'short', amt:1800, coupon:4.1, dur:1.9, y0:4.15 }], deposits:15650,
+  S = { v:2, rs:seed, seed, month:0, year:2027, path:'soft', cash:5000, gilts:[{ kind:'short', amt:1800, coupon:4.1, dur:1.9, y0:4.15 }], deposits:15650, wholesale:0, wsTranches:[], bonds:0, bondTranches:[], retained:0, pools:[], large:[],
     legacy:10000, legacyRate:6.0, loans:[], savRate:2.5, cb:0, base:4.0, startCap:0,
     trust:60, comp:80, flags:{}, queue:[], qi:0, pending:[], pl:blankPL(), last:null, history:[], over:null, nextId:1,
     lastTreasury:-9, prodOrder:[], prodUsed:[], sched:{}, y0:{ base:4, u:4.3, h:1 }, career:[], divPaid:0, wm:null, wmOffer:2, mkt:100, mktY0:100, mktHist:[100], lastMkt:0,
     stats: freshStats(), up:{}, news:[], tutorial: !!opts.tutorial, scenario: opts.scenario || null,
     engine:ENGINE_VERSION, progress:{ unlocked:['branch'] }, policy:systemPolicy(), ledger:{ bal:{}, n:0 } };
   S.path = pick(['soft', 'sticky', 'downturn']);
+  if (opts.households && !opts.tutorial && !opts.scenario) S.households = makeCast();
   S.prodOrder = shuffle(['fraudModel','ob','od','branch','cyber','campaign']).concat(shuffle(['broker','ggs']));
   if (S.scenario){ const sc = SCENARIOS[S.scenario]; S.path = 'sc'; S.year = sc.year; S.tutorial = false; S.sched = makeSched(); sc.setup(); S.goals = sc.goals.map(g => ({ id:g.id, label:g.label, ok:null })); }
   else S.sched = makeSched();
@@ -903,6 +908,7 @@ function nextYear(){
   for (const p of S.pending) p.due -= 12;
   S.lastTreasury -= 12;
   if (typeof S.flags.od === 'number') S.flags.od -= 12;
+  householdYear();
   S.year++; S.month = 0; S.over = null; S.history = []; S.divPaid = 0; S.injected = 0; S.rateSum = 0; if (S.lastCapCard != null) S.lastCapCard -= 12; S.mktY0 = S.mkt;
   S.wmOffer = S.wm ? -1 : 1; S.news = [];
   if (S.wm){ for (const k of ['houseAt','campAt','calm','cashUntil']) S.wm[k] -= 12; }
@@ -916,13 +922,90 @@ function nextYear(){
   grantUnlock(r);
   buildMonth();
 }
-function migrate(s){ if (!s.policy) s.policy = systemPolicy(); { const sp = systemPolicy(); for (const a of ['treasury', 'capital']) if (!s.policy[a]) s.policy[a] = sp[a]; for (const a of Object.keys(sp.owner)) if (!s.policy.owner[a]) s.policy.owner[a] = 'system'; } if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
-function buildMonth(){ buildMonthCards(); if (fairValued()) syncGilts(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); }
+function migrate(s){ if (s.wholesale == null){ s.wholesale = 0; s.wsTranches = []; } if (s.bonds == null){ s.bonds = 0; s.bondTranches = []; s.retained = 0; s.pools = []; s.large = []; } if (!s.policy) s.policy = systemPolicy(); { const sp = systemPolicy(); for (const a of ['treasury', 'funding', 'capital']) if (!s.policy[a]) s.policy[a] = sp[a]; if (s.policy.capital.dividendPayout == null) s.policy.capital.dividendPayout = 0; for (const [k, v] of Object.entries(sp.funding)) if (s.policy.funding[k] == null) s.policy.funding[k] = v; for (const a of Object.keys(sp.owner)) if (!s.policy.owner[a]) s.policy.owner[a] = 'system'; } if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
+/* ---- recurring households ----
+   Seven named households (a student, a young renter, a couple buying their first home, a family, a self-employed
+   tradesperson, a retiree and a single parent) stay with the bank for the whole game. Their money moves each month
+   with the economy and with life events, and with what the player decides about them: a mortgage payment, a missed
+   payment, an overdraft fee. Some of the month's loan applications come from them, so the player meets the same
+   people again. Only games started with the households option have them. */
+const HH_TEMPLATES = [
+  { stage: 'student', label: 'Student', age: [19, 22], income: 950, ess: 820, cash: 0.4, other: 4.5, score: 620, goal: 'Stay out of the overdraft' },
+  { stage: 'renter', label: 'Young renter', age: [24, 29], income: 2250, ess: 1650, cash: 1.2, other: 1.5, score: 680, goal: 'Save a house deposit' },
+  { stage: 'couple', label: 'Couple buying their first home', age: [29, 35], income: 5100, ess: 3300, cash: 3, other: 2, score: 740, goal: 'Buy a first home' },
+  { stage: 'family', label: 'Family with children', age: [36, 44], income: 4500, ess: 3750, cash: 1, other: 6, score: 700, goal: 'Build an emergency fund' },
+  { stage: 'selfemp', label: 'Self-employed tradesperson', age: [34, 48], income: 3100, ess: 2200, cash: 2, other: 3, score: 690, goal: 'Cope with lean months' },
+  { stage: 'retiree', label: 'Retiree', age: [67, 73], income: 1700, ess: 1450, cash: 9, other: 0, score: 790, goal: 'Make savings last' },
+  { stage: 'parent', label: 'Single parent', age: [31, 40], income: 2350, ess: 2050, cash: 0.7, other: 2.5, score: 600, goal: 'Clear card debt' }];
+function makeCast(){
+  return HH_TEMPLATES.map((tp, i) => { const p = person(tp.age[0], tp.age[1]);
+    return { id: i + 1, name: p.name, age: p.age, hue: p.hue, stage: tp.stage, label: tp.label, goal: tp.goal, income: tp.income, base: tp.income, ess: tp.ess,
+      cash: Math.round(tp.cash * tp.ess), other: Math.round(tp.other * 1000), score: tp.score + ri(-25, 25), loanId: null, out: 0, notes: [], hist: [] }; });
+}
+function hhSay(h, text){ h.notes.push({ y: S.year, m: S.month, t: text }); if (h.notes.length > 12) h.notes.shift(); }
+function householdMonth(){
+  if (!S.households) return;
+  const m = S.month;
+  for (const h of S.households){
+    let inc = h.income;
+    if (h.out > 0){ h.out--; inc = h.income * 0.4; if (!h.out) hhSay(h, 'Back in work.'); }
+    else if (h.stage !== 'retiree' && R() < (unemp() / 100) * (h.stage === 'selfemp' ? 0.12 : h.stage === 'student' ? 0.02 : 0.05)){ h.out = ri(2, 5); inc = h.income * 0.4; hhSay(h, 'Lost their job, so income is down for a few months.'); }
+    else if (h.stage !== 'retiree' && R() < 0.008){ h.income = Math.round(h.income * 1.08); hhSay(h, 'Started a new job with a pay rise.'); }
+    if (['renter', 'couple', 'parent'].includes(h.stage) && h.age < 42 && R() < 0.005){ h.ess += 350; hhSay(h, 'Had a baby, so costs are up.'); }
+    inc *= 1 + gauss(0, h.stage === 'selfemp' ? 0.12 : 0.02);
+    let pay = 0, missed = false;
+    const l = h.loanId ? S.loans.find(x => x.id === h.loanId) : null;
+    if (h.loanId && !l){ hhSay(h, 'Their loan with us has ended.'); h.loanId = null; }
+    if (l){ pay = (l.bal * l.rate / 1200 + l.bal * AMORT[l.kind]) * 1000; if (l.status === 'arrears') missed = true; }
+    const op = h.other * 0.015, disc = inc * 0.1;
+    h.other = Math.max(0, h.other - op * 0.6);
+    const fee = (h.cash < 0 && S.flags.od !== undefined && S.flags.od !== false && S.flags.od < m) ? 90 : 0;
+    const spend = h.ess + disc + (missed ? 0 : pay) + op + fee, net = inc - spend;
+    h.cash += net;
+    if (missed){ h.score -= 40; if (!h.missed) hhSay(h, 'Fell behind on their loan repayments.'); h.missed = true; }
+    else { h.missed = false; h.score += h.cash >= 0 ? 1.5 : -3; }
+    if (fee){ h.score -= 2; if (!h.fee) hhSay(h, 'Was charged overdraft fees.'); h.fee = true; } else h.fee = false;
+    h.score = clamp(Math.round(h.score * 10) / 10, 300, 999);
+    h.hist.push({ y: S.year, m, income: Math.round(inc), spend: Math.round(spend), saved: Math.round(net), debt: Math.round((l ? l.bal * 1000 : 0) + h.other), score: Math.round(h.score), fund: Math.round(h.cash / h.ess * 10) / 10 });
+    if (h.hist.length > 36) h.hist.shift();
+  }
+}
+function householdYear(){
+  if (!S.households) return;
+  for (const h of S.households){ h.age++; if (h.age >= 67 && h.stage !== 'retiree'){ h.stage = 'retiree'; h.label = 'Retired'; h.income = Math.round(h.income * 0.55); h.base = h.income; h.ess = Math.round(h.ess * 0.8); hhSay(h, 'Retired on a smaller income.'); } }
+}
+// some applications come from the same households again
+function hhLinkCards(){
+  if (!S.households) return;
+  const used = new Set();
+  for (const c of S.queue){
+    if (c.done || !['mortgage', 'personal', 'card'].includes(c.kind) || !c.h || c.h.hh != null) continue;
+    if (!(R() < 0.35)) continue;
+    const pool = S.households.filter(h => !used.has(h.id) && !h.loanId && (c.kind !== 'mortgage' || ['couple', 'family', 'renter', 'selfemp', 'parent'].includes(h.stage)));
+    if (!pool.length) continue;
+    const hh = pick(pool); used.add(hh.id);
+    c.who = Object.assign({}, c.who, { name: hh.name, age: hh.age, hue: hh.hue }); c.h.name = hh.name; c.h.hh = hh.id;
+    if (c.h.inc){ hh.income = hh.base = Math.round(takeHome(c.h.inc) * 1000); hh.ess = Math.round(hh.income * 0.62); }
+    const last = hh.notes[hh.notes.length - 1];
+    c.note = `${first(hh.name)} is a regular customer (${hh.label.toLowerCase()}).${last ? ' Last time: ' + last.t.charAt(0).toLowerCase() + last.t.slice(1) : ''} ` + c.note;
+  }
+}
+function hhBooked(l){
+  const h = S.households && S.households.find(x => x.id === l.hh);
+  if (!h) return;
+  h.loanId = l.id; hhSay(h, `Took a ${KNAME[l.kind]} of ${full(l.bal)} from us.`);
+}
+function hhOutcome(c, k){
+  const h = S.households && S.households.find(x => x.id === c.h.hh);
+  if (!h || (h.loanId && S.loans.some(l => l.id === h.loanId && l.hh === h.id))) return;
+  hhSay(h, k === 'no' ? `Was turned down for a ${KNAME[c.kind] || 'loan'}.` : `Did not go ahead with the ${KNAME[c.kind] || 'loan'}.`);
+}
+function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); }
 function buildMonthCards(){
   const m = S.month, lead = [], other = [];
   S.pl = blankPL();
   const nr = rateAt(m);
-  if (nr !== S.base){ const old = S.base; S.base = nr; lead.push(gen.rate(old, nr)); }
+  if (nr !== S.base){ const old = S.base; S.base = nr; if (S.policy.owner.funding === 'player') addMail('Bank of England', `Bank Rate: ${nr.toFixed(2)}%`, `Bank Rate moved from ${old.toFixed(2)}% to ${nr.toFixed(2)}%. Your savings rate follows your funding policy.`, '', S.month, S.year); else lead.push(gen.rate(old, nr)); }
   for (const l of S.loans.filter(l => l.status === 'arrears' && !l.carded).slice(0, 2)) { l.carded = true; lead.push(gen.hardship(l)); }
   if (S.sched.prod.includes(m)) { const c = gen.product(); if (c) other.push(c); }
   if (S.sched.liq.includes(m)) other.push(gen.liqshock());
@@ -999,6 +1082,100 @@ function sellGiltShare(f){
   if (mv - bk < -0.5) S.stats.giltLoss = (S.stats.giltLoss || 0) + 1;
   return mv - bk;
 }
+/* ---- funding by policy ----
+   Once the player owns funding: the savings rate is held at the market rate plus the chosen gap, and the bank tops up
+   wholesale borrowing to the chosen share of deposits. Wholesale loans last three months and cost Bank Rate plus a
+   spread that widens with market stress. In a freeze (the month a liquidity shock hits and the two after, or a market
+   crash and the month after) nothing is renewed or topped up, so loans that fall due are simply repaid. */
+const WHOLESALE_MONTHS = 3;
+function marketFrozen(){ const m = S.month, s = S.sched; return (s.liq || []).some(q => m >= q && m < q + 3) || (s.crash >= 0 && m >= s.crash && m < s.crash + 2); }
+function marketStress(){ return Math.min(1, (S.path === 'downturn' || S.path === 'sticky' ? 0.25 : 0) + (marketFrozen() ? 0.5 : 0) + (S.trust < 40 ? 0.15 : 0) + (capRatio() < 0.125 ? 0.2 : 0)); }
+const wholesaleRate = () => S.base + 0.5 + 2.5 * marketStress();
+const FOUNDERS = ['Eastfield Housing Association', 'Marlow District Council', 'Harwood Logistics', 'The Aldric Trust', 'Penrose Developments', 'Calder Valley Co-operative'];
+const largeSum = () => (S.large || []).reduce((x, d) => x + d.amt, 0);
+function poolMonth(u){
+  for (const p of S.pools){
+    const pm = (1 - Math.pow(1 - p.pd, 1 / 12)) * AMP * u * (1 + Math.max(0, S.base - S.y0.base) * (P().stress || 0));
+    const loss = Math.max(0, p.bal * pm * 0.25 * (1 + gauss(0, 0.25))), take = Math.min(loss, p.ret);
+    if (take > 0) je('pool.loss', [['pl.losses', take], ['retained', -take]]);
+    p.ret -= take; p.lost = (p.lost || 0) + take; p.over = (p.over || 0) + (loss - take);
+    const am = AMORT.mortgage, back = p.ret * am;
+    if (back > 0) je('pool.repay', [['cash', back], ['retained', -back]]);
+    p.ret -= back; p.bal *= 1 - am;
+    if (p.ret > 0) post('intLoans', p.ret * p.rate / 1200);
+  }
+  S.pools = S.pools.filter(p => p.bal > 1 || p.ret > 1);
+}
+/* Sells a pool of current mortgages to investors. The bank keeps 5% of each loan as a first-loss slice (the 'retained'
+   asset): it takes the first losses on the pool up to that slice, investors take the rest. The price is a discount that
+   widens with market stress and with the pool's riskiness. mode: 0 best loans first, 1 worst first, 2 largest first. */
+function sellPool(share, mode){
+  const el = S.loans.filter(l => l.kind === 'mortgage' && l.status === 'current');
+  if (!el.length) return null;
+  el.sort(mode === 0 ? (x, y) => x.pd - y.pd : mode === 1 ? (x, y) => y.pd - x.pd : (x, y) => y.bal - x.bal);
+  const goal = share * el.reduce((x, l) => x + l.bal, 0), picked = []; let sold = 0, pdW = 0, rateW = 0;
+  for (const l of el){ if (sold >= goal) break; picked.push(l); sold += l.bal; pdW += l.bal * l.pd; rateW += l.bal * l.rate; }
+  if (sold < 50) return null;
+  const pd = pdW / sold, discount = clamp(0.01 + 0.03 * marketStress() + 0.4 * pd, 0, 0.25);
+  const cash = 0.95 * sold * (1 - discount), kept = 0.05 * sold, loss = sold - cash - kept;
+  je('pool.sale', [['cash', cash], ['retained', kept], ['pl.gilts', loss], ['loans', -sold]]);
+  S.loans = S.loans.filter(l => !picked.includes(l));
+  S.pools.push({ id: S.nextId++, bal: 0.95 * sold, ret: kept, rate: rateW / sold, pd, orig: sold, lost: 0, over: 0 });
+  S.lastPool = S.year * 12 + S.month; S.stats.poolSales = (S.stats.poolSales || 0) + 1;
+  return { sold, cash, kept, loss, discount, pd };
+}
+function fundingByPolicy(){
+  if (S.over || S.tutorial || S.scenario) return;
+  const own = S.policy.owner.funding === 'player';
+  if (!own && !S.wsTranches.length && !S.bondTranches.length && !S.large.length) return;     // handed back: existing wholesale loans, bonds and large depositors remain
+  const fp = S.policy.funding, now = S.year * 12 + S.month, notes = [];
+  if (own) S.savRate = Math.round(Math.max(0.1, mkt() + fp.savingsSpread) * 100) / 100;
+
+  // wholesale: three-month loans that must be renewed, and cannot be in a freeze
+  const wDue = S.wsTranches.filter(w => w.due <= now), wKeep = S.wsTranches.filter(w => w.due > now), repay = wDue.reduce((x, w) => x + w.amt, 0);
+  if (repay > 0) je('wholesale.repay', [['wholesale', repay], ['cash', -repay]]);
+  const frozen = marketFrozen(), wHeld = wKeep.reduce((x, w) => x + w.amt, 0), wWant = own ? fp.wholesaleTarget * S.deposits - wHeld : 0;
+  let borrowed = 0;
+  if (!frozen && wWant > 50){ borrowed = Math.floor(wWant / 50) * 50; je('wholesale.borrow', [['cash', borrowed], ['wholesale', -borrowed]]); wKeep.push({ amt: borrowed, rate: wholesaleRate(), due: now + WHOLESALE_MONTHS }); }
+  S.wsTranches = wKeep;
+
+  // fixed-term bonds: locked in at a fixed rate for 1 to 3 years, repaid or refinanced at maturity
+  const bDue = S.bondTranches.filter(x => x.due <= now), bKeep = S.bondTranches.filter(x => x.due > now), bRepay = bDue.reduce((x, y) => x + y.amt, 0);
+  if (bRepay > 0) je('bond.repay', [['bonds', bRepay], ['cash', -bRepay]]);
+  const bHeld = bKeep.reduce((x, y) => x + y.amt, 0), bWant = own ? fp.bondTarget * S.deposits - bHeld : 0;
+  let issued = 0;
+  if (bWant > 50){ issued = Math.floor(bWant / 50) * 50; const term = Math.round(fp.bondTermYears), rate = Math.round((mkt() + 1 + fp.bondPremium + 0.2 * (term - 1)) * 100) / 100; je('bond.issue', [['cash', issued], ['bonds', -issued]]); bKeep.push({ amt: issued, rate, due: now + 12 * term }); }
+  S.bondTranches = bKeep;
+
+  // large depositors: offers arrive, the cap decides whether to take them, and they can all leave at once
+  for (const d of [...S.large]){
+    const p = 0.015 + (S.trust < 45 ? 0.05 : 0) + (frozen ? 0.25 : 0) + (capRatio() < MIN_CAP ? 0.15 : 0);
+    if (R() < p){ je('deposit.flow', [['cash', -d.amt], ['deposits', d.amt]]); S.large = S.large.filter(x => x !== d); notes.push([`${d.name} has withdrawn ${full(d.amt)} in one go.`, 'bad']); }
+  }
+  if (own && fp.largeCap > 0 && R() < 0.4){
+    const amt = Math.max(100, Math.round(S.deposits * rf(0.03, 0.07) / 50) * 50), name = pick(FOUNDERS);
+    if (largeSum() + amt <= fp.largeCap * S.deposits){ je('deposit.flow', [['cash', amt], ['deposits', -amt]]); S.large.push({ id: S.nextId++, name, amt, rate: Math.max(0.1, Math.round((S.base - 0.4) * 100) / 100) }); notes.push([`${name} has placed ${full(amt)} with us at ${Math.max(0.1, S.base - 0.4).toFixed(2)}%.`, '']); }
+  }
+
+  // selling a pool of mortgages when liquidity is short
+  if (own && fp.poolWhenShort >= 0.5 && liqRatio() < 0.16 && now - (S.lastPool ?? -99) >= 3){
+    const r = sellPool(fp.poolShare, Math.round(fp.poolMode));
+    if (r) notes.push([`Liquidity was short, so we sold a ${full(r.sold)} pool of mortgages for ${full(r.cash)} and kept ${full(r.kept)} of the risk.`, '']);
+  }
+
+  if (frozen && (repay > 0 || wWant > 50)) notes.push([`Wholesale markets are frozen: other banks will not lend. ${repay > 0 ? `${full(repay)} fell due and was repaid, with nothing to replace it. ` : ''}`, 'bad']);
+  const wall = S.bondTranches.filter(x => x.due <= now + 6).reduce((x, y) => x + y.amt, 0), soon = S.wsTranches.filter(w => w.due <= now + 3).reduce((x, w) => x + w.amt, 0);
+  const funding = S.deposits + S.wholesale + S.bonds, wShare = S.wholesale / funding, lShare = largeSum() / S.deposits;
+  if (S.wholesale > 0 || S.bonds > 0 || S.large.length || S.pools.length){
+    const bits = [];
+    if (S.wholesale > 0) bits.push(`Wholesale ${full(S.wholesale)} (${pc(wShare, 0)} of funding, about ${wholesaleRate().toFixed(2)}% now, ${full(soon)} due within three months).`);
+    if (S.bonds > 0) bits.push(`Bonds ${full(S.bonds)}; ${full(wall)} matures within six months.${issued ? ` Issued ${full(issued)} this month.` : ''}`);
+    if (S.large.length) bits.push(`Largest depositors hold ${pc(lShare, 0)} of deposits.`);
+    if (S.pools.length) bits.push(`Retained exposure on sold mortgages: ${full(S.retained)}. Losses on the pools so far have used ${full(S.pools.reduce((x, p) => x + p.lost, 0))} of it${S.pools.some(p => p.over > 0) ? `, and investors have borne ${full(S.pools.reduce((x, p) => x + p.over, 0))} beyond that` : ''}.`);
+    const bad = frozen || wShare > 0.2 || lShare > 0.25 || wall > 0.25 * S.deposits || notes.some(n => n[1] === 'bad');
+    addMail('Your treasurer', frozen ? 'Wholesale markets are frozen' : 'Funding position', notes.map(n => n[0]).concat(bits).join(' '), bad ? 'bad' : '', S.month, S.year);
+  } else if (notes.length) addMail('Your treasurer', 'Funding position', notes.map(n => n[0]).join(' '), '', S.month, S.year);
+}
 function treasuryByPolicy(){
   if (S.policy.owner.treasury !== 'player' || S.over || S.tutorial || S.scenario) return;
   const tp = S.policy.treasury, target = tp.liquidityTarget * S.deposits, surplus = S.cash - target;
@@ -1022,6 +1199,8 @@ function capitalByPolicy(){
   begin();
   let what;
   if (act === 0){ issueEquity(cp.raiseAmount); what = `raised ${full(cp.raiseAmount)} from shareholders`; }
+  else if (act === 3 && S.year * 12 + S.month - (S.lastPool ?? -99) < 4) what = 'waited, because a pool was sold less than four months ago';
+  else if (act === 3){ const fp = S.policy.funding, r = sellPool(fp.poolShare, Math.round(fp.poolMode)); what = r ? `sold a ${full(r.sold)} pool of mortgages for ${full(r.cash)} and kept ${full(r.kept)} of the risk` : 'had no mortgages to sell'; }
   else if (act === 1){ const sold = sellMortgages(); what = sold > 0 ? `sold ${full(sold)} of mortgages` : 'had no mortgages to sell'; }
   else what = 'took no action';
   OUT = null;
@@ -1034,7 +1213,7 @@ function inboxActions(){ return S.queue.filter(c => !c.phys); }
 function remaining(){ return S.queue.filter(c => !c.done).length; }
 function resolveCard(c, k){
   if (!c || c.done) return null;
-  begin(); res[c.kind](c, k); c.done = k;
+  begin(); res[c.kind](c, k); c.done = k; if (c.h && c.h.hh != null) hhOutcome(c, k);
   S.qi = S.queue.filter(x => x.done).length;
   const o = OUT; OUT = null; c.out = o; return o;
 }
@@ -1069,9 +1248,14 @@ function closeMonth(){
     }
   }
   for (const g of S.gilts) post('intGilts', g.amt * g.coupon / 1200);
+  householdMonth();
   post('intRes', Math.max(0, S.cash) * S.base / 1200);
-  post('intDep', -S.deposits * S.savRate * 0.6 / 1200);
+  post('intDep', -(S.deposits - largeSum()) * S.savRate * 0.6 / 1200);
+  for (const d of S.large) post('intDep', -d.amt * d.rate / 1200);
+  for (const b of S.bondTranches) post('intDep', -b.amt * b.rate / 1200);
+  poolMonth(u);
   if (S.cb > 0) post('intCB', -S.cb * (S.base + 1) / 1200);
+  for (const w of S.wsTranches) post('intCB', -w.amt * w.rate / 1200);
   if (upMonthly()) post('costs', -upMonthly());
   post('costs', -(38 - (S.flags.branch === 'closed' ? 10 : S.flags.branch === 'hub' ? 6 : 0)) * Math.pow(Math.max(1, assets() / 16800), 0.5));
   if (S.flags.od !== undefined && S.flags.od !== false && S.flags.od < m){
@@ -1093,6 +1277,15 @@ function closeMonth(){
     if (p.comp) S.comp = clamp(S.comp + p.comp, 0, 100);
     ev(p.text + (p.cash ? ` (${fmt(p.cash, true)})` : ''), p.tone);
   }
+  // dividends: a share of the month's profit, if the player owns capital
+  if (S.policy.owner.capital === 'player' && S.policy.capital.dividendPayout > 0){
+    const prof = Object.values(S.pl).reduce((a, b) => a + b, 0), amt = S.policy.capital.dividendPayout * prof;
+    if (amt > 1){
+      je('dividend', [['equity.dividend', amt], ['cash', -amt]]); S.divPaid = (S.divPaid || 0) + amt;
+      ev(`Dividend of ${fmt(amt)} paid to shareholders.`, 'good');
+      if (capRatio() < MIN_CAP){ S.comp = clamp(S.comp - 5, 0, 100); ev('The regulator objects to a dividend while capital is below the minimum.', 'bad'); }
+    }
+  }
   // funding plumbing
   if (S.cash < 0){ const need = -S.cash + S.deposits * 0.05; je('boe.draw', [['cash', need], ['cb', -need]]); S.trust = clamp(S.trust - 3, 0, 100); S.stats.emergency++; news(9, 'Counting House forced into emergency borrowing', 'The bank ran out of cash and turned to the Bank of England.'); ev(`You ran out of cash. Emergency borrowing from the Bank of England: ${fmt(need)}.`, 'bad'); }
   else if (S.cb > 0 && liqRatio() > 0.2){ const rpy = Math.min(S.cb, S.cash - 0.15 * S.deposits); if (rpy > 0){ je('boe.repay', [['cb', rpy], ['cash', -rpy]]); ev(`Repaid ${fmt(rpy)} to the Bank of England.`, 'good'); } }
@@ -1112,12 +1305,75 @@ function closeMonth(){
   S.history.push({ m, profit: capital() - S.startCap + (S.divPaid || 0) - (S.injected || 0), cap: cr, liq: lq, trust: S.trust, comp: S.comp });
   S.month++;
   if (!S.over && S.month >= 12) S.over = 'done';
+  if (S.over) S.debrief = makeDebrief();
   evalGoals(S.history[S.history.length - 1], !!S.over);
   if (!S.over) buildMonth();
   rep.next = S.over ? null : { unemp: unemp(), hpi: hpiYr(), base: S.base };
   return rep;
 }
 
+/* ---- year-end debrief ----
+   Three to five notes from the executive team tying the year's moments to the idea behind each. Each is tagged with
+   its PISA content area and the Lusardi and Mitchell question it touches. Ideas the player has seen before are
+   ranked lower, so over several years the notes rotate through all of them. Nothing here uses the random stream. */
+function makeDebrief(){
+  const st = S.stats, seen = S.debriefSeen = S.debriefSeen || {}, cands = [];
+  const add = (concept, area, big, weight, what, why, ask) => cands.push({ concept, area, big, weight: weight - 1.5 * (seen[concept] || 0), what, why, ask });
+  const infl = inflation(11), bk = giltBook(), mv = giltMV();
+  if (bk > 0 && Math.abs(mv / bk - 1) > 0.02)
+    add('Bond prices and rates', 'Risk and reward', 'Bond prices fall when rates rise', 4 + Math.abs(mv / bk - 1) * 20,
+      `Your gilts ended the year worth ${pc(Math.abs(mv / bk - 1), 0)} ${mv < bk ? 'less' : 'more'} than you paid, because Bank Rate moved from ${S.y0.base.toFixed(2)}% to ${S.base.toFixed(2)}%.${fairValued() && mv < bk ? ' You count gilts at market value, so the fall is already in your capital.' : ''}`,
+      'When interest rates rise, existing bonds are worth less, because new ones pay more. The longer the bond, the bigger the move.',
+      mv < bk ? 'Would shorter gilts have cost you much income, and how much would they have saved?' : 'Would you still hold long gilts if rates were about to rise?');
+  add('Inflation and real returns', 'Money and transactions', 'Inflation', 2.2,
+    `Your savers earned ${S.savRate.toFixed(2)}% while prices rose ${infl.toFixed(1)}%, a real return of ${(S.savRate - infl).toFixed(1)}%.`,
+    'The real return is the interest rate minus inflation. A positive rate can still buy less next year.',
+    S.savRate < infl ? 'Would you keep your own savings at a bank paying this rate?' : 'What would you do with savings that earn more than prices rise?');
+  { const r = mRate(80), L = 200, p30 = annuity(L, r, 30), p20 = annuity(L, r, 20);
+    add('Mortgage cost over the term', 'Planning and managing finances', 'Mortgage cost over the term', st.loans > 0 ? 2.6 : 1.6,
+      `A ${full(L)} mortgage at ${r.toFixed(2)}% costs ${full(p30 * 360 - L)} in interest over 30 years, but ${full(p20 * 240 - L)} over 20.`,
+      'A longer term lowers the monthly payment and raises the total cost. The borrower pays for the lower payment in interest.',
+      'Who gains from a longer term, the borrower or the bank?'); }
+  { const g1 = Math.pow(1.05, 25), g2 = Math.pow(1.04, 25), sr = S.savRate / 100, y10 = 1000 * Math.pow(1 + sr, 10);
+    if (S.wm) add('Compound interest and fees', 'Money and transactions', 'Compound interest', 3.2,
+      `A fee of 1% a year sounds small. Over 25 years at 5% growth it takes ${pc(1 - g2 / g1, 0)} of what the money would have become.`,
+      'Interest and fees both compound: a small yearly amount grows into a large one over a long time.', 'Would your wealth clients understand that when they sign?');
+    else add('Compound interest and fees', 'Money and transactions', 'Compound interest', 1.8,
+      `At your savings rate of ${S.savRate.toFixed(2)}%, ${full(1)} left untouched for 10 years becomes ${full(y10 / 1000)}.`,
+      'Interest earns interest, so money grows faster the longer it stays. The same happens to debt.', 'What would the same pound cost on a card at 24.9%?'); }
+  { const tot = loanSum(), mort = loanSum('mortgage'), share = tot > 0 ? mort / tot : 0, big = largeSum() / Math.max(1, S.deposits);
+    if (share > 0.65 && tot > 1500) add('Diversification', 'Risk and reward', 'Diversification and risk', 2.4 + share,
+      `${pc(share, 0)} of your lending is mortgages, so one fall in house prices would hit most of your book at once.`,
+      'Spreading money across different kinds of risk means one bad event cannot take it all.', 'What would you lend more of to balance the book, and what does it cost you?');
+    else if (big > 0.2) add('Diversification', 'Risk and reward', 'Diversification and risk', 3 + big * 5,
+      `Your largest depositors hold ${pc(big, 0)} of your deposits. One decision could move that money.`,
+      'Relying on a few big sources, whether depositors or investments, concentrates the risk.', 'How much of your funding would you let one customer provide?'); }
+  if (st.defaults > 0) add('Risk and return', 'Risk and reward', 'Risk and reward', 2.3 + Math.min(2, st.defaults / 4),
+    `${st.defaults} loans went bad this year and cost ${fmt(st.losses)}.`,
+    'Riskier borrowers are charged more because some will not repay, but a higher rate does not make a risky borrower safer.', 'Which of your approvals would you decide differently now?');
+  if (st.emergency > 0) add('Liquidity', 'Financial landscape', 'Risk and reward', 4.2,
+    `You ran out of cash ${st.emergency === 1 ? 'once' : st.emergency + ' times'} and had to borrow from the Bank of England.`,
+    'A bank can be profitable and still fail if it cannot pay what is due today. Cash and quickly sold assets are the first defence.', 'How much cash would have let you ride it out?');
+  if (st.capBreach > 0) add('Capital', 'Financial landscape', 'Risk and reward', 3.6,
+    `Your capital ratio fell below the regulator's minimum ${st.capBreach === 1 ? 'once' : st.capBreach + ' times'}.`,
+    'Capital is the cushion that absorbs losses before depositors are hurt. Lending more without more capital thins it.', 'Which would you rather give up, some lending or some of the owners\' share?');
+  if (S.wholesale > 0 || S.bonds > 0) add('Funding risk', 'Financial landscape', 'Risk and reward', 3.1,
+    `${full(S.wholesale + S.bonds)} of your funding is borrowed for a fixed time rather than held as customer deposits.`,
+    'Money borrowed for a short time must be renewed. If markets freeze, a bank that relies on it can be forced to sell assets or borrow in an emergency.', 'What falls due in your next six months?');
+  if (S.pools.length) add('Selling loans, keeping risk', 'Risk and reward', 'Diversification and risk', 3.3,
+    `You have sold mortgages but still hold ${full(S.retained)} of the risk, the first slice of any losses.`,
+    'Selling loans frees capital, but whoever keeps the first losses still carries much of the risk.', 'Would you buy a pool from a bank that kept none of it?');
+  if (S.flags.od !== undefined && S.flags.od !== false) add('Fees and overdrafts', 'Planning and managing finances', 'Interest rates', 3.4,
+    `Your overdraft fee has charged customers ${fmt(S.flags.odTotal || 0)} so far.`,
+    'Fees hit hardest the people with the least slack, and a daily fee can cost more than the overdraft itself.', 'Who pays it, and could they afford it?');
+  if (st.fines > 0) add('Scams and fraud', 'Money and transactions', 'Risk and reward', 2.8,
+    `Fines, refunds and redress cost you ${fmt(st.fines)} this year.`,
+    'Fraud and scams are costly for banks and customers. Checks catch some, and slowing a payment can protect a customer.', 'Where would you add a check, and who would it slow down?');
+  cands.sort((a, b) => b.weight - a.weight);
+  const pick5 = cands.slice(0, Math.min(5, Math.max(3, cands.filter(c => c.weight > 2).length)));
+  for (const c of pick5) seen[c.concept] = (seen[c.concept] || 0) + 1;
+  return pick5.map(({ concept, area, big, what, why, ask }) => ({ concept, area, big, what, why, ask }));
+}
 function rating(){
   const profit = capital() - S.startCap + (S.divPaid || 0) - (S.injected || 0), roe = profit / (S.startCap + (S.injected || 0) / 2);
   if (S.over && S.over !== 'done') return { letter:'D', score:0, profit, roe, peer:0 };
@@ -1125,9 +1381,10 @@ function rating(){
   const peer = clamp(-0.43 + 0.112 * avgBase + (S.career && S.career.length ? 0.07 : 0), -0.25, 0.3);
   const pP = clamp(0.5 + (roe - peer) / 0.15, -1, 1.5) * 30, pC = S.trust * 0.35, pK = S.comp * 0.25;
   const pen = S.stats.capBreach * 4 + S.stats.emergency * 4;
-  const score = pP + pC + pK - pen;
+  const pD = S.divPaid > 0 ? clamp(S.divPaid / S.startCap / 0.05, 0, 1) * 8 : 0;   // shareholders like a dividend, up to 8 points at a 5% yield
+  const score = pP + pC + pK - pen + pD;
   const letter = score >= 82 ? 'AAA' : score >= 74 ? 'AA' : score >= 66 ? 'A' : score >= 58 ? 'BBB' : score >= 50 ? 'BB' : score >= 42 ? 'B' : score >= 32 ? 'CCC' : 'CC';
-  return { letter, score, profit, roe, pP, pC, pK, pen, peer };
+  return { letter, score, profit, roe, pP, pC, pK, pen, pD, peer };
 }
 
 /* ---- inbox: mail is game state, created by the engine ---- */

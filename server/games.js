@@ -39,7 +39,7 @@ function validate(state, cmd) {
     if (typeof cmd.key !== 'string') throw new HttpError(400, 'bad_command', 'Missing upgrade key.');
   } else if (cmd.type === 'setPolicy') {
     if (state.over) throw new HttpError(409, 'game_over', 'The year is over.');
-    if (!['pricing', 'credit', 'treasury', 'capital'].includes(cmd.area)) throw new HttpError(400, 'bad_command', 'Unknown policy area.');
+    if (!['pricing', 'credit', 'treasury', 'funding', 'capital'].includes(cmd.area)) throw new HttpError(400, 'bad_command', 'Unknown policy area.');
     if (!state.progress.unlocked.includes(cmd.area)) throw new HttpError(403, 'not_unlocked', 'You do not control that policy yet.');
     if (!cmd.release && (!cmd.values || typeof cmd.values !== 'object' || Array.isArray(cmd.values))) throw new HttpError(400, 'bad_command', 'Missing values.');
   } else if (cmd.type === 'read') {
@@ -89,6 +89,23 @@ async function syncBook(client, gid, at, loans) {
     [gid, json, at.year, at.month]);
 }
 
+// Keeps the household cast and each closed month of their money in step with the engine.
+async function syncHouseholds(client, gid, at, households) {
+  const cast = JSON.stringify(households.map((h) => ({ id: h.id, name: h.name, stage: h.stage, label: h.label, goal: h.goal })));
+  await client.query(
+    `INSERT INTO bank.household (game_id, household_id, name, stage, label, goal)
+     SELECT $1, r.id, r.name, r.stage, r.label, r.goal FROM json_to_recordset($2::json) AS r(id int, name text, stage text, label text, goal text)
+     ON CONFLICT (game_id, household_id) DO UPDATE SET stage = EXCLUDED.stage, label = EXCLUDED.label`, [gid, cast]);
+  const rows = households.map((h) => ({ h, e: h.hist.find((x) => x.y === at.year && x.m === at.month) })).filter((r) => r.e)
+    .map(({ h, e }) => ({ id: h.id, income: Math.round(e.income * 100), spend: Math.round(e.spend * 100), saved: Math.round(e.saved * 100), debt: Math.round(e.debt * 100), score: e.score, fund: e.fund }));
+  if (rows.length)
+    await client.query(
+      `INSERT INTO bank.household_month (game_id, household_id, year, month, income_pence, spending_pence, saved_pence, debt_pence, credit_score, fund_months)
+       SELECT $1, r.id, $3, $4, r.income, r.spend, r.saved, r.debt, r.score, r.fund
+       FROM json_to_recordset($2::json) AS r(id int, income bigint, spend bigint, saved bigint, debt bigint, score int, fund numeric)`,
+      [gid, JSON.stringify(rows), at.year, at.month]);
+}
+
 // Writes everything one command produced. The caller holds the transaction.
 async function persist(client, game, seq, cmd, before, out) {
   const { state, result, entries, facts } = out;
@@ -131,6 +148,7 @@ async function persist(client, game, seq, cmd, before, out) {
   }
 
   await syncBook(client, gid, before || { year: state.year, month: state.month }, state.loans || []);
+  if (state.households && cmd.type === 'closeMonth') await syncHouseholds(client, gid, before, state.households);
   if (cmd.type === 'closeMonth') {
     for (const c of facts.cohorts)
       await client.query(
@@ -172,6 +190,7 @@ function register(app, { pool, host }) {
     const opts = {};
     if (body.tutorial) opts.tutorial = true;
     if (body.scenario) opts.scenario = String(body.scenario);
+    if (body.households && !opts.tutorial && !opts.scenario) opts.households = true;
     const seed = crypto.randomInt(1, 0x7fffffff);
     const cmd = { type: 'newGame', seed, opts };
     let out;

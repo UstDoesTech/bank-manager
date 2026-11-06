@@ -30,7 +30,7 @@ function sweep() {
 }
 module.exports = { sweep, profit, SWEEPS, SEEDS };
 
-if (require.main === module && !process.argv.includes('--credit') && !process.argv.includes('--treasury') && !process.argv.includes('--capital')) {
+if (require.main === module && !process.argv.includes('--credit') && !process.argv.some(a => a !== '--credit' && a.startsWith('--'))) {
   const res = sweep();
   for (const [key, rows] of Object.entries(res)) {
     console.log('\n' + key);
@@ -66,11 +66,11 @@ if (require.main === module && process.argv.includes('--credit') && !process.arg
 
 // Treasury and capital: standing rules compared over the same games. A low cash target or all-long gilts should not be free money,
 // and neither should never raising capital.
-function areaRun(area, values, bot = 'careful') {
+function areaRun(area, values, bot = 'careful', pre = []) {
   let total = 0, failed = 0, breaches = 0, minLiq = 0; const scores = [];
   for (const seed of SEEDS) {
     const E = loadEngine(src);
-    const { S } = play(E, seed, bot, YEARS, {}, (run, e) => { e.S.progress.unlocked.push('pricing', 'credit', 'treasury', 'capital'); run({ type: 'setPolicy', area, values }); });
+    const { S } = play(E, seed, bot, YEARS, {}, (run, e) => { e.S.progress.unlocked.push('pricing', 'credit', 'treasury', 'funding', 'capital'); for (const [a, v] of pre) run({ type: 'setPolicy', area: a, values: v }); run({ type: 'setPolicy', area, values }); });
     total += E.rating().profit; if (YEARS > 1) total += (E.S.career || []).reduce((a, c) => a + c.profit, 0);
     scores.push(E.rating().score);
     if (S.over && S.over !== 'done') failed++;
@@ -90,10 +90,33 @@ const CAPITAL = [
   ['target 18%, raise 300', { capitalTarget: 0.18, capitalAction: 0, raiseAmount: 300 }], ['target 18%, raise 1000', { capitalTarget: 0.18, capitalAction: 0, raiseAmount: 1000 }],
   ['target 25%, raise 1000', { capitalTarget: 0.25, capitalAction: 0, raiseAmount: 1000 }],
 ];
+const FUNDING = [
+  ['spread -1.0', { savingsSpread: -1 }], ['spread -0.5', { savingsSpread: -0.5 }], ['spread 0', { savingsSpread: 0 }], ['spread +0.5', { savingsSpread: 0.5 }], ['spread +1.0', { savingsSpread: 1 }], ['spread +2.0', { savingsSpread: 2 }],
+  ['wholesale 10%', { wholesaleTarget: 0.1 }], ['wholesale 20%', { wholesaleTarget: 0.2 }], ['wholesale 35%', { wholesaleTarget: 0.35 }],
+];
+const DIVIDENDS = [
+  ['payout 0', { capitalTarget: 0.125, capitalAction: 0, dividendPayout: 0 }], ['payout 30%', { capitalTarget: 0.125, capitalAction: 0, dividendPayout: 0.3 }],
+  ['payout 60%', { capitalTarget: 0.125, capitalAction: 0, dividendPayout: 0.6 }], ['payout 100%', { capitalTarget: 0.125, capitalAction: 0, dividendPayout: 1 }],
+];
 module.exports.areaRun = areaRun; module.exports.TREASURY = TREASURY; module.exports.CAPITAL = CAPITAL;
-for (const [flag, area, rows] of [['--treasury', 'treasury', TREASURY], ['--capital', 'capital', CAPITAL]]) {
+for (const [flag, area, rows] of [['--treasury', 'treasury', TREASURY], ['--capital', 'capital', CAPITAL], ['--funding', 'funding', FUNDING], ['--funding-desk', 'funding', FUNDING], ['--dividends', 'capital', DIVIDENDS]]) {
   if (require.main === module && process.argv.includes(flag)) {
     console.log('\n' + area + ' policy');
-    for (const [name, v] of rows) { const r = areaRun(area, v); console.log('  ' + name.padEnd(28) + 'mean profit ' + r.mean.toFixed(1).padStart(8) + '  cap breaches ' + r.breaches.toFixed(2) + '  rating score ' + r.score.toFixed(1) + ' (worst tenth ' + r.p10.toFixed(1) + ')' + (r.failed ? '  failed ' + r.failed : '')); }
+    for (const [name, v] of rows) { const r = areaRun(area, v, 'careful', flag === '--funding-desk' ? [['credit', {}]] : []); console.log('  ' + name.padEnd(28) + 'mean profit ' + r.mean.toFixed(1).padStart(8) + '  cap breaches ' + r.breaches.toFixed(2) + '  rating score ' + r.score.toFixed(1) + ' (worst tenth ' + r.p10.toFixed(1) + ')' + (r.failed ? '  failed ' + r.failed : '')); }
+  }
+}
+
+// Bonds, large depositors and pool sales, with the lending desk running so that funding matters.
+const BONDS = [['none', {}], ['bonds 10%, 1 year', { bondTarget: 0.1, bondTermYears: 1 }], ['bonds 20%, 1 year', { bondTarget: 0.2, bondTermYears: 1 }], ['bonds 20%, 3 years', { bondTarget: 0.2, bondTermYears: 3 }], ['bonds 30%, 3 years', { bondTarget: 0.3, bondTermYears: 3 }], ['bonds 20%, premium 2', { bondTarget: 0.2, bondPremium: 2 }]];
+const LARGE = [['cap 0', { largeCap: 0 }], ['cap 15%', { largeCap: 0.15 }], ['cap 30%', { largeCap: 0.3 }], ['cap 50%', { largeCap: 0.5 }]];
+const POOLS = [
+  ['carry on at 14%', { capitalTarget: 0.14, capitalAction: 2 }], ['raise 300 at 14%', { capitalTarget: 0.14, capitalAction: 0, raiseAmount: 300 }],
+  ['pool 25% best, at 14%', { capitalTarget: 0.14, capitalAction: 3 }, [['funding', { poolShare: 0.25, poolMode: 0 }]]], ['pool 50% best, at 14%', { capitalTarget: 0.14, capitalAction: 3 }, [['funding', { poolShare: 0.5, poolMode: 0 }]]],
+  ['pool 25% worst, at 14%', { capitalTarget: 0.14, capitalAction: 3 }, [['funding', { poolShare: 0.25, poolMode: 1 }]]], ['pool 50% worst, at 14%', { capitalTarget: 0.14, capitalAction: 3 }, [['funding', { poolShare: 0.5, poolMode: 1 }]]],
+];
+for (const [flag, area, rows] of [['--bonds', 'funding', BONDS], ['--large', 'funding', LARGE], ['--pools', 'capital', POOLS]]) {
+  if (require.main === module && process.argv.includes(flag)) {
+    console.log('\n' + flag.slice(2));
+    for (const [name, v, pre] of rows) { const r = areaRun(area, v, 'careful', [['credit', {}]].concat(pre || [])); console.log('  ' + name.padEnd(26) + 'mean profit ' + r.mean.toFixed(1).padStart(8) + '  cap breaches ' + r.breaches.toFixed(2) + '  rating score ' + r.score.toFixed(1) + ' (worst tenth ' + r.p10.toFixed(1) + ')' + (r.failed ? '  failed ' + r.failed : '')); }
   }
 }

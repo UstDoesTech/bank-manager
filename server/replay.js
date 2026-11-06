@@ -47,6 +47,15 @@ async function verifyGame(pool, host, gameId) {
     }
   }
 
+  if (state && state.households) {
+    const rows = (await pool.query('SELECT household_id, credit_score, year, month FROM bank.household_month WHERE game_id = $1 ORDER BY year, month', [gameId])).rows;
+    for (const h of state.households) {
+      const mine = rows.filter((x) => x.household_id === h.id), last = h.hist[h.hist.length - 1];
+      if (mine.length !== h.hist.length && h.hist.length < 36) problems.push(`household ${h.name} has ${mine.length} stored months, replay has ${h.hist.length}`);
+      if (last && mine.length && mine[mine.length - 1].credit_score !== last.score) problems.push(`household ${h.name}'s stored credit score differs from the replay`);
+    }
+  }
+
   const lines = (await pool.query(
     'SELECT entry_seq, line_no, account, amount_pence FROM bank.journal_line WHERE game_id = $1 ORDER BY entry_seq, line_no', [gameId])).rows;
   const byEntry = new Map();

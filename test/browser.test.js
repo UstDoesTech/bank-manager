@@ -74,8 +74,17 @@ test('the page: sign up, confirm, accept the notice, play online and offline, an
   await page.click('#acBack');
   await waitFor(async () => /Recording as pat@example.com/.test(await page.textContent('#ovAcct')), 'signed-in title');
 
-  // start a training game: the server hands out the seed, the page plays on its own engine
-  await page.click('#ovTrain');
+  // a new game: the five-question check comes first (optional), then the server hands out the seed and the page plays on its own engine
+  await page.click('#ovNew');
+  await page.waitForSelector('#lqGo');
+  assert.match(await page.textContent('.panel'), /Five quick questions/);
+  await page.click('#lqGo');
+  assert.match(await page.textContent('#lqMsg'), /answer every question/);       // it will not submit half-answered
+  for (const name of ['interest', 'inflation', 'diversification', 'mortgage', 'bonds']) await page.check('input[name=lq_' + name + '] >> nth=0');
+  await page.click('#lqGo');
+  await page.waitForSelector('#lqDone');
+  assert.match(await page.textContent('.panel'), /You got \d of 5/);
+  await page.click('#lqDone');
   await waitFor(async () => (await pool.query('SELECT 1 FROM bank.game')).rows.length === 1, 'game on the server');
   const gameId = (await pool.query('SELECT id FROM bank.game')).rows[0].id;
   const seed = (await pool.query('SELECT seed FROM bank.game WHERE id = $1', [gameId])).rows[0].seed;
@@ -91,6 +100,16 @@ test('the page: sign up, confirm, accept the notice, play online and offline, an
 
   await playMonth(); await playMonth();
   await waitFor(async () => { const r = await pageCommands(); return r.pending && r.pending.length === 0 && (await serverSeq()) === r.seq && r.seq > 8; }, 'server to catch up');
+
+  // the regular customers: seven households, a Customers panel, and each closed month stored on the server
+  assert.strictEqual(await page.evaluate(() => S.households.length), 7);
+  await waitFor(async () => !(await page.isHidden('#hhBtn')), 'Customers button');
+  await page.evaluate(() => closeOverlay());
+  await page.click('#hhBtn');
+  assert.strictEqual(await page.locator('#ov .note').count(), 7);
+  assert.match(await page.textContent('.panel'), /credit score \d+ \/ 999/);
+  await page.click('#hhBack');
+
 
   // offline: play another month, nothing reaches the server, but nothing is lost
   const before = await serverSeq();
@@ -114,6 +133,8 @@ test('the page: sign up, confirm, accept the notice, play online and offline, an
   assert.strictEqual(Number(ledger), 0);
   assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.regulatory_snapshot WHERE game_id = $1', [gameId])).rows[0].n, 3);
 
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.household_month WHERE game_id = $1', [gameId])).rows[0].n, 7 * 3);
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.literacy_check')).rows[0].n, 1);
   assert.deepStrictEqual(errors, [], 'no script errors in the page');
   await ctx.close();
 });
@@ -127,6 +148,17 @@ test('the page works with no server: opened from a file there is no account butt
   await page.click('#ovTrain');
   const ok = await page.evaluate(() => { for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); closeBooks(); return S.month; });
   assert.strictEqual(ok, 1);
+
+  // a full year: the year-end screen has the note about default rates and the executive team's notes, which can be read and skipped
+  await page.evaluate(() => { closeOverlay(); while (!S.over){ for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); dispatch({ type: 'closeMonth' }); } endScreen(); });
+  assert.match(await page.textContent('.panel'), /about three times real-world levels/);
+  await page.click('#ovDebrief');
+  const notes = await page.locator('#ov .note').count();
+  assert(notes >= 3 && notes <= 5, 'three to five notes: ' + notes);
+  assert.match(await page.textContent('.panel'), /To think about/);
+  await page.click('#dbBack');
+  assert.match(await page.textContent('.panel'), /year-end rating/);
+  assert.strictEqual(await page.$('#ovLit'), null, 'no check is offered when playing without an account');
 
   // the Policy button is hidden until the board hands pricing over; then the screen edits it and a bad value is refused
   assert.strictEqual(await page.isVisible('#policyBtn'), false);

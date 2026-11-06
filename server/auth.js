@@ -161,6 +161,7 @@ function register(app, { pool, mailer, config }) {
     try {
       await client.query('BEGIN');
       await client.query('DELETE FROM bank.game WHERE player_key = $1', [req.player.player_key]);
+      await client.query('DELETE FROM bank.literacy_check WHERE player_key = $1', [req.player.player_key]);
       await client.query('DELETE FROM account.player WHERE id = $1', [req.player.id]);
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }

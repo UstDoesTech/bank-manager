@@ -38,6 +38,7 @@ async function build({ pool, cfg = config, logger = true, mailer } = {}) {
 
   auth.register(app, { pool: db, mailer: mailer || createDevMailer(db, logger ? app.log : null), config: cfg });
   games.register(app, { pool: db, host });
+  require('./literacy').register(app, { pool: db });
 
   app.get('/healthz', async () => { await db.query('SELECT 1'); return { ok: true, engine: host.version }; });
   app.get('/', async (req, reply) => reply.type('text/html; charset=utf-8').send(fs.readFileSync(PAGE)));

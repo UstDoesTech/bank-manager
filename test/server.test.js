@@ -242,7 +242,7 @@ test('portfolio: borrowers, agreements, collateral and month-end cohorts are rec
 test('policy: every game starts on the system pricing and credit policy and cannot change it until it is unlocked', async () => {
   const cookie = await newPlayer('rex@example.com');
   const g = (await call('POST', '/api/games', {}, cookie)).json;
-  assert.deepStrictEqual(g.state.policy.owner, { pricing: 'system', credit: 'system', treasury: 'system', capital: 'system' });
+  assert.deepStrictEqual(g.state.policy.owner, { pricing: 'system', credit: 'system', treasury: 'system', funding: 'system', capital: 'system' });
   assert.strictEqual(g.state.policy.pricing.cardRate, 24.9);
   const url = `/api/games/${g.id}/commands`;
   const r = await call('POST', url, { seq: 2, command: { type: 'setPolicy', area: 'pricing', values: { cardRate: 5 } } }, cookie);
@@ -258,6 +258,80 @@ test('policy: every game starts on the system pricing and credit policy and cann
   validate(open, { type: 'setPolicy', area: 'credit', release: true });
   assert.throws(() => validate(open, { type: 'setPolicy', area: 'credit', values: [1] }), /Missing values/);
   assert.deepStrictEqual(cleanCommand({ type: 'setPolicy', area: 'credit', release: true, evil: 1 }), { type: 'setPolicy', area: 'credit', values: undefined, release: true });
+});
+
+test('ledger: every account the engine can post to is in the chart of accounts', async () => {
+  const have = new Set((await pool.query('SELECT code FROM bank.gl_account')).rows.map((r) => r.code));
+  const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), 'utf8');
+  // accounts named in journal entries, plus one P&L account per line of the profit-and-loss statement
+  const named = new Set([...src.matchAll(/\[\s*'((?:pl|equity)\.[A-Za-z]+|cash|gilts|legacy|loans|deposits|cb|wholesale|bonds|retained)'\s*,/g)].map((m) => m[1]));
+  const pl = [...src.matchAll(/function blankPL\(\)\{ return \{([^}]*)\}/g)][0][1].split(',').map((s) => 'pl.' + s.split(':')[0].trim());
+  for (const a of [...named, ...pl]) assert(have.has(a), 'missing from the chart of accounts: ' + a);
+  assert(have.has('wholesale') && have.has('equity.dividend'));
+});
+
+test('households: a game started with them records the cast and each month, and the replay agrees', async () => {
+  const cookie = await newPlayer('kit@example.com');
+  const g = await call('POST', '/api/games', { households: true }, cookie);
+  assert.strictEqual(g.status, 201); assert.strictEqual(g.json.state.households.length, 7);
+  const played = await play(cookie, g.json.id, g.json.state, 1, 4);
+  const id = g.json.id, q = async (sql) => (await pool.query(sql, [id])).rows;
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.household WHERE game_id = $1'))[0].n, 7);
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.household_month WHERE game_id = $1'))[0].n, 7 * 4);
+  const cast = played.state.households, row = (await q("SELECT * FROM bank.household_month WHERE game_id = $1 AND household_id = 3 ORDER BY year, month DESC LIMIT 1"))[0];
+  assert.strictEqual(row.credit_score, cast.find((h) => h.id === 3).hist.at(-1).score);
+  assert.strictEqual((await verifyGame(pool, host, id)).ok, true);
+  await pool.query('UPDATE bank.household_month SET credit_score = credit_score + 1 WHERE game_id = $1 AND household_id = 3 AND year = $2 AND month = $3', [id, row.year, row.month]);
+  assert.strictEqual((await verifyGame(pool, host, id)).ok, false, 'an edited score is caught');
+  // tutorials and scenarios never get a cast, whatever the request says
+  const tut = await call('POST', '/api/games', { households: true, tutorial: true }, cookie);
+  assert.strictEqual(tut.json.state.households, undefined);
+});
+
+test('literacy: five questions before the first game and one more after each year, scored on the server', async () => {
+  const { QUESTIONS } = require('../server/literacy');
+  assert.strictEqual((await call('GET', '/api/literacy')).status, 401);
+  const noConsent = await newPlayer('lou@example.com', { consent: false });
+  assert.strictEqual((await call('POST', '/api/literacy', { answers: {} }, noConsent)).status, 409);
+
+  const cookie = await newPlayer('mia@example.com');
+  const first = (await call('GET', '/api/literacy', null, cookie)).json;
+  assert.strictEqual(first.due, true); assert.strictEqual(first.phase, 'before'); assert.strictEqual(first.questions.length, 5);
+  assert(!JSON.stringify(first).match(/"answer"|"why"/), 'the page is never sent the answer key');
+  const right = Object.fromEntries(QUESTIONS.map((q) => [q.id, q.answer])), wrong = Object.fromEntries(QUESTIONS.map((q) => [q.id, q.options.find((o) => o.k !== q.answer && o.k !== 'dk').k]));
+  assert.strictEqual((await call('POST', '/api/literacy', { answers: { interest: 'a' } }, cookie)).status, 400);
+  assert.strictEqual((await call('POST', '/api/literacy', { answers: { ...right, bonds: 'zzz' } }, cookie)).status, 400);
+  const r1 = await call('POST', '/api/literacy', { answers: { ...wrong, interest: 'dk' } }, cookie);
+  assert.strictEqual(r1.status, 201); assert.strictEqual(r1.json.score, 0); assert.strictEqual(r1.json.phase, 'before'); assert(r1.json.results.every((x) => x.why && x.correct === false));
+  assert.strictEqual((await call('GET', '/api/literacy', null, cookie)).json.due, false, 'nothing is due until a year is played');
+  assert.strictEqual((await call('POST', '/api/literacy', { answers: right }, cookie)).status, 409, 'cannot take it twice for the same point');
+
+  // play a year; one more check is then due, and it can be tied to the game
+  const g = (await call('POST', '/api/games', {}, cookie)).json;
+  const played = await play(cookie, g.id, g.state, 1, 12);
+  assert.strictEqual(played.state.over, 'done');
+  const due = (await call('GET', '/api/literacy', null, cookie)).json;
+  assert.strictEqual(due.due, true); assert.strictEqual(due.phase, 'after'); assert.strictEqual(due.yearsPlayed, 1); assert.strictEqual(due.attempt, 2);
+  assert.strictEqual((await call('POST', '/api/literacy', { answers: right, gameId: '00000000-0000-0000-0000-000000000000' }, cookie)).status, 404);
+  const r2 = await call('POST', '/api/literacy', { answers: right, gameId: g.id }, cookie);
+  assert.strictEqual(r2.status, 201); assert.strictEqual(r2.json.score, 5); assert.strictEqual(r2.json.phase, 'after');
+  assert.strictEqual((await call('GET', '/api/literacy', null, cookie)).json.due, false);
+
+  // the analysis views see the change from 0 to 5 and the per-question results
+  const prog = (await pool.query('SELECT first_score, latest_score, change, years_played FROM bank.literacy_progress')).rows;
+  assert.strictEqual(prog.length, 1); assert.deepStrictEqual(prog[0], { first_score: 0, latest_score: 5, change: 5, years_played: 1 });
+  const byC = (await pool.query("SELECT phase, share_correct FROM bank.literacy_by_concept WHERE question = 'bonds' ORDER BY phase")).rows;
+  assert.deepStrictEqual(byC.map((r) => [r.phase, Number(r.share_correct)]), [['after', 1], ['before', 0]]);
+  assert((await pool.query('SELECT decisions FROM bank.literacy_with_play WHERE attempt = 2')).rows[0].decisions > 5);
+
+  // a player who keeps games out of analysis is left out of the views, and deleting the player removes the checks
+  const quiet = await newPlayer('nat@example.com', { consent: false });
+  await call('POST', '/api/consent', { optOut: true }, quiet);
+  assert.strictEqual((await call('POST', '/api/literacy', { answers: right }, quiet)).status, 201);
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.literacy_check')).rows[0].n, 3);
+  assert.strictEqual((await pool.query("SELECT count(*)::int n FROM bank.literacy_by_concept WHERE phase = 'before'")).rows[0].n, 5, 'only the first player appears');
+  assert.strictEqual((await call('DELETE', '/api/me', { password: PW }, cookie)).status, 200);
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.literacy_check')).rows[0].n, 1);
 });
 
 test('games: bad, repeated, out-of-order and foreign commands are refused and change nothing', async () => {
@@ -322,7 +396,7 @@ test('players: opting out of analysis is recorded on the game; deleting a player
   await call('POST', '/api/consent', { optOut: true }, cookie);
   const g = (await call('POST', '/api/games', {}, cookie)).json;
   assert.strictEqual((await pool.query('SELECT in_analysis, synthetic FROM bank.game WHERE id = $1', [g.id])).rows[0].in_analysis, false);
-  const col = (await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'bank' AND table_name NOT IN ('gl_account', 'party') AND column_name IN ('email', 'name', 'password_hash')")).rows;
+  const col = (await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'bank' AND table_name NOT IN ('gl_account', 'party', 'household') AND column_name IN ('email', 'name', 'password_hash')")).rows;
   assert.deepStrictEqual(col, [], 'the bank schema never holds an email, name or password');
   assert.strictEqual((await call('DELETE', '/api/me', { password: 'wrong wrong wrong' }, cookie)).status, 401);
   assert.strictEqual((await call('DELETE', '/api/me', { password: PW }, cookie)).status, 200);
@@ -338,4 +412,11 @@ test('web: the page is served, health check works, and form posts are refused', 
   assert.strictEqual((await call('GET', '/healthz')).json.ok, true);
   const form = await app.inject({ method: 'POST', url: '/api/login', payload: 'email=a&password=b', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
   assert.strictEqual(form.statusCode, 415);
+});
+
+test('literacy: every example analysis query runs', async () => {
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'db', 'analysis', 'literacy.sql'), 'utf8');
+  const queries = sql.split(';').map((q) => q.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean);
+  assert(queries.length >= 5);
+  for (const q of queries) await pool.query(q);
 });
