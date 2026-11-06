@@ -3,6 +3,7 @@ const vm = require('vm'), fs = require('fs'), crypto = require('crypto');
 function loadEngine(src){
   const ctx = vm.createContext({ console, Date });
   vm.runInContext(src + ';LEDGER_STRICT=true;this.E={newGame,closeMonth,resolveCard,nextYear,buyUpgrade,current,rating,get S(){return S},set S(v){S=v},migrate,' +
+    '...(typeof portfolio==="function"?{portfolio,loanRW,loanSum,rwa,policyVerdict,systemPolicy}:{}),' +
     '...(typeof ledgerCheck==="function"?{ledgerCheck,setSink:f=>{LEDGER_SINK=f}}:{}),' +
     '...(typeof mortgageRisk==="function"?{mortgageRisk,LEVELS,UPGRADES,owned,capRatio,SCENARIOS}:{}),' +
     '...(typeof dispatch==="function"?{dispatch}:{})}', ctx);

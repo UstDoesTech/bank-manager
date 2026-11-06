@@ -53,10 +53,12 @@ After changing `engine/engine.js`, run `npm run build` so the page picks it up. 
 - `server/replay.js` rebuilds a game from its seed and commands and checks the state, every journal line and the
   decisions against what was stored. It also catches any edit to the stored commands.
 - If the connection drops, the page keeps unsent commands in `localStorage` and sends them when it can.
+- The loan book is recorded as party, agreement and collateral rows, and each month end as cohorts (product, risk band, month of issue) with balance, rate, probability of default, loss given default, expected loss, risk-weighted assets and arrears buckets. The cohorts are a view computed from the named loans (`portfolio()` in the engine), so they cannot change how a game plays. The replay checks the agreements against the replayed loans. There is no 90+ day bucket: the game writes an account off after two months.
+- Every game starts with a **system pricing and credit policy** (`S.policy`, `systemPolicy()` in the engine) that reproduces how the branch game has always priced loans and judged applications. `setPolicy` is refused until the area is unlocked (`progress.unlocked` has `pricing` or `credit`), so until a player gets Chief Executive control they play on the system values. `policyVerdict()` applies the credit policy to an application (approve, refer or decline) using only what the applicant shows. Nothing unlocks these areas yet: that is the next step.
 - Reading a message is not sent: it changes no money. The server accepts a `read` command, but the page skips it.
 
 ## Things to know
 
 - Game state is stored as `json`, not `jsonb`. Postgres `jsonb` reorders keys and the engine sums floating-point numbers in key order, so a reloaded game could differ by a rounding error from a replayed one.
 - The page does not hide a case's hidden truth from the player, since it plays on its own engine. That is fine for a single-player game but would need changing before any competitive mode.
-- Not built yet: the Azure deployment, Lakebase (it will be a different `DATABASE_URL` and the same migrations), the Azure email service (replace `server/mailer.js`), and the party, agreement, collateral, security and hedge tables, which need the portfolio loan model from step 3.
+- Not built yet: the Azure deployment, Lakebase (it will be a different `DATABASE_URL` and the same migrations), the Azure email service (replace `server/mailer.js`), and the security-holding and hedge tables, which need the treasury work in a later step.

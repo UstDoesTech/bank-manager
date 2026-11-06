@@ -4,7 +4,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), '
 const golden = JSON.parse(fs.readFileSync(path.join(__dirname, 'golden.json'), 'utf8'));
 let n = 0;
 // 1. Behaviour is unchanged against snapshots from the original engine (all bots, scenarios, tutorial).
-const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger'];
+const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy'];
 { const Eg = loadEngine(src); Eg.dispatch({ type: 'newGame', seed: 1 });
   for (const [key, want] of Object.entries(golden)){
     const [bot, tag, seed] = key.split(':');
@@ -68,4 +68,49 @@ const g = play(loadEngine(src), 9, 'mixed', 3); assert(g.cmds.length > 100, 'gam
   // an old save with no ledger gets an opening entry on migrate
   const old = JSON.parse(JSON.stringify(A.S)); delete old.ledger; const mg = loadEngine(src).migrate(old);
   assert.strictEqual(mg.ledger.n, 1); n++; }
+// 7. Portfolio view: cohorts reconcile exactly to the loan book, to risk-weighted assets and to the arrears statuses, in every bot's game.
+for (const pol of ALL()) for (const seed of [3, 17]){
+  const a = play(loadEngine(src), seed, pol, 3), E = loadEngine(src); let checks = 0;
+  const reconcile = () => {
+    const co = E.portfolio(), S = E.S, near = (x, y) => Math.abs(x - y) < 1e-6;
+    assert(near(co.reduce((t, c) => t + c.bal, 0), E.loanSum()), 'cohort balances differ from the loan book');
+    assert.strictEqual(co.reduce((t, c) => t + c.n, 0), S.loans.length);
+    assert(near(co.reduce((t, c) => t + c.rwa, 0), S.loans.reduce((t, l) => t + l.bal * E.loanRW(l), 0)), 'cohort RWA differs');
+    for (const c of co){ assert(near(Object.values(c.buckets).reduce((t, x) => t + x, 0), c.bal), 'buckets do not add to the balance'); assert(c.pd >= 0 && c.pd <= 1 && c.lgd >= 0 && c.lgd <= 1 + 1e-9, 'pd or lgd out of range'); }
+    checks++;
+  };
+  for (const cmd of a.cmds){ E.dispatch(cmd); if (cmd.type === 'closeMonth') reconcile(); }
+  assert(checks >= 12); n++;
+}
+// 8. System policy: every game starts with it; setPolicy is refused until the area is unlocked, then changes pricing;
+//    the verdict separates good applications from bad using only what the applicant shows.
+{ const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 21 });
+  const sys = JSON.parse(JSON.stringify(E.S.policy));
+  assert.strictEqual(JSON.stringify(sys.owner), '{"pricing":"system","credit":"system"}'); n++;
+  const refuses = (cmd, why) => { const snap = JSON.stringify(E.S.policy); assert.throws(() => E.dispatch(cmd), why); assert.strictEqual(JSON.stringify(E.S.policy), snap); n++; };
+  refuses({ type: 'setPolicy', area: 'pricing', values: { cardRate: 5 } }, /not unlocked/);
+  refuses({ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 99 } }, /not unlocked/);
+  E.S.progress.unlocked.push('pricing');
+  refuses({ type: 'setPolicy', area: 'pricing', values: { cardRate: 99 } }, /between/);
+  refuses({ type: 'setPolicy', area: 'pricing', values: { nope: 1 } }, /unknown setting/);
+  refuses({ type: 'setPolicy', area: 'pricing', values: { cardRate: 'x' } }, /between/);
+  refuses({ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 99 } }, /not unlocked/);
+  const before = E.mortgageRisk({ loan: 200, price: 250, term: 25, inc: 60, score: 700, emp: 'Permanent', missed: 0 }).rate;
+  E.dispatch({ type: 'setPolicy', area: 'pricing', values: { mortgageSpread: 2.05 } });
+  const after = E.mortgageRisk({ loan: 200, price: 250, term: 25, inc: 60, score: 700, emp: 'Permanent', missed: 0 }).rate;
+  assert(Math.abs(after - before - 1) < 1e-9, 'mortgage rate follows the policy'); assert.strictEqual(E.S.policy.owner.pricing, 'player'); assert.strictEqual(E.S.policy.owner.credit, 'system'); n += 2;
+  // an old save with no policy gets the system policy
+  const old = JSON.parse(JSON.stringify(E.S)); delete old.policy; assert.strictEqual(JSON.stringify(loadEngine(src).migrate(old).policy), JSON.stringify(sys)); n++;
+  // the verdict is useful: declined applications are worse risks than approved ones
+  const seen = { mortgage: { approve: [], refer: [], decline: [] } };
+  for (const seed of [2, 5, 9, 14, 23, 31]){
+    const G = loadEngine(src); G.dispatch({ type: 'newGame', seed });
+    while (!G.S.over){
+      for (let c; (c = G.current());){ if (c.kind === 'mortgage') seen.mortgage[G.policyVerdict(c)].push(G.mortgageRisk(c.h).pd); G.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); }
+      G.dispatch({ type: 'closeMonth' });
+    }
+  }
+  const avg = a => a.reduce((t, x) => t + x, 0) / a.length, m = seen.mortgage;
+  assert(m.approve.length >= 10 && m.decline.length >= 3, 'need approved and declined mortgages: ' + [m.approve.length, m.refer.length, m.decline.length]);
+  assert(avg(m.decline) > 2 * avg(m.approve), 'declined mortgages should be far riskier: ' + avg(m.decline) + ' vs ' + avg(m.approve)); n++; }
 console.log('ok', n, 'checks');

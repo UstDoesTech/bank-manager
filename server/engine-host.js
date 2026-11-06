@@ -7,7 +7,7 @@ const vm = require('vm'), fs = require('fs'), path = require('path');
 function createHost(enginePath = path.join(__dirname, '..', 'engine', 'engine.js')) {
   const src = fs.readFileSync(enginePath, 'utf8');
   const ctx = vm.createContext({ console, Date });
-  vm.runInContext(src + ';LEDGER_STRICT = true; this.E = { dispatch, ENGINE_VERSION, capRatio, liqRatio, metrics, rating, ' +
+  vm.runInContext(src + ';LEDGER_STRICT = true; this.E = { dispatch, ENGINE_VERSION, capRatio, liqRatio, metrics, rating, portfolio, ' +
     'get S(){ return S }, set S(v){ S = v }, setSink(f){ LEDGER_SINK = f } };', ctx);
   const E = ctx.E;
 
@@ -23,7 +23,8 @@ function createHost(enginePath = path.join(__dirname, '..', 'engine', 'engine.js
       const result = E.dispatch(cmd);
       const next = E.S;
       const facts = { before, after: { year: next.year, month: next.month }, over: next.over || null,
-        cap: E.capRatio(), liq: E.liqRatio(), trust: next.trust, comp: next.comp };
+        cap: E.capRatio(), liq: E.liqRatio(), trust: next.trust, comp: next.comp,
+        cohorts: JSON.parse(JSON.stringify(E.portfolio())) };
       return { state: JSON.parse(JSON.stringify(next)), result: cmd.type === 'newGame' ? null : result, entries, facts };
     } finally {
       E.setSink(null);

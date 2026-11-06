@@ -36,6 +36,17 @@ async function verifyGame(pool, host, gameId) {
     if (canon(stored.state) !== canon(state)) problems.push('replayed state differs from the stored state');
   }
 
+  // the loan book tables must agree with the replayed loans: same open agreements, balances and statuses
+  if (state) {
+    const open = new Map((await pool.query("SELECT agreement_id, balance_pence, status FROM bank.agreement WHERE game_id = $1 AND status <> 'closed'", [gameId])).rows.map((r) => [r.agreement_id, r]));
+    if (open.size !== state.loans.length) problems.push(`${open.size} open agreements, replay has ${state.loans.length} loans`);
+    for (const l of state.loans) {
+      const a = open.get(l.id);
+      if (!a) problems.push(`loan ${l.id} has no open agreement`);
+      else if (Number(a.balance_pence) !== Math.round(l.bal * 1e5) || a.status !== l.status) problems.push(`agreement ${l.id} differs from the replayed loan`);
+    }
+  }
+
   const lines = (await pool.query(
     'SELECT entry_seq, line_no, account, amount_pence FROM bank.journal_line WHERE game_id = $1 ORDER BY entry_seq, line_no', [gameId])).rows;
   const byEntry = new Map();

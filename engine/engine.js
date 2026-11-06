@@ -144,7 +144,66 @@ function writeOff(l, rec){
   je('loan.writeoff', [['cash', rec], ['pl.losses', loss], ['loans', -l.bal]]); S.loans = S.loans.filter(x => x !== l); S.stats.defaults++; S.stats.losses += loss;
   return loss;
 }
-function mRate(ltv){ return Math.round((S.base + 1.05 + (ltv > 90 ? 0.7 : ltv > 85 ? 0.4 : ltv > 75 ? 0.15 : 0)) * 100) / 100; }
+/* ---- system policy: the pricing and credit rules every bank starts with ----
+   Every game has these from the first month and they reproduce how the branch game has always priced and judged.
+   A player takes control of an area only when it is unlocked (progress.unlocked has 'pricing' / 'credit'); until then
+   setPolicy is refused and the system values stay. owner says who set each area. */
+function systemPolicy(){
+  return {
+    pricing: { mortgageSpread: 1.05, ltvAdd: [[90, 0.7], [85, 0.4], [75, 0.15]], mortgagePremium: 0.6, personalLow: 8.9, personalHigh: 18.9, cardRate: 24.9 },
+    credit: { mortgageMaxLtv: 90, mortgageMaxLti: 5, mortgageMaxAff: 0.45, mortgageMinScore: 520, personalMinScore: 540 },
+    owner: { pricing: 'system', credit: 'system' } };
+}
+const POLICY_LIMITS = {
+  pricing: { mortgageSpread: [0, 6], mortgagePremium: [0, 3], personalLow: [0, 40], personalHigh: [0, 40], cardRate: [0, 40] },
+  credit: { mortgageMaxLtv: [50, 100], mortgageMaxLti: [2, 8], mortgageMaxAff: [0.2, 0.8], mortgageMinScore: [300, 900], personalMinScore: [300, 900] } };
+function setPolicy(area, values){
+  const lim = POLICY_LIMITS[area];
+  if (!lim) throw new Error('unknown policy area ' + area);
+  if (!S.progress.unlocked.includes(area)) throw new Error(area + ' policy is not unlocked');
+  if (!values || typeof values !== 'object') throw new Error('no values');
+  for (const [k, v] of Object.entries(values)){
+    if (!lim[k]) throw new Error('unknown setting ' + k);
+    if (typeof v !== 'number' || !isFinite(v) || v < lim[k][0] || v > lim[k][1]) throw new Error(k + ' must be between ' + lim[k][0] + ' and ' + lim[k][1]);
+  }
+  Object.assign(S.policy[area], values); S.policy.owner[area] = 'player';
+  return S.policy[area];
+}
+// What the credit policy says about an application: 'approve', 'refer' (a person should look) or 'decline'. It uses only
+// what the applicant shows (their stated figures and credit score), never the hidden truth behind the case.
+function policyVerdict(c){
+  const cp = S.policy.credit, num = l => parseFloat(String(fv(c, l)).replace(/[^0-9.]/g, ''));
+  if (c.kind === 'mortgage'){
+    const h = c.h, m = mortgageRisk(h), score = num('Credit score'), lti = h.loan / h.inc;
+    if (m.ltv > cp.mortgageMaxLtv || lti > cp.mortgageMaxLti || m.aff > cp.mortgageMaxAff || score < cp.mortgageMinScore || h.missed >= 3) return 'decline';
+    if (m.ltv > cp.mortgageMaxLtv - 5 || lti > cp.mortgageMaxLti - 0.5 || m.aff > cp.mortgageMaxAff - 0.05 || score < cp.mortgageMinScore + 60 || h.missed >= 2) return 'refer';
+    return 'approve';
+  }
+  if (c.kind === 'personal'){ const score = num('Credit score'); return score < cp.personalMinScore ? 'decline' : score < cp.personalMinScore + 60 ? 'refer' : 'approve'; }
+  return 'refer';
+}
+
+/* portfolio view: the named loans grouped into cohorts by product, risk band and month of issue. This is derived
+   from S.loans and stored nowhere, so it cannot change how the game plays. Arrears buckets: current, 30 days
+   (just fell behind), 60 days (second month), plan (on a payment plan). Nothing reaches 90+, because an account
+   still in arrears after two months goes to recovery and is written off. */
+const RISK_BANDS = [['low', 0.03], ['medium', 0.08], ['high', Infinity]];
+const riskBand = pd => RISK_BANDS.find(b => pd < b[1])[0];
+const loanRW = l => l.kind === 'mortgage' ? (l.ltv > 80 ? 0.5 : 0.35) : 1;
+const arrearsBucket = l => l.status === 'plan' ? 'plan' : l.status === 'arrears' ? (S.month - l.since >= 1 ? 'd60' : 'd30') : 'current';
+function portfolio(){
+  const cohorts = new Map();
+  for (const l of S.loans){
+    const issued = S.year * 12 + l.m0, band = riskBand(l.pd), key = l.kind + '|' + band + '|' + issued;
+    let c = cohorts.get(key);
+    if (!c) cohorts.set(key, c = { key, product: l.kind, band, issued, n: 0, bal: 0, rateW: 0, pdW: 0, loss: 0, rwa: 0, buckets: { current: 0, d30: 0, d60: 0, plan: 0 } });
+    c.n++; c.bal += l.bal; c.rateW += l.bal * l.rate; c.pdW += l.bal * l.pd; c.loss += l.pd * (l.bal - Math.min(l.bal, recovery(l))); c.rwa += l.bal * loanRW(l); c.buckets[arrearsBucket(l)] += l.bal;
+  }
+  return [...cohorts.values()].sort((a, b) => a.issued - b.issued || (a.key < b.key ? -1 : 1)).map(c => ({
+    key: c.key, product: c.product, band: c.band, issued: c.issued, n: c.n, bal: c.bal, rate: c.rateW / c.bal, pd: c.pdW / c.bal,
+    lgd: c.pdW > 0 ? c.loss / c.pdW : 0, expectedLoss: c.loss, rwa: c.rwa, buckets: c.buckets }));
+}
+function mRate(ltv){ const pr = S.policy.pricing, add = (pr.ltvAdd.find(b => ltv > b[0]) || [0, 0])[1]; return Math.round((S.base + pr.mortgageSpread + add) * 100) / 100; }
 
 /* ============ CARD GENERATORS ============ */
 const gen = {}, res = {};
@@ -218,7 +277,7 @@ res.mortgage = (c, k) => {
   const h = c.h, nm = first(h.name);
   const doBook = (loan, extra = 0) => { const m = mortgageRisk(h, loan); { const pay = annuity(loan, m.rate + extra, h.term); custSay(`${full(pay)} a month at ${(m.rate + extra).toFixed(2)}%, ${pc(pay / takeHome(h.inc), 0)} of take-home pay. Over ${h.term} years they repay ${full(pay * h.term * 12)} for a ${full(loan)} loan, if the rate stayed the same.`); } book({ kind:'mortgage', name:h.name, bal:loan, rate:m.rate + extra, pd: Math.min(0.95, m.pd * (extra ? 1.25 : 1)), prop:h.price, ltv:m.ltv }); money('fees', 0.999 - (h.broker ? loan * 0.0035 : 0), h.broker ? 'Fee less broker' : 'Fee'); };
   if (k === 'yes'){ doBook(h.loan); say(`Offer issued. ${nm} gets the keys next month.`); }
-  if (k === 'prem'){ const pd = mortgageRisk(h).pd; if (chance(clamp(0.22 + pd * 4, 0.22, 0.9))) { doBook(h.loan, 0.6); say(`${nm} accepts the higher rate. ${pd > 0.05 ? 'Nobody else offered them anything.' : 'They didn\'t shop around.'}`); } else say(`${nm} found the market rate at another lender.`); }
+  if (k === 'prem'){ const pd = mortgageRisk(h).pd; if (chance(clamp(0.22 + pd * 4, 0.22, 0.9))) { doBook(h.loan, S.policy.pricing.mortgagePremium); say(`${nm} accepts the higher rate. ${pd > 0.05 ? 'Nobody else offered them anything.' : 'They didn\'t shop around.'}`); } else say(`${nm} found the market rate at another lender.`); }
   if (k === 'less'){ if (chance(0.45)) { doBook(h.alt); say(`${nm} found the extra deposit with help from family. Smaller loan agreed.`); } else { say(`${nm} took a bigger loan from another lender.`); dT(-1); } }
   if (k === 'no'){ say(`${nm} will try another lender.`); if (mortgageRisk(h).pd < 0.03) { dT(-1); S.stats.wrongNo++; } }
 };
@@ -233,15 +292,15 @@ gen.personal = (o = {}) => {
   const ob = (S.flags.ob || o.risky) ? (obBad ? pick(['Overdrawn 24 of the last 30 days','£680 on betting sites last month','Three payday loan repayments']) : pick(['Bills paid on time','Saves £150 a month','Same salary for 3 years'])) : 'Not checked';
   const yrs = pick([3, 4, 5]);
   return card('personal', { label:'Personal loan', phys:true, who:{ ...p, sub: purpose }, note: `Wants ${full(amt)} over ${yrs} years.`,
-    fields:[ F('Amount', full(amt)), F('Income', full(inc) + '/yr'), F('Other debts', debt ? full(debt) : 'None'), F('Credit score', score + ' / 999', 'Credit score'), F('Spending insight', ob, 'Open banking', true), stake(amt * (8.9 - S.base) / 100, amt * 0.78), analyst(pd) ].filter(Boolean),
-    opts:[ { k:'low', l:'Approve at 8.9%', sub:'Market rate', s:'go', st:'APPROVED', cash: amt }, { k:'high', l:'Approve at 18.9%', sub:'They may shop around', s:'alt', st:'APPROVED', cash: amt }, { k:'no', l:'Decline', s:'no', st:'DECLINED' } ],
+    fields:[ F('Amount', full(amt)), F('Income', full(inc) + '/yr'), F('Other debts', debt ? full(debt) : 'None'), F('Credit score', score + ' / 999', 'Credit score'), F('Spending insight', ob, 'Open banking', true), stake(amt * (S.policy.pricing.personalLow - S.base) / 100, amt * 0.78), analyst(pd) ].filter(Boolean),
+    opts:[ { k:'low', l:`Approve at ${S.policy.pricing.personalLow}%`, sub:'Market rate', s:'go', st:'APPROVED', cash: amt }, { k:'high', l:`Approve at ${S.policy.pricing.personalHigh}%`, sub:'They may shop around', s:'alt', st:'APPROVED', cash: amt }, { k:'no', l:'Decline', s:'no', st:'DECLINED' } ],
     h:{ name:p.name, amt, pd, purpose, yrs, inc } });
 };
 res.personal = (c, k) => {
-  const h = c.h, nm = first(h.name);
+  const h = c.h, nm = first(h.name), pr = S.policy.pricing;
   const cv = r => { const yrs = h.yrs || 4, pay = annuity(h.amt, r, yrs), tot = pay * yrs * 12; custSay(`Over ${yrs} years at ${r}% they repay ${full(tot)} for ${full(h.amt)}: ${full(tot - h.amt)} in interest. Repayments take ${pc(pay / takeHome(h.inc || 30), 0)} of take-home pay.`); };
-  if (k === 'low'){ cv(8.9); book({ kind:'personal', name:h.name, bal:h.amt, rate:8.9, pd:h.pd }); say(`Money in ${nm}'s account within the hour.`); dT(h.pd < 0.08 ? 1 : 0); }
-  if (k === 'high'){ if (chance(clamp(0.25 + h.pd * 4, 0.25, 0.92))) { cv(18.9); book({ kind:'personal', name:h.name, bal:h.amt, rate:18.9, pd: Math.min(0.95, h.pd * 1.3) }); say(`${nm} signs at 18.9%.${h.pd > 0.08 ? ' Nobody else would lend to them.' : ''}`); if (h.pd < 0.06) dT(-1); } else say(`${nm} took 8.9% from a lender down the road.`); }
+  if (k === 'low'){ cv(pr.personalLow); book({ kind:'personal', name:h.name, bal:h.amt, rate:pr.personalLow, pd:h.pd }); say(`Money in ${nm}'s account within the hour.`); dT(h.pd < 0.08 ? 1 : 0); }
+  if (k === 'high'){ if (chance(clamp(0.25 + h.pd * 4, 0.25, 0.92))) { cv(pr.personalHigh); book({ kind:'personal', name:h.name, bal:h.amt, rate:pr.personalHigh, pd: Math.min(0.95, h.pd * 1.3) }); say(`${nm} signs at ${pr.personalHigh}%.${h.pd > 0.08 ? ' Nobody else would lend to them.' : ''}`); if (h.pd < 0.06) dT(-1); } else say(`${nm} took ${pr.personalLow}% from a lender down the road.`); }
   if (k === 'no'){ say(`${nm} leaves. ${pick(['They mention a lender that advertises on daytime TV.','They will ask family instead.','They will try their old bank.'])}`); if (h.pd < 0.04) { dT(-1); S.stats.wrongNo++; } }
 };
 
@@ -252,15 +311,15 @@ gen.card = () => {
   const opts = [ { k:'up', l:`Raise to ${full(nl)}`, s:'go', st:'RAISED' }, { k:'keep', l:'Keep current limit', s:'neutral', st:'NO CHANGE' } ];
   if (persist) opts.push({ k:'plan', l:'Offer a repayment plan', s:'alt', st:'PLAN' });
   return card('card', { label:'Credit limit request', who:{ ...p, sub:'Requested in the app' }, note: persist ? 'Asked for a higher limit at 23:40 on a Sunday.' : 'Asked for a higher limit before a big purchase.',
-    fields:[ F('Current limit', full(lim)), F('Balance', full(lim * util)), F('Repayments', persist ? 'Minimum only, 19 months' : pick(['Clears it most months','Well above minimum']), persist ? 'Persistent debt' : null), F('Credit score', score + ' / 999', 'Credit score'), F('Card rate', '24.9% APR', null, true) ],
+    fields:[ F('Current limit', full(lim)), F('Balance', full(lim * util)), F('Repayments', persist ? 'Minimum only, 19 months' : pick(['Clears it most months','Well above minimum']), persist ? 'Persistent debt' : null), F('Credit score', score + ' / 999', 'Credit score'), F('Card rate', S.policy.pricing.cardRate + '% APR', null, true) ],
     opts, h:{ name:p.name, persist, lim, nl } });
 };
 res.card = (c, k) => {
   const h = c.h, nm = first(h.name);
   if (k === 'up'){
     const bal = (h.nl - h.lim) * (h.persist ? 0.9 : 0.25);
-    custSay(`Carrying an extra ${full(bal)} at 24.9% costs about ${full(bal * 0.249)} a year in interest. Paying only the minimum, it would take about ${Math.round(minPayYears(bal, 24.9))} years to clear.`);
-    book({ kind:'card', name:h.name, bal, rate:24.9, pd: h.persist ? 0.32 : 0.025 });
+    custSay(`Carrying an extra ${full(bal)} at ${S.policy.pricing.cardRate}% costs about ${full(bal * S.policy.pricing.cardRate / 100)} a year in interest. Paying only the minimum, it would take about ${Math.round(minPayYears(bal, S.policy.pricing.cardRate))} years to clear.`);
+    book({ kind:'card', name:h.name, bal, rate:S.policy.pricing.cardRate, pd: h.persist ? 0.32 : 0.025 });
     say(h.persist ? `Limit raised. ${nm} uses most of it within a fortnight.` : `Limit raised. ${nm} buys a sofa and pays most of it off.`);
     if (h.persist) later(ri(2, 4), { text:`Regulator file review: limits raised for customers in persistent debt, including ${h.name}.`, comp:-4, trust:-1, tone:'bad', p:0.4 });
   }
@@ -755,7 +814,7 @@ function newGame(seed, opts = {}){
     trust:60, comp:80, flags:{}, queue:[], qi:0, pending:[], pl:blankPL(), last:null, history:[], over:null, nextId:1,
     lastTreasury:-9, prodOrder:[], prodUsed:[], sched:{}, y0:{ base:4, u:4.3, h:1 }, career:[], divPaid:0, wm:null, wmOffer:2, mkt:100, mktY0:100, mktHist:[100], lastMkt:0,
     stats: freshStats(), up:{}, news:[], tutorial: !!opts.tutorial, scenario: opts.scenario || null,
-    engine:ENGINE_VERSION, progress:{ unlocked:['branch'] }, ledger:{ bal:{}, n:0 } };
+    engine:ENGINE_VERSION, progress:{ unlocked:['branch'] }, policy:systemPolicy(), ledger:{ bal:{}, n:0 } };
   S.path = pick(['soft', 'sticky', 'downturn']);
   S.prodOrder = shuffle(['fraudModel','ob','od','branch','cyber','campaign']).concat(shuffle(['broker','ggs']));
   if (S.scenario){ const sc = SCENARIOS[S.scenario]; S.path = 'sc'; S.year = sc.year; S.tutorial = false; S.sched = makeSched(); sc.setup(); S.goals = sc.goals.map(g => ({ id:g.id, label:g.label, ok:null })); }
@@ -789,7 +848,7 @@ function nextYear(){
   S.sched = makeSched();
   buildMonth();
 }
-function migrate(s){ if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
+function migrate(s){ if (!s.policy) s.policy = systemPolicy(); if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
 function buildMonth(){
   const m = S.month, lead = [], other = [];
   S.pl = blankPL();
@@ -997,6 +1056,7 @@ function dispatchInner(cmd){
     case 'read': return markRead(cmd.key);
     case 'nextYear': return nextYear();
     case 'buy': return buyUpgrade(cmd.key);
+    case 'setPolicy': return setPolicy(cmd.area, cmd.values);
     default: throw new Error('unknown command ' + cmd.type);
   }
 }

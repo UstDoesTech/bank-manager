@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const { HttpError } = require('./auth');
 
 const PENCE_PER_K = 1e5;                  // the engine counts £ thousands; the database counts pence
-const COMMANDS = new Set(['newGame', 'resolve', 'closeMonth', 'nextYear', 'buy', 'read']);
+const COMMANDS = new Set(['newGame', 'resolve', 'closeMonth', 'nextYear', 'buy', 'read', 'setPolicy']);
 
 // Converts one engine journal entry to whole pence. Rounding each line can leave the entry off by a penny or two,
 // so the difference goes on the largest line and the stored entry sums to exactly zero.
@@ -37,6 +37,11 @@ function validate(state, cmd) {
   } else if (cmd.type === 'buy') {
     if (state.over) throw new HttpError(409, 'game_over', 'The year is over.');
     if (typeof cmd.key !== 'string') throw new HttpError(400, 'bad_command', 'Missing upgrade key.');
+  } else if (cmd.type === 'setPolicy') {
+    if (state.over) throw new HttpError(409, 'game_over', 'The year is over.');
+    if (cmd.area !== 'pricing' && cmd.area !== 'credit') throw new HttpError(400, 'bad_command', 'Unknown policy area.');
+    if (!state.progress.unlocked.includes(cmd.area)) throw new HttpError(403, 'not_unlocked', 'You do not control that policy yet.');
+    if (!cmd.values || typeof cmd.values !== 'object' || Array.isArray(cmd.values)) throw new HttpError(400, 'bad_command', 'Missing values.');
   } else if (cmd.type === 'read') {
     if (typeof cmd.key !== 'string' || !/^[cm]\d+$/.test(cmd.key)) throw new HttpError(400, 'bad_command', 'Bad message key.');
   }
@@ -47,8 +52,41 @@ function cleanCommand(cmd) {
   const out = { type: cmd.type };
   if (cmd.type === 'resolve') { out.id = cmd.id; out.k = cmd.k; }
   if (cmd.type === 'buy' || cmd.type === 'read') out.key = cmd.key;
+  if (cmd.type === 'setPolicy') { out.area = cmd.area; out.values = cmd.values; }
   if (cmd.type === 'newGame') { out.seed = cmd.seed; out.opts = cmd.opts || {}; }
   return out;
+}
+
+const pence = (k) => Math.round(k * PENCE_PER_K);
+
+// Keeps party, agreement and collateral in step with the engine's loan book. New loans are inserted, balances and
+// status are refreshed, and a loan that has left the book is closed: sold if it was still performing, otherwise
+// written off. The engine ids are the keys, so a replay produces the same rows.
+async function syncBook(client, gid, at, loans) {
+  const rows = loans.map((l) => ({ id: l.id, name: l.name, kind: l.kind === 'business' ? 'business' : 'person', product: l.kind,
+    rate: l.rate, pd: l.pd, bal: pence(l.bal), status: l.status, guar: !!l.guar, ggs: !!l.ggs,
+    prop: l.prop != null ? pence(l.prop) : null, ltv: l.ltv != null ? l.ltv : null }));
+  const json = JSON.stringify(rows);
+  await client.query(
+    `INSERT INTO bank.party (game_id, party_id, name, kind)
+     SELECT $1, r.id, r.name, r.kind FROM json_to_recordset($2::json) AS r(id int, name text, kind text)
+     ON CONFLICT DO NOTHING`, [gid, json]);
+  await client.query(
+    `INSERT INTO bank.agreement (game_id, agreement_id, party_id, product, opened_year, opened_month, rate_pct, pd, principal_pence, balance_pence, status, guaranteed, government_backed)
+     SELECT $1, r.id, r.id, r.product, $3, $4, r.rate, r.pd, r.bal, r.bal, r.status, r.guar, r.ggs
+     FROM json_to_recordset($2::json) AS r(id int, product text, rate numeric, pd numeric, bal bigint, status text, guar boolean, ggs boolean)
+     ON CONFLICT (game_id, agreement_id) DO UPDATE SET balance_pence = EXCLUDED.balance_pence, status = EXCLUDED.status, pd = EXCLUDED.pd
+       WHERE (bank.agreement.balance_pence, bank.agreement.status, bank.agreement.pd) IS DISTINCT FROM (EXCLUDED.balance_pence, EXCLUDED.status, EXCLUDED.pd)`,
+    [gid, json, at.year, at.month]);
+  await client.query(
+    `INSERT INTO bank.collateral (game_id, agreement_id, kind, value_pence, ltv_pct)
+     SELECT $1, r.id, 'residential_property', r.prop, r.ltv FROM json_to_recordset($2::json) AS r(id int, prop bigint, ltv numeric)
+     WHERE r.prop IS NOT NULL ON CONFLICT DO NOTHING`, [gid, json]);
+  await client.query(
+    `UPDATE bank.agreement SET closed_year = $3, closed_month = $4,
+       outcome = CASE WHEN status = 'current' THEN 'sold' ELSE 'written_off' END, status = 'closed'
+     WHERE game_id = $1 AND status <> 'closed' AND agreement_id <> ALL (SELECT (jsonb_array_elements($2::jsonb)->>'id')::int)`,
+    [gid, json, at.year, at.month]);
 }
 
 // Writes everything one command produced. The caller holds the transaction.
@@ -90,6 +128,17 @@ async function persist(client, game, seq, cmd, before, out) {
       `INSERT INTO bank.regulatory_snapshot (game_id, year, month, capital_ratio, liquidity_ratio, trust, regulator, profit_pence)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [gid, before.year, before.month, facts.cap, facts.liq, facts.trust, facts.comp, Math.round(result.profit * PENCE_PER_K)]);
+  }
+
+  await syncBook(client, gid, before || { year: state.year, month: state.month }, state.loans || []);
+  if (cmd.type === 'closeMonth') {
+    for (const c of facts.cohorts)
+      await client.query(
+        `INSERT INTO bank.portfolio_cohort (game_id, year, month, product, risk_band, issued, loans, balance_pence, rate_pct, pd, lgd,
+           expected_loss_pence, rwa_pence, current_pence, days_30_pence, days_60_pence, plan_pence)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+        [gid, before.year, before.month, c.product, c.band, c.issued, c.n, pence(c.bal), c.rate, c.pd, c.lgd, pence(c.expectedLoss), pence(c.rwa),
+          pence(c.buckets.current), pence(c.buckets.d30), pence(c.buckets.d60), pence(c.buckets.plan)]);
   }
 
   const status = facts.over === 'done' ? 'finished' : facts.over ? 'failed' : 'active';

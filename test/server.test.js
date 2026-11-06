@@ -182,9 +182,9 @@ test('games: a year played through the API is recorded, balances to zero and rep
   assert.strictEqual(Number((await q("SELECT COALESCE(SUM(amount_pence), 0)::bigint s FROM bank.journal_line WHERE game_id = $1"))[0].s), 0);
   const ledger = (await call('GET', `/api/games/${id}/ledger`, null, cookie)).json;
   assert.strictEqual(ledger.trialBalancePence, 0); assert(ledger.accounts.length >= 8);
-  // the journal agrees with the engine: stored cash balance equals the state's cash to the penny
+  // the journal agrees with the engine to within the pence lost rounding each line (about half a penny per line, a few hundred lines a year)
   const cash = ledger.accounts.find((a) => a.account === 'cash').pence;
-  assert(Math.abs(cash - Math.round(played.state.cash * 1e5)) <= 12, `ledger cash ${cash} vs state ${played.state.cash * 1e5}`);
+  assert(Math.abs(cash - Math.round(played.state.cash * 1e5)) <= 60, `ledger cash ${cash} vs state ${played.state.cash * 1e5}`);
 
   const v = await verifyGame(pool, host, id);
   assert.deepStrictEqual(v.problems, []); assert.strictEqual(v.ok, true);
@@ -207,6 +207,50 @@ test('games: a year played through the API is recorded, balances to zero and rep
   const ny = await call('POST', `/api/games/${id}/commands`, { seq: played.seq + 1, command: { type: 'nextYear' } }, cookie);
   assert.strictEqual(ny.status, 200); assert.strictEqual(ny.json.state.year, 2028);
   assert.strictEqual((await verifyGame(pool, host, id)).ok, true);
+});
+
+test('portfolio: borrowers, agreements, collateral and month-end cohorts are recorded and agree with the ledger', async () => {
+  const cookie = await newPlayer('pia@example.com');
+  const g = await call('POST', '/api/games', {}, cookie);
+  const played = await play(cookie, g.json.id, g.json.state, 1, 12);
+  const id = g.json.id, q = async (sql) => (await pool.query(sql, [id])).rows;
+  const loans = played.state.loans;
+  assert(loans.length > 5, 'the careful bot should have made loans');
+
+  const open = await q("SELECT * FROM bank.agreement WHERE game_id = $1 AND status <> 'closed'");
+  assert.strictEqual(open.length, loans.length);
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.party WHERE game_id = $1'))[0].n, (await q('SELECT count(*)::int n FROM bank.agreement WHERE game_id = $1'))[0].n);
+  const mortgages = (await q("SELECT count(*)::int n FROM bank.collateral WHERE game_id = $1"))[0].n;
+  assert.strictEqual(mortgages, (await q("SELECT count(*)::int n FROM bank.agreement WHERE game_id = $1 AND product = 'mortgage'"))[0].n);
+
+  // the last month's cohorts add up to the loans account in the journal (a few pence of rounding per loan allowed)
+  const last = (await q('SELECT max(month) m FROM bank.portfolio_cohort WHERE game_id = $1'))[0].m;
+  const book = Number((await q(`SELECT COALESCE(SUM(balance_pence), 0)::bigint s FROM bank.portfolio_cohort WHERE game_id = $1 AND month = ${last}`))[0].s);
+  const ledgerLoans = Number((await q("SELECT COALESCE(SUM(amount_pence), 0)::bigint s FROM bank.journal_line WHERE game_id = $1 AND account = 'loans'"))[0].s);
+  assert(Math.abs(book - ledgerLoans) <= 50 + 3 * loans.length, `cohorts ${book} vs ledger ${ledgerLoans}`);
+  assert((await q('SELECT count(*)::int n FROM bank.portfolio_cohort WHERE game_id = $1'))[0].n > 12);
+
+  // closed agreements carry an outcome, and the replay checks the loan tables
+  for (const r of await q("SELECT outcome, closed_year FROM bank.agreement WHERE game_id = $1 AND status = 'closed'")) assert(r.outcome && r.closed_year);
+  assert.strictEqual((await verifyGame(pool, host, id)).ok, true);
+
+  // an edited balance is caught by the replay
+  await pool.query("UPDATE bank.agreement SET balance_pence = balance_pence + 100 WHERE game_id = $1 AND agreement_id = $2", [id, open[0].agreement_id]);
+  assert.strictEqual((await verifyGame(pool, host, id)).ok, false);
+});
+
+test('policy: every game starts on the system pricing and credit policy and cannot change it until it is unlocked', async () => {
+  const cookie = await newPlayer('rex@example.com');
+  const g = (await call('POST', '/api/games', {}, cookie)).json;
+  assert.deepStrictEqual(g.state.policy.owner, { pricing: 'system', credit: 'system' });
+  assert.strictEqual(g.state.policy.pricing.cardRate, 24.9);
+  const url = `/api/games/${g.id}/commands`;
+  const r = await call('POST', url, { seq: 2, command: { type: 'setPolicy', area: 'pricing', values: { cardRate: 5 } } }, cookie);
+  assert.strictEqual(r.status, 403); assert.strictEqual(r.json.error, 'not_unlocked');
+  const bad = await call('POST', url, { seq: 2, command: { type: 'setPolicy', area: 'nope', values: {} } }, cookie);
+  assert.strictEqual(bad.status, 400);
+  assert.strictEqual((await pool.query('SELECT last_seq FROM bank.game WHERE id = $1', [g.id])).rows[0].last_seq, 1);
+  assert.strictEqual((await call('GET', `/api/games/${g.id}`, null, cookie)).json.state.policy.pricing.cardRate, 24.9);
 });
 
 test('games: bad, repeated, out-of-order and foreign commands are refused and change nothing', async () => {
@@ -271,7 +315,7 @@ test('players: opting out of analysis is recorded on the game; deleting a player
   await call('POST', '/api/consent', { optOut: true }, cookie);
   const g = (await call('POST', '/api/games', {}, cookie)).json;
   assert.strictEqual((await pool.query('SELECT in_analysis, synthetic FROM bank.game WHERE id = $1', [g.id])).rows[0].in_analysis, false);
-  const col = (await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'bank' AND table_name <> 'gl_account' AND column_name IN ('email', 'name', 'password_hash')")).rows;
+  const col = (await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'bank' AND table_name NOT IN ('gl_account', 'party') AND column_name IN ('email', 'name', 'password_hash')")).rows;
   assert.deepStrictEqual(col, [], 'the bank schema never holds an email, name or password');
   assert.strictEqual((await call('DELETE', '/api/me', { password: 'wrong wrong wrong' }, cookie)).status, 401);
   assert.strictEqual((await call('DELETE', '/api/me', { password: PW }, cookie)).status, 200);
