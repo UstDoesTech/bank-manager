@@ -45,9 +45,9 @@ button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 
 /* HUD */
 #hud{flex:0 0 auto;padding-block:10px 10px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));background:linear-gradient(var(--hall),var(--hall-2));display:grid;gap:7px}
-.hud-top{display:flex;align-items:center;gap:10px;min-width:0}
+.hud-top{display:flex;align-items:center;flex-wrap:wrap;row-gap:2px;gap:10px;min-width:0}
 .brand{font-weight:900;font-variation-settings:"wdth" 125;letter-spacing:.06em;text-transform:uppercase;font-size:13px;color:var(--brass);white-space:nowrap}
-.when{font-family:var(--f-mono);font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.when{font-family:var(--f-mono);font-size:12px;color:var(--muted);white-space:nowrap;flex:0 0 auto}
 .hud-top .sp{flex:1}
 .pill{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:3px 8px;border-radius:999px;border:1px solid currentColor;white-space:nowrap;background:none}
 .pill.ok{color:var(--good)} .pill.watch{color:var(--warn)} .pill.alarm{color:var(--bad)}
@@ -76,7 +76,7 @@ button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 
 /* Main */
 #main{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;position:relative}
-#stage{position:relative;flex:0 0 auto;height:clamp(150px,27vh,300px);overflow:hidden;background:var(--hall)}
+#stage{position:relative;flex:0 0 auto;height:clamp(130px,23vh,300px);overflow:hidden;background:var(--hall)}
 #c{position:absolute;inset:0;width:100%;height:100%;display:block}
 #ticker{position:absolute;left:0;right:0;bottom:0;padding:4px max(16px,env(safe-area-inset-right,0px)) 4px max(16px,env(safe-area-inset-left,0px));font-family:var(--f-mono);font-size:11px;color:var(--muted);background:linear-gradient(transparent,rgba(12,33,29,.9));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
 #float{position:absolute;inset:0;pointer-events:none;overflow:hidden}
@@ -103,7 +103,7 @@ button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 
 /* Desk */
 #desk{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;border-top:4px solid var(--wood-3);background:var(--wood-2)}
-#docs{position:relative;flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-block:12px 16px;padding-left:max(12px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px))}
+#docs{position:relative;flex:1 1 auto;min-height:0;overflow-y:auto;background:linear-gradient(var(--wood-2) 30%,rgba(0,0,0,0)) center top,linear-gradient(rgba(0,0,0,0),var(--wood-2) 70%) center bottom,radial-gradient(farthest-side at 50% 0,rgba(0,0,0,.5),rgba(0,0,0,0)) center top,radial-gradient(farthest-side at 50% 100%,rgba(0,0,0,.5),rgba(0,0,0,0)) center bottom;background-color:var(--wood-2);background-repeat:no-repeat;background-size:100% 40px,100% 40px,100% 14px,100% 14px;background-attachment:local,local,scroll,scroll;overflow-x:hidden;overscroll-behavior:contain;padding-block:12px 16px;padding-left:max(12px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px))}
 .sheet{position:relative;max-width:560px;margin:0 auto;background:var(--paper);color:var(--ink);border-radius:6px;padding:14px 16px 16px;display:grid;gap:12px;box-shadow:0 10px 26px rgba(0,0,0,.4);animation:slide .3s cubic-bezier(.2,.8,.2,1) both}
 .sh-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;border-bottom:2px solid var(--ink);padding-bottom:6px;font-weight:850;font-variation-settings:"wdth" 112;text-transform:uppercase;letter-spacing:.05em;font-size:12px}
 .sh-ref{font-family:var(--f-mono);font-weight:500;font-size:11px;color:var(--ink-soft);letter-spacing:0;text-transform:none}
@@ -320,7 +320,7 @@ table.ledger{width:100%;border-collapse:collapse;font-size:13.5px}
 .stat{background:var(--hall-3);border-radius:10px;padding:10px 12px;display:grid;gap:2px;min-width:0}
 .stat b{font-family:var(--f-mono);font-size:18px;font-variant-numeric:tabular-nums}
 .stat span{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
-.title-xl{font-weight:900;font-variation-settings:"wdth" 125;font-size:clamp(44px,14vw,70px);line-height:.9;letter-spacing:.01em;text-transform:uppercase;color:var(--brass);margin:0}
+.title-xl{font-weight:900;font-variation-settings:"wdth" 125;font-size:clamp(34px,11vw,70px);line-height:.9;max-width:100%;overflow-wrap:anywhere;letter-spacing:.01em;text-transform:uppercase;color:var(--brass);margin:0}
 .rating{font-weight:900;font-variation-settings:"wdth" 125;font-size:clamp(72px,26vw,120px);line-height:.9;color:var(--brass);letter-spacing:.02em}
 .rowbtn{display:grid;gap:8px}
 .rowbtn.two{grid-template-columns:1fr 1fr}
@@ -336,7 +336,9 @@ details.more[open] summary::after{content:" ˅"}
 details.more > *:not(summary){margin-top:10px}
 .bs2{display:grid;gap:14px}
 @media (min-width:600px){.bs2{grid-template-columns:1fr 1fr}}
-#pop{position:fixed;z-index:30;left:max(16px,env(safe-area-inset-left,0px));right:max(16px,env(safe-area-inset-right,0px));bottom:calc(env(safe-area-inset-bottom,0px) + 16px);max-width:420px;margin:0 auto;background:var(--ink);color:var(--paper);border:1px solid var(--brass-dim);border-radius:12px;padding:12px 14px;font-size:14px;box-shadow:0 10px 30px rgba(0,0,0,.5);animation:fade .2s}
+#pop{position:fixed;z-index:30;left:max(16px,env(safe-area-inset-left,0px));right:max(16px,env(safe-area-inset-right,0px));top:calc(env(safe-area-inset-top,0px) + 96px);max-width:420px;margin:0 auto;background:var(--ink);color:var(--paper);border:1px solid var(--brass-dim);border-radius:12px;padding:12px 14px;font-size:14px;box-shadow:0 10px 30px rgba(0,0,0,.5);animation:fade .2s}
+.qline{margin:14px 4px 0;color:var(--muted);font-size:12.5px;text-align:center}
+.panel .stickyfoot{position:sticky;bottom:0;background:var(--hall-2);padding-block:10px 4px;margin-bottom:-4px;display:grid;gap:8px;z-index:2}
 #pop b{color:var(--brass);display:block;font-size:12px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:2px}
 
 @media (min-width:880px){
@@ -2174,6 +2176,8 @@ const Scene = (() => {
     u.brows[0].position.y = u.brows[1].position.y = 0.068 + (f === 'smile' ? 0.01 : f === 'worried' ? 0.01 : f === 'frown' ? -0.006 : 0);
   }
   const tellers = []; for (const x of [-3.6, 0, 3.6]){ const p = makePerson({ hue: (x + 9) / 10 + 0.013, staff:true, age:40 }); p.position.set(x, 0, -2.55); p.rotation.y = 0; tellers.push(p); }
+  // Card ids restart at 1 in every game, so a person is identified by the card and who it describes, not the id alone.
+  const pkey = c => c.id + ':' + c.who.hue + ':' + c.who.age + ':' + c.who.name;
   const QUEUE = [[0, -0.98], [0.34, 0.62], [-0.3, 1.78], [0.3, 2.9], [-0.24, 4.0], [0.2, 5.1]];
   const ENTRY = new T.Vector3(1.9, 0, 7.35), LANE_IN = new T.Vector3(0.05, 0, 6.3), LANE_OUT = new T.Vector3(1.7, 0, -0.95);
   const WORRIED = { hardship:1, wmVuln:1, app:1 };
@@ -2323,21 +2327,21 @@ const Scene = (() => {
     setCard(instant){
       // who should be in the hall: upcoming physical cards from qi
       const upcoming = counterQueue().slice(0, QUEUE.length);
-      const ids = new Set(upcoming.map(c => c.id));
+      const ids = new Set(upcoming.map(pkey));
       for (const [id, p] of people) if (!ids.has(id)){ people.delete(id); p.userData.t.copy(ENTRY); p.userData.via = null; leaving.push(p); }
       const winter = [10, 11, 0, 1].includes(S.month);
       upcoming.forEach((c, slot) => {
-        let p = people.get(c.id); const q = QUEUE[slot];
-        if (!p){ p = makePerson({ hue:c.who.hue, age:c.who.age, winter }); if (instant) p.position.set(q[0], 0, q[1]); else { p.position.copy(ENTRY); p.userData.via = LANE_IN.clone(); } people.set(c.id, p); }
+        let p = people.get(pkey(c)); const q = QUEUE[slot];
+        if (!p){ p = makePerson({ hue:c.who.hue, age:c.who.age, winter }); if (instant) p.position.set(q[0], 0, q[1]); else { p.position.copy(ENTRY); p.userData.via = LANE_IN.clone(); } people.set(pkey(c), p); }
         p.userData.t.set(q[0], 0, q[1]); p.userData.speed = 2.4; p.userData.front = slot === 0;
         setFace(p, slot === 0 && WORRIED[c.kind] ? 'worried' : 'neutral');
       });
       alarmOn = S.queue.some(c => !c.done && ['fraud','aml','sanctions','liqshock','outage','funding','capital'].includes(c.kind));
     },
     react(c, style, d){
-      const p = people.get(c.id);
+      const p = people.get(pkey(c));
       if (p){
-        people.delete(c.id); const u = p.userData;
+        people.delete(pkey(c)); const u = p.userData;
         setFace(p, style === 'go' ? 'smile' : style === 'no' ? 'frown' : 'neutral');
         u.react = style === 'go' ? 'nod' : style === 'no' ? 'shake' : 'hm'; u.wait = u.waitMax = reduce ? 0.01 : 1.15;
         u.speed = style === "no" ? 1.8 : 2.6; u.front = false; u.t.copy(ENTRY); u.via = LANE_OUT.clone(); leaving.push(p);
@@ -2436,7 +2440,7 @@ function hud(flash){
   const gb = $('#goalsBtn'); gb.hidden = !S.scenario; if (S.scenario){ const g = S.goals || []; gb.textContent = `Goals ${g.filter(x => x.ok !== false).length}/${g.length}`; }
   $('#hhBtn').hidden = !S.households;
   $('#policyBtn').hidden = !(S.progress && S.progress.unlocked.some(a => POLICY_LIMITS[a]));
-  const nq = counterQueue().length, ni = unreadCount();
+  const nq = counterQueue().length, ni = inboxActions().filter(c => !c.done).length;        // the badge counts what needs a reply, not every unread message
   $('#nCounter').textContent = nq ? String(nq) : ''; $('#nInbox').textContent = ni ? String(ni) : '';
   $('#contBtn').textContent = S.over ? 'Year end' : (remaining() || served) ? 'Continue' : 'End month';
   lastM = m;
@@ -2467,7 +2471,7 @@ const DOCS = {
   wmPep: [ { s:'form', t:'Private client onboarding', f:['Investing','Wants'] }, { s:'id', t:'Passport', f:[] }, { s:'report', t:'Due diligence', f:['Family','Documents'] } ],
   wmVuln: [ { s:'form', t:'Withdrawal request', f:['Withdrawal'] }, { s:'note', t:"Adviser's note", f:['Recent change',"Who's pushing"] } ],
 };
-const SKIN_C = ['#f1c9a5','#d8a47f','#b07a52','#8a5a3c','#5c3b28','#e6b98f'], CLOTH_C = ['#3b62a8','#b84a5a','#2c8a5a','#d9ab4f','#6a4fa0','#2f7f8f','#8a5a3b','#c9c2b0','#444f63','#b86b3a'], HAIR_C = ['#1a120c','#3b2a1a','#7a5a32','#b9b2a5','#111111'];
+const SKIN_C = ['#f1c9a5','#d8a47f','#b07a52','#8a5a3c','#5c3b28','#e6b98f'], CLOTH_C = ['#3b62a8','#b84a5a','#2c8a5a','#d9ab4f','#6a4fa0','#2f7f8f','#8a5a3b','#c9c2b0','#444f63','#b86b3a','#7a2f3f','#55705a'], HAIR_C = ['#1a120c','#3b2a1a','#7a5a32','#b9b2a5','#111111'];
 function fieldHTML(f){ return `<div class="f${f.w ? ' wide' : ''}"><dt>${termBtn(esc(f.l), f.t)}</dt><dd>${esc(f.v)}</dd></div>`; }
 function buildDocs(c){
   const spec = (DOCS[c.kind] || [{ s:'form', t:c.label, f:[] }]).map(d => ({ ...d, rows:[] }));
@@ -2481,7 +2485,7 @@ function docHTML(c, d, i){
   const ref = `No. ${c.ref}`;
   if (d.s === 'id'){
     const h = c.who.hue || 0.5, born = S.year - (c.who.age || 40);
-    const photo = `<div class="photo" style="background:#a9bccd"><b style="background:${CLOTH_C[Math.floor(h * 997) % CLOTH_C.length]}"></b><i style="background:${SKIN_C[Math.floor(h * 131) % SKIN_C.length]}"></i><u style="background:${HAIR_C[Math.floor(h * 53) % HAIR_C.length]}"></u></div>`;
+    const photo = `<div class="photo" style="background:#a9bccd"><b style="background:${CLOTH_C[Math.floor(h * 997) % CLOTH_C.length]}"></b><i style="background:${SKIN_C[Math.floor(h * 131) % SKIN_C.length]}"></i><u style="background:${(c.who.age || 0) > 62 ? '#b9b2a5' : HAIR_C[Math.floor(h * 53) % HAIR_C.length]}"></u></div>`;
     return `<header class="dh">${esc(d.t)}<span>UK · ${String(c.ref).padStart(4, '0')}${String(c.id).padStart(5, '0')}</span></header><dl class="db">${photo}<div class="idf"><div class="f"><dt>Name</dt><dd>${esc(c.who.name)}</dd></div><div class="f"><dt>Born</dt><dd>${born}</dd></div>${d.rows.map(fieldHTML).join('')}</div></dl>`;
   }
   const who = i === 0 ? `<div class="who-row"><strong>${nameHTML(c)}${c.who.age ? ', ' + c.who.age : ''}</strong><span>${esc(c.who.sub)}</span></div>` : '';
@@ -2489,7 +2493,7 @@ function docHTML(c, d, i){
 }
 function idStrip(c, d){
   const h = c.who.hue || 0.5, born = S.year - (c.who.age || 40);
-  const photo = `<div class="photo" style="background:#a9bccd"><b style="background:${CLOTH_C[Math.floor(h * 997) % CLOTH_C.length]}"></b><i style="background:${SKIN_C[Math.floor(h * 131) % SKIN_C.length]}"></i><u style="background:${HAIR_C[Math.floor(h * 53) % HAIR_C.length]}"></u></div>`;
+  const photo = `<div class="photo" style="background:#a9bccd"><b style="background:${CLOTH_C[Math.floor(h * 997) % CLOTH_C.length]}"></b><i style="background:${SKIN_C[Math.floor(h * 131) % SKIN_C.length]}"></i><u style="background:${(c.who.age || 0) > 62 ? '#b9b2a5' : HAIR_C[Math.floor(h * 53) % HAIR_C.length]}"></u></div>`;
   return `<div class="idstrip">${photo}<dl class="db"><div class="f"><dt>${esc(d.t)}</dt><dd>UK ${String(c.ref).padStart(4, '0')}${String(c.id).padStart(5, '0')}</dd></div><div class="f"><dt>Born</dt><dd>${born}</dd></div>${d.rows.map(fieldHTML).join('')}</dl></div>`;
 }
 function layDocs(c, mark){
@@ -2504,7 +2508,7 @@ function layDocs(c, mark){
     ${secs.map((d, i) => d.rows.length ? `<section class="sec">${i ? `<h4>${esc(d.t)}</h4>` : ''}<dl class="db">${d.rows.map(fieldHTML).join('')}</dl></section>` : '').join('')}
     ${notes.map(note).join('')}
     ${mark ? `<div class="mark still st-${mark.s}">${esc(mark.st)}</div>` : ''}
-  </article>`;
+  </article>${(() => { const w = counterQueue().filter(x => x.id !== c.id).length, m = inboxActions().filter(x => !x.done).length; return w || m ? `<p class="qline">${w ? w + ' more waiting at the counter' : ''}${w && m ? ' · ' : ''}${m ? m + ' in your inbox need a reply' : ''}</p>` : ''; })()}`;
   box.style.height = '';
   $('#docs').scrollTop = 0;
 }
@@ -2696,7 +2700,7 @@ function herald(){
 /* ---------- Branch ---------- */
 function bankTop(which){ return `<div class="seg" role="tablist"><button type="button" data-seg="books" aria-selected="${which === 'books'}">Books</button><button type="button" data-seg="branch" aria-selected="${which === 'branch'}">Branch</button></div>`; }
 function bankWire(){ const sg = $('#ov .seg'); if (sg) sg.onclick = e => { const b = e.target.closest('[data-seg]'); if (!b) return; b.dataset.seg === 'branch' ? branchPanel() : booksPanel(); }; const sr = $('#sndRow'); if (sr){ sr.onclick = () => { Snd.toggle(); sndBtn(); if (Snd.on) Snd.play('click'); }; sndBtn(); } }
-const bankFoot = () => `<div class="rowbtn two"><button type="button" class="btn neutral" id="sndRow">Sound</button><button type="button" class="btn primary" id="ovGo">Back</button></div>`;
+const bankFoot = () => `<div class="rowbtn two stickyfoot"><button type="button" class="btn neutral" id="sndRow">Sound</button><button type="button" class="btn primary" id="ovGo">Back</button></div>`;
 function branchPanel(msg){
   const mo = upMonthly();
   overlay(`${bankTop('branch')}<div class="eyebrow">${MONTHS[Math.min(S.month, 11)]} ${S.year} · cash ${fmt(S.cash)}</div><h2>Your branch</h2>
@@ -2705,7 +2709,7 @@ function branchPanel(msg){
     <div class="ups">${UPGRADES.map(u => { const own = owned(u.key), can = S.cash >= u.cost && !S.over; return `<div class="upg${own ? ' own' : ''}"><b>${esc(u.name)}</b><p>${esc(u.blurb)}</p><span class="eff">${esc(u.effect)}</span><span class="price">${u.cost ? fmt(u.cost) + ' once' : 'No set-up cost'}${u.monthly ? ` · ${u.monthly > 0 ? fmt(u.monthly) + '/month' : 'saves ' + fmt(-u.monthly) + '/month'}` : ''}</span><button type="button" class="btn ${own ? 'neutral' : 'go'}" data-up="${u.key}" ${own || !can ? 'disabled' : ''}>${own ? 'Owned' : can ? 'Buy' : 'Can\'t afford'}</button></div>`; }).join('')}</div>
     <table class="ledger"><tr><td>Monthly cost of upgrades</td><td>${mo >= 0 ? fmt(mo) : '−' + fmt(-mo)}</td></tr><tr><td>Counters open</td><td>${owned('cashier') ? 2 : 1}</td></tr></table>
     ${bankFoot()}`);
-  $('#ovGo').onclick = closeOverlay; bankWire();
+  $('#ovGo').onclick = closeOverlay; bankWire(); tabSel('bank');
   $('#ov .ups').onclick = e => { const b = e.target.closest('[data-up]'); if (!b || b.disabled) return; const out = dispatch({ type:"buy", key:b.dataset.up }); if (!out) return; Snd.play('stamp'); Snd.play('coin', 200); Scene.sync(); hud(true); save(); branchPanel(`${UPGRADES.find(u => u.key === b.dataset.up).name} bought.`); };
 }
 
@@ -2729,7 +2733,7 @@ function endScreen(){
   overlay(`<div class="eyebrow">${sc ? `${esc(sc.name)} · ${sc.year}` : `${S.year} · year-end rating${S.career.length ? ` · year ${S.career.length + 1}` : ''}`}</div>
     ${sc ? `<h2>${met === S.goals.length ? 'Scenario complete' : `${met} of ${S.goals.length} goals met`}</h2><div style="display:grid;gap:6px">${goalsHTML()}</div><h3>Rating</h3>` : ''}
     <div class="rating">${r.letter}</div>
-    <p>${fail ? esc(fail) : sc ? 'Profit is judged against what similar banks made in the same conditions.' : `The year turned out to be ${P().name}.`}</p>
+    <p>${fail ? esc(fail) : sc ? 'Profit is judged against what similar banks made in the same conditions.' : `The economy this year: ${P().name}.`}</p>
     <div class="grid2">
       <div class="stat"><span>Profit</span><b style="color:${r.profit >= 0 ? 'var(--good)' : 'var(--bad)'}">${fmt(r.profit, true)}</b></div>
       <div class="stat"><span>${termBtn('Return on capital', 'Return on capital')}</span><b>${pc(r.roe)}</b><span style="text-transform:none;letter-spacing:0">Peer banks ${r.peer >= 0 ? '+' : ''}${pc(r.peer, 0)}</span></div>
@@ -2787,15 +2791,20 @@ function booksPanel(){
       <div class="stat"><span>${termBtn('Capital ratio', 'Capital ratio')}</span><b>${pc(capRatio())}</b></div>
       <div class="stat"><span>${termBtn('Liquidity', 'Liquidity')}</span><b>${pc(liqRatio())}</b></div>
       <div class="stat"><span>Savings rate</span><b>${S.savRate.toFixed(2)}%</b></div>
-      <div class="stat"><span>Net interest margin</span><b>${nim == null ? '–' : pc(nim, 2)}</b></div>
+      <div class="stat"><span>Net interest margin</span>${nim == null ? '<b style="font-size:13px;font-weight:600;color:var(--muted)">after month end</b>' : '<b>' + pc(nim, 2) + '</b>'}</div>
     </div>
     <p style="color:var(--muted);font-size:13px">Capital ratio = capital ÷ ${fmt(rwa())} risk-weighted assets. Mortgages count at 35–50%, other loans at 100%, gilts and reserves at zero.</p>
     ${bankFoot()}`);
-  $('#ovGo').onclick = closeOverlay; bankWire();
+  $('#ovGo').onclick = closeOverlay; bankWire(); tabSel('bank');
 }
 
-function overlay(html){ const o = $('#ov'); o.innerHTML = `<div class="panel" role="dialog" aria-modal="true">${html}</div>`; o.hidden = false; o.querySelector('.panel').scrollTop = 0; const b = $('#ovGo'); if (b) b.focus({ preventScroll:true }); }
-function closeOverlay(){ $('#ov').hidden = true; $('#ov').innerHTML = ''; }
+function tabSel(name){
+  const on = { counter: view === 'counter' && !name, inbox: view === 'inbox' && !name, bank: name === 'bank', policy: name === 'policy' };
+  $('#tabCounter').setAttribute('aria-selected', on.counter); $('#tabInbox').setAttribute('aria-selected', on.inbox);
+  $('#bankBtn').setAttribute('aria-selected', on.bank); $('#policyBtn').setAttribute('aria-selected', on.policy);
+}
+function overlay(html){ $('#pop').hidden = true; if (typeof view !== 'undefined') tabSel(); const o = $('#ov'); o.innerHTML = `<div class="panel" role="dialog" aria-modal="true">${html}</div>`; o.hidden = false; o.querySelector('.panel').scrollTop = 0; const b = $('#ovGo'); if (b) b.focus({ preventScroll:true }); }
+function closeOverlay(){ $('#pop').hidden = true; if (typeof view !== 'undefined') tabSel(); $('#ov').hidden = true; $('#ov').innerHTML = ''; }
 
 /* recurring customers: the household behind a name, with the month's budget, the credit score over time and what has happened to them */
 function nameHTML(c){ return c.h && c.h.hh != null && S.households ? '<button type="button" class="hhlink" data-hh="' + c.h.hh + '">' + esc(c.who.name) + '</button>' : esc(c.who.name); }
@@ -2867,7 +2876,8 @@ function policyScreen(msg, isErr){
       '<label>' + r[1] + ' <span class="dim">(' + r[2] + '; executive team: ' + sys[area][r[0]] + ')</span><input type="number" step="' + r[3] + '" data-area="' + area + '" data-key="' + r[0] + '" value="' + S.policy[area][r[0]] + '">' + (r[4] ? '<span class="dim">' + r[4] + '</span>' : '') + '</label>').join('');
   }).join('');
   overlay('<div class="eyebrow">Chief Executive</div><h2>Policy</h2><div class="acct">' + (quietLeft() > 0 ? '<p class="dim">Quiet months: nothing outside the bank will go wrong for ' + (quietLeft() - 1) + ' more month' + (quietLeft() === 2 ? '' : 's') + ' after this one.</p>' : '') + blocks + note +
-    '<button type="button" class="btn primary" id="plSave">Save changes</button><button type="button" class="btn neutral" id="plReset">Go back to the executive team values</button><button type="button" class="btn link" id="plBack">Close</button></div>');
+    '<div class="stickyfoot"><button type="button" class="btn primary" id="plSave">Save changes</button><button type="button" class="btn neutral" id="plReset">Go back to the executive team values</button><button type="button" class="btn link" id="plBack">Close</button></div></div>');
+  tabSel('policy');
   const send = (area, values) => { try { dispatch({ type: 'setPolicy', area, values }); return null; } catch (e) { return e.message; } };
   $('#plSave').onclick = () => {
     const by = {}; document.querySelectorAll('#ov input[data-key]').forEach(i => { (by[i.dataset.area] = by[i.dataset.area] || {})[i.dataset.key] = parseFloat(i.value); });
@@ -2880,7 +2890,8 @@ function policyScreen(msg, isErr){
 }
 $('#policyBtn').onclick = () => policyScreen();
 
-/* glossary popover */
+/* glossary popover: it sits at the top, away from the action buttons, and goes away by itself */
+{ let t = null; new MutationObserver(() => { clearTimeout(t); const pop = $('#pop'); if (!pop.hidden) t = setTimeout(() => { pop.hidden = true; }, 7000); }).observe($('#pop'), { attributes: true, attributeFilter: ['hidden'] }); }
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-term]'); const pop = $('#pop');
   if (t && TERMS[t.dataset.term]){ e.stopPropagation(); pop.innerHTML = `<b>${esc(t.dataset.term)}</b>${esc(TERMS[t.dataset.term])}`; pop.hidden = false; return; }

@@ -161,6 +161,12 @@ test('the page works with no server: opened from a file there is no account butt
   assert.strictEqual(await page.$('#ovLit'), null, 'no check is offered when playing without an account');
 
   // the Policy button is hidden until the board hands pricing over; then the screen edits it and a bad value is refused
+  // the glossary popover goes away when an overlay opens, and the Bank tab shows as selected while the books are open
+  await page.evaluate(() => { const pop = document.querySelector('#pop'); pop.hidden = false; booksPanel(); });
+  assert.strictEqual(await page.isHidden('#pop'), true);
+  assert.strictEqual(await page.getAttribute('#bankBtn', 'aria-selected'), 'true');
+  await page.evaluate(() => closeOverlay());
+  assert.strictEqual(await page.getAttribute('#bankBtn', 'aria-selected'), 'false');
   assert.strictEqual(await page.isVisible('#policyBtn'), false);
   await page.evaluate(() => { S.progress.unlocked.push('pricing'); closeOverlay(); hud(); });
   assert.strictEqual(await page.isVisible('#policyBtn'), true);
