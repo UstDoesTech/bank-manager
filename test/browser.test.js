@@ -127,6 +127,22 @@ test('the page works with no server: opened from a file there is no account butt
   await page.click('#ovTrain');
   const ok = await page.evaluate(() => { for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); closeBooks(); return S.month; });
   assert.strictEqual(ok, 1);
+
+  // the Policy button is hidden until the board hands pricing over; then the screen edits it and a bad value is refused
+  assert.strictEqual(await page.isVisible('#policyBtn'), false);
+  await page.evaluate(() => { S.progress.unlocked.push('pricing'); closeOverlay(); hud(); });
+  assert.strictEqual(await page.isVisible('#policyBtn'), true);
+  await page.click('#policyBtn');
+  assert.match(await page.textContent('.panel'), /Not yet yours/);        // credit is still locked
+  await page.fill('input[data-key=mortgageSpread]', '1.4'); await page.click('#plSave');
+  await waitFor(async () => /Saved/.test(await page.textContent('.acct .msg')), 'policy saved');
+  assert.strictEqual(await page.evaluate(() => S.policy.pricing.mortgageSpread), 1.4);
+  assert.strictEqual(await page.evaluate(() => S.policy.owner.pricing), 'player');
+  await page.fill('input[data-key=cardRate]', '90'); await page.click('#plSave');
+  await waitFor(async () => /between/.test(await page.textContent('.acct .msg')), 'out-of-range refused');
+  await page.click('#plReset');
+  await waitFor(async () => /executive team's values/.test(await page.textContent('.acct .msg')), 'reset');
+  assert.strictEqual(await page.evaluate(() => S.policy.pricing.mortgageSpread), 1.05);
   assert.deepStrictEqual(errors, []);
   await ctx.close();
 });

@@ -19,7 +19,7 @@ const POLICIES = {
   mixed:  (c, r) => (r() < 0.7 ? 0 : Math.floor(r() * c.opts.length)),
 };
 // Plays `years` years. Returns the command log and the final state. Uses E.dispatch when present, else the old direct calls.
-function play(E, seed, policy, years = 2, opts = {}){
+function play(E, seed, policy, years = 2, opts = {}, setup = null){
   const r = prng(seed ^ 0x5bd1e995), cmds = [];
   const run = (cmd) => {
     cmds.push(cmd);
@@ -33,6 +33,7 @@ function play(E, seed, policy, years = 2, opts = {}){
     }
   };
   run({ type: 'newGame', seed, opts });
+  if (setup) setup(run, E);
   for (let y = 0; y < years; y++){
     while (!E.S.over){
       let c; while ((c = E.current())){

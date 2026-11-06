@@ -113,4 +113,25 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   const avg = a => a.reduce((t, x) => t + x, 0) / a.length, m = seen.mortgage;
   assert(m.approve.length >= 10 && m.decline.length >= 3, 'need approved and declined mortgages: ' + [m.approve.length, m.refer.length, m.decline.length]);
   assert(avg(m.decline) > 2 * avg(m.approve), 'declined mortgages should be far riskier: ' + avg(m.decline) + ' vs ' + avg(m.approve)); n++; }
+// 9. Unlocks: each strong year (A or better) hands over the next area with a briefing letter; weak years hand over nothing.
+{ let granted = 0, withheld = 0;
+  for (const seed of [4, 8, 15, 16, 23, 42]) for (const bot of ['careful', 'greedy']){
+    const a = play(loadEngine(src), seed, bot, 3), S = a.S, strong = (S.career || []).filter(c => ['AAA', 'AA', 'A'].includes(c.letter)).length;
+    const unlocked = S.progress.unlocked.filter(x => x !== 'branch');
+    assert.strictEqual(unlocked.length, Math.min(2, strong), 'unlock count should follow strong years: ' + bot + seed);
+    assert.strictEqual(JSON.stringify(unlocked), JSON.stringify(['pricing', 'credit'].slice(0, unlocked.length)));
+    // the letter arrives with the unlock (the inbox only keeps the latest 60 messages, so check at the moment it happens)
+    { const R = loadEngine(src); for (const cmd of a.cmds){ const k = R.S ? R.S.progress.unlocked.length : 0; R.dispatch(cmd);
+        if (cmd.type === 'nextYear' && R.S.progress.unlocked.length > k) assert(R.S.inbox.some(m => m.from === 'The board' && /is yours/.test(m.subject) && !m.read), 'briefing letter on unlock'); } }
+    granted += unlocked.length; withheld += 2 - unlocked.length; n++;
+  }
+  assert(granted > 0 && withheld > 0, 'need both strong and weak outcomes in the sample: ' + granted + '/' + withheld); n++; }
+// 10. Dearer mortgages lose customers: at four points over the system spread far less is lent, and what is lent is riskier.
+{ const lent = (spread) => { let bal = 0, pd = 0, k = 0;
+    for (const seed of [3, 6, 9, 12, 15, 18]){
+      const E = loadEngine(src); const { S } = play(E, seed, 'careful', 1, {}, (run, e) => { e.S.progress.unlocked.push('pricing'); run({ type: 'setPolicy', area: 'pricing', values: { mortgageSpread: spread } }); });
+      for (const l of S.loans.filter(l => l.kind === 'mortgage')){ bal += l.bal; pd += l.pd; k++; } }
+    return { bal, pd: k ? pd / k : 0 }; };
+  const sys = lent(1.05), dear = lent(5.05);
+  assert(dear.bal < sys.bal * 0.5, 'dear mortgages should lose most of the volume: ' + dear.bal + ' vs ' + sys.bal); n++; }
 console.log('ok', n, 'checks');

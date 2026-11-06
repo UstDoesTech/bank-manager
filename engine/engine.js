@@ -157,6 +157,27 @@ function systemPolicy(){
 const POLICY_LIMITS = {
   pricing: { mortgageSpread: [0, 6], mortgagePremium: [0, 3], personalLow: [0, 40], personalHigh: [0, 40], cardRate: [0, 40] },
   credit: { mortgageMaxLtv: [50, 100], mortgageMaxLti: [2, 8], mortgageMaxAff: [0.2, 0.8], mortgageMinScore: [300, 900], personalMinScore: [300, 900] } };
+// Prices above the system's lose customers and attract riskier ones; at or below the system's nothing changes.
+// excess() is how many points a price is above the system price; dem() is the share of customers who still say yes;
+// adv() scales default risk for the customers who do. No random draw happens at the system prices.
+const excess = name => Math.max(0, S.policy.pricing[name] - systemPolicy().pricing[name]);
+const dem = (ex, slope = 0.35) => ex <= 0 ? 1 : clamp(1 - slope * ex, 0.05, 1);
+const adv = ex => 1 + 0.08 * ex;
+const takeUp = (ex, slope) => ex <= 0 || chance(dem(ex, slope));
+const MORTGAGE_SLOPE = 1.2;   // mortgage customers shop around hard: 0.5 points dearer loses about 40% of them
+/* ---- unlocks: a strong year (rating A or better) hands over the next area, with a briefing letter from the board ---- */
+const UNLOCK_ORDER = ['pricing', 'credit'];
+const STRONG = ['AAA', 'AA', 'A'];
+const BRIEFING = {
+  pricing: ['Pricing is yours', 'The board was impressed by your year. From now on you set the prices: the mortgage spread over Bank Rate, the personal loan rates and the card rate. Until today the executive team set them. Price too high and customers go elsewhere, and the ones who stay are riskier. Price too low and you give away margin. Open Policy from the menu to change them, or return to the executive team\'s prices at any time.'],
+  credit: ['Credit policy is yours', 'Another strong year. You now set the credit policy: how much of a home\'s price we lend, how many times income, how much of take-home pay a mortgage may take, and the lowest credit scores we accept. Loosening it wins customers and brings losses a year or two later.'] };
+function grantUnlock(r){
+  if (!STRONG.includes(r.letter)) return;
+  const next = UNLOCK_ORDER.find(a => !S.progress.unlocked.includes(a));
+  if (!next) return;
+  S.progress.unlocked.push(next);
+  addMail('The board', BRIEFING[next][0], BRIEFING[next][1], 'good', 0, S.year);
+}
 function setPolicy(area, values){
   const lim = POLICY_LIMITS[area];
   if (!lim) throw new Error('unknown policy area ' + area);
@@ -274,10 +295,10 @@ function mortgageRisk(h, loan = h.loan){
   return { ltv, rate, pay, aff, pd: logistic(z) };
 }
 res.mortgage = (c, k) => {
-  const h = c.h, nm = first(h.name);
-  const doBook = (loan, extra = 0) => { const m = mortgageRisk(h, loan); { const pay = annuity(loan, m.rate + extra, h.term); custSay(`${full(pay)} a month at ${(m.rate + extra).toFixed(2)}%, ${pc(pay / takeHome(h.inc), 0)} of take-home pay. Over ${h.term} years they repay ${full(pay * h.term * 12)} for a ${full(loan)} loan, if the rate stayed the same.`); } book({ kind:'mortgage', name:h.name, bal:loan, rate:m.rate + extra, pd: Math.min(0.95, m.pd * (extra ? 1.25 : 1)), prop:h.price, ltv:m.ltv }); money('fees', 0.999 - (h.broker ? loan * 0.0035 : 0), h.broker ? 'Fee less broker' : 'Fee'); };
-  if (k === 'yes'){ doBook(h.loan); say(`Offer issued. ${nm} gets the keys next month.`); }
-  if (k === 'prem'){ const pd = mortgageRisk(h).pd; if (chance(clamp(0.22 + pd * 4, 0.22, 0.9))) { doBook(h.loan, S.policy.pricing.mortgagePremium); say(`${nm} accepts the higher rate. ${pd > 0.05 ? 'Nobody else offered them anything.' : 'They didn\'t shop around.'}`); } else say(`${nm} found the market rate at another lender.`); }
+  const h = c.h, nm = first(h.name), spreadEx = excess('mortgageSpread');
+  const doBook = (loan, extra = 0) => { const m = mortgageRisk(h, loan); { const pay = annuity(loan, m.rate + extra, h.term); custSay(`${full(pay)} a month at ${(m.rate + extra).toFixed(2)}%, ${pc(pay / takeHome(h.inc), 0)} of take-home pay. Over ${h.term} years they repay ${full(pay * h.term * 12)} for a ${full(loan)} loan, if the rate stayed the same.`); } book({ kind:'mortgage', name:h.name, bal:loan, rate:m.rate + extra, pd: Math.min(0.95, m.pd * (extra ? 1.25 : 1) * adv(spreadEx)), prop:h.price, ltv:m.ltv }); money('fees', 0.999 - (h.broker ? loan * 0.0035 : 0), h.broker ? 'Fee less broker' : 'Fee'); };
+  if (k === 'yes'){ if (takeUp(spreadEx, MORTGAGE_SLOPE)){ doBook(h.loan); say(`Offer issued. ${nm} gets the keys next month.`); } else say(`${nm} found a cheaper mortgage at another lender.`); }
+  if (k === 'prem'){ const pd = mortgageRisk(h).pd; if (chance(clamp(0.22 + pd * 4, 0.22, 0.9) * dem(spreadEx + excess('mortgagePremium'), MORTGAGE_SLOPE))) { doBook(h.loan, S.policy.pricing.mortgagePremium); say(`${nm} accepts the higher rate. ${pd > 0.05 ? 'Nobody else offered them anything.' : 'They didn\'t shop around.'}`); } else say(`${nm} found the market rate at another lender.`); }
   if (k === 'less'){ if (chance(0.45)) { doBook(h.alt); say(`${nm} found the extra deposit with help from family. Smaller loan agreed.`); } else { say(`${nm} took a bigger loan from another lender.`); dT(-1); } }
   if (k === 'no'){ say(`${nm} will try another lender.`); if (mortgageRisk(h).pd < 0.03) { dT(-1); S.stats.wrongNo++; } }
 };
@@ -299,8 +320,8 @@ gen.personal = (o = {}) => {
 res.personal = (c, k) => {
   const h = c.h, nm = first(h.name), pr = S.policy.pricing;
   const cv = r => { const yrs = h.yrs || 4, pay = annuity(h.amt, r, yrs), tot = pay * yrs * 12; custSay(`Over ${yrs} years at ${r}% they repay ${full(tot)} for ${full(h.amt)}: ${full(tot - h.amt)} in interest. Repayments take ${pc(pay / takeHome(h.inc || 30), 0)} of take-home pay.`); };
-  if (k === 'low'){ cv(pr.personalLow); book({ kind:'personal', name:h.name, bal:h.amt, rate:pr.personalLow, pd:h.pd }); say(`Money in ${nm}'s account within the hour.`); dT(h.pd < 0.08 ? 1 : 0); }
-  if (k === 'high'){ if (chance(clamp(0.25 + h.pd * 4, 0.25, 0.92))) { cv(pr.personalHigh); book({ kind:'personal', name:h.name, bal:h.amt, rate:pr.personalHigh, pd: Math.min(0.95, h.pd * 1.3) }); say(`${nm} signs at ${pr.personalHigh}%.${h.pd > 0.08 ? ' Nobody else would lend to them.' : ''}`); if (h.pd < 0.06) dT(-1); } else say(`${nm} took ${pr.personalLow}% from a lender down the road.`); }
+  if (k === 'low'){ if (takeUp(excess('personalLow'))){ cv(pr.personalLow); book({ kind:'personal', name:h.name, bal:h.amt, rate:pr.personalLow, pd:h.pd * adv(excess('personalLow')) }); say(`Money in ${nm}'s account within the hour.`); dT(h.pd < 0.08 ? 1 : 0); } else say(`${nm} took a cheaper loan from a lender down the road.`); }
+  if (k === 'high'){ if (chance(clamp(0.25 + h.pd * 4, 0.25, 0.92) * dem(excess('personalHigh')))) { cv(pr.personalHigh); book({ kind:'personal', name:h.name, bal:h.amt, rate:pr.personalHigh, pd: Math.min(0.95, h.pd * 1.3 * adv(excess('personalHigh'))) }); say(`${nm} signs at ${pr.personalHigh}%.${h.pd > 0.08 ? ' Nobody else would lend to them.' : ''}`); if (h.pd < 0.06) dT(-1); } else say(`${nm} took ${pr.personalLow}% from a lender down the road.`); }
   if (k === 'no'){ say(`${nm} leaves. ${pick(['They mention a lender that advertises on daytime TV.','They will ask family instead.','They will try their old bank.'])}`); if (h.pd < 0.04) { dT(-1); S.stats.wrongNo++; } }
 };
 
@@ -319,7 +340,8 @@ res.card = (c, k) => {
   if (k === 'up'){
     const bal = (h.nl - h.lim) * (h.persist ? 0.9 : 0.25);
     custSay(`Carrying an extra ${full(bal)} at ${S.policy.pricing.cardRate}% costs about ${full(bal * S.policy.pricing.cardRate / 100)} a year in interest. Paying only the minimum, it would take about ${Math.round(minPayYears(bal, S.policy.pricing.cardRate))} years to clear.`);
-    book({ kind:'card', name:h.name, bal, rate:S.policy.pricing.cardRate, pd: h.persist ? 0.32 : 0.025 });
+    const cex = excess('cardRate'); book({ kind:'card', name:h.name, bal, rate:S.policy.pricing.cardRate, pd: (h.persist ? 0.32 : 0.025) * adv(cex) });
+    if (cex > 0) later(ri(2, 4), { text:'Regulator review of your credit card pricing.', comp:-3, tone:'bad', p: Math.min(0.9, 0.12 * cex) });
     say(h.persist ? `Limit raised. ${nm} uses most of it within a fortnight.` : `Limit raised. ${nm} buys a sofa and pays most of it off.`);
     if (h.persist) later(ri(2, 4), { text:`Regulator file review: limits raised for customers in persistent debt, including ${h.name}.`, comp:-4, trust:-1, tone:'bad', p:0.4 });
   }
@@ -846,6 +868,7 @@ function nextYear(){
   S.startCap = capital();
   S.stats = freshStats(); S.stats.minCap = capRatio();
   S.sched = makeSched();
+  grantUnlock(r);
   buildMonth();
 }
 function migrate(s){ if (!s.policy) s.policy = systemPolicy(); if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
