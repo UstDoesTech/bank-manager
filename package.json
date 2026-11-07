@@ -10,6 +10,7 @@
     "start": "node server/index.js",
     "replay": "node server/replay.js",
     "test:browser": "node --test test/browser.test.js",
+    "shots": "node tools/shots.js",
     "test:all": "npm test && npm run test:server && npm run test:browser"
   },
   "dependencies": {

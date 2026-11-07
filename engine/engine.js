@@ -2311,6 +2311,41 @@ function welcomeMail(){
 function markRead(key){ const id = +key.slice(1); const it = key[0] === 'c' ? S.queue.find(x => x.id === id) : (S.inbox || []).find(x => x.id === id); if (it) it.read = true; }
 
 /* ---- presentation data the page reads, kept here so the page only draws ---- */
+/* ---- dashboard and month-end facts: what the page draws as gauges, charts and "what moved" ---- */
+function plRows(L){
+  return [['Interest from loans', L.intLoans], ['Interest on gilts', L.intGilts], ['Interest on reserves', L.intRes], ['Interest paid to savers', L.intDep], ['Bank of England and wholesale borrowing', L.intCB],
+    ['Fees', L.fees], ['Wealth management fees', L.wealth || 0], ['Credit losses', L.losses], ['Fraud, refunds & fines', L.redress], ['Running costs', L.costs], ['Asset sales', L.gilts]].filter(r => Math.abs(r[1]) >= 0.05);
+}
+function gaugeStatus(v, min, watchAt){ return v < min ? 'alarm' : v < watchAt ? 'watch' : 'ok'; }
+function dashboardFacts(){
+  const m = metrics(), h = S.history || [];
+  const gauges = [
+    { key:'cap', label:'Capital ratio', term:'Capital ratio', value:m.cap, min:MIN_CAP, max:0.25, shown:pc(m.cap), status:gaugeStatus(m.cap, MIN_CAP, MIN_CAP * 1.25) },
+    { key:'liq', label:'Liquidity', term:'Liquidity', value:m.liq, min:MIN_LIQ, max:0.6, shown:pc(m.liq, 0), status:gaugeStatus(m.liq, MIN_LIQ, MIN_LIQ * 1.5) },
+    { key:'trust', label:'Customer trust', term:'Customer trust', value:m.trust, min:40, max:100, shown:Math.round(m.trust) + '/100', status:gaugeStatus(m.trust, 40, 55) },
+  ];
+  if (S.board) gauges.push({ key:'board', label:'Board confidence', term:null, value:S.board.conf, min:BOARD_SACK, max:100, shown:Math.round(S.board.conf) + '/100', status:gaugeStatus(S.board.conf, BOARD_SACK, 40) });
+  const series = [
+    { key:'profit', label:'Profit this year', pts:h.map(x => x.profit), fmt:v => fmt(v, true) },
+    { key:'cap', label:'Capital ratio', pts:h.map(x => x.cap), min:MIN_CAP, fmt:v => pc(v) },
+    { key:'liq', label:'Liquidity', pts:h.map(x => x.liq), min:MIN_LIQ, fmt:v => pc(v, 0) },
+  ];
+  return { gauges, series };
+}
+function monthMoves(rep){
+  const h = S.history || [], a = h[h.length - 1], b = h[h.length - 2];
+  const moves = [];
+  if (a && b){
+    const add = (label, d, fm, upGood) => { if (Math.abs(d) > 1e-9) moves.push({ label, text:fm(d), up:d > 0, good:(d > 0) === upGood }); };
+    add('Capital ratio', a.cap - b.cap, d => (d > 0 ? '+' : '−') + pc(Math.abs(d), 2), true);
+    add('Liquidity', a.liq - b.liq, d => (d > 0 ? '+' : '−') + pc(Math.abs(d), 1), true);
+    add('Customer trust', a.trust - b.trust, d => (d > 0 ? '+' : '−') + Math.abs(d).toFixed(1), true);
+    add('Regulator standing', a.comp - b.comp, d => (d > 0 ? '+' : '−') + Math.abs(d).toFixed(0), true);
+  }
+  const drivers = plRows(rep.pl).filter(r => r[0] !== 'Asset sales').sort((x, y) => Math.abs(y[1]) - Math.abs(x[1])).slice(0, 3).map(r => ({ label:r[0], amt:r[1] }));
+  return { moves, drivers };
+}
+
 const DOCS = {
   onboard: [ { s:'form', t:'Account application', f:['Product','Expected in','First deposit'] }, { s:'id', t:'Identity document', f:['ID check'] }, { s:'report', t:'Verification checks', f:['Address check','Device'] } ],
   mortgage: [ { s:'form', t:'Mortgage application', f:['Property price','Loan','LTV','Repayment','Total interest'] }, { s:'payslip', t:'Income evidence', f:['Income','Joint income','Loan to income','Work'] }, { s:'report', t:'Credit file', f:['Credit score','Missed payments, 2 yrs'] }, { s:'note', t:'Underwriter', f:['Money at stake'] } ],

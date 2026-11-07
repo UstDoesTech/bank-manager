@@ -382,6 +382,36 @@ details.more > *:not(summary){margin-top:10px}
 img{max-width:100%}
 :root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
+
+/* dashboard: gauges, trend charts, month-end movement, town map, first-time hint */
+.gauges{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.gauge{display:grid;gap:5px;background:rgba(0,0,0,.22);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.gauge:last-child:nth-child(odd){grid-column:1/-1}
+.gauge .gl{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.gauge .gv{font-family:var(--f-mono);font-size:20px;font-weight:600}
+.gauge.ok .gv{color:var(--good)}.gauge.watch .gv{color:var(--warn)}.gauge.alarm .gv{color:var(--bad)}
+.gtrack{position:relative;height:8px;border-radius:4px;background:var(--line);overflow:visible}
+.gtrack i{position:absolute;left:0;top:0;bottom:0;border-radius:4px}
+.gauge.ok .gtrack i{background:var(--good)}.gauge.watch .gtrack i{background:var(--warn)}.gauge.alarm .gtrack i{background:var(--bad)}
+.gtrack u{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--text);opacity:.8;text-decoration:none}
+.gnote{font-size:11px;color:var(--muted)}
+.charts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:440px){.charts{grid-template-columns:1fr}}
+.chart{display:grid;gap:3px;min-width:0}
+.chart .cl{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.chart svg{width:100%;height:56px;display:block;color:var(--brass)}
+.chart .cv{font-family:var(--f-mono);font-size:12.5px}
+.moves{display:flex;flex-wrap:wrap;gap:6px}
+.mv{font-family:var(--f-mono);font-size:12px;padding:3px 8px;border-radius:6px;background:rgba(0,0,0,.35)}
+.mv.good{color:var(--good)}.mv.bad{color:var(--bad)}
+.drivers{display:grid;gap:4px;margin:0;padding:0;list-style:none;font-size:13.5px}
+.drivers li{display:flex;justify-content:space-between;gap:12px}
+.tmap{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;padding:6px 0}
+.tn{display:grid;gap:3px;justify-items:center;font-size:11px;color:var(--muted);max-width:76px;text-align:center}
+.tn i{display:block;border-radius:50%;border:2px solid var(--line);background:var(--hall-2)}
+.tn.branch i{background:var(--brass);border-color:var(--brass)}.tn.hub i{background:var(--hall-3);border-color:var(--brass)}.tn.closed i,.tn.none i{opacity:.45}
+.hint{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border:1px dashed var(--brass-dim);border-radius:10px;padding:10px 12px;font-size:13.5px}
+.hint button{flex:0 0 auto}
 </style>
 </head>
 <body>
@@ -2749,6 +2779,41 @@ function welcomeMail(){
 function markRead(key){ const id = +key.slice(1); const it = key[0] === 'c' ? S.queue.find(x => x.id === id) : (S.inbox || []).find(x => x.id === id); if (it) it.read = true; }
 
 /* ---- presentation data the page reads, kept here so the page only draws ---- */
+/* ---- dashboard and month-end facts: what the page draws as gauges, charts and "what moved" ---- */
+function plRows(L){
+  return [['Interest from loans', L.intLoans], ['Interest on gilts', L.intGilts], ['Interest on reserves', L.intRes], ['Interest paid to savers', L.intDep], ['Bank of England and wholesale borrowing', L.intCB],
+    ['Fees', L.fees], ['Wealth management fees', L.wealth || 0], ['Credit losses', L.losses], ['Fraud, refunds & fines', L.redress], ['Running costs', L.costs], ['Asset sales', L.gilts]].filter(r => Math.abs(r[1]) >= 0.05);
+}
+function gaugeStatus(v, min, watchAt){ return v < min ? 'alarm' : v < watchAt ? 'watch' : 'ok'; }
+function dashboardFacts(){
+  const m = metrics(), h = S.history || [];
+  const gauges = [
+    { key:'cap', label:'Capital ratio', term:'Capital ratio', value:m.cap, min:MIN_CAP, max:0.25, shown:pc(m.cap), status:gaugeStatus(m.cap, MIN_CAP, MIN_CAP * 1.25) },
+    { key:'liq', label:'Liquidity', term:'Liquidity', value:m.liq, min:MIN_LIQ, max:0.6, shown:pc(m.liq, 0), status:gaugeStatus(m.liq, MIN_LIQ, MIN_LIQ * 1.5) },
+    { key:'trust', label:'Customer trust', term:'Customer trust', value:m.trust, min:40, max:100, shown:Math.round(m.trust) + '/100', status:gaugeStatus(m.trust, 40, 55) },
+  ];
+  if (S.board) gauges.push({ key:'board', label:'Board confidence', term:null, value:S.board.conf, min:BOARD_SACK, max:100, shown:Math.round(S.board.conf) + '/100', status:gaugeStatus(S.board.conf, BOARD_SACK, 40) });
+  const series = [
+    { key:'profit', label:'Profit this year', pts:h.map(x => x.profit), fmt:v => fmt(v, true) },
+    { key:'cap', label:'Capital ratio', pts:h.map(x => x.cap), min:MIN_CAP, fmt:v => pc(v) },
+    { key:'liq', label:'Liquidity', pts:h.map(x => x.liq), min:MIN_LIQ, fmt:v => pc(v, 0) },
+  ];
+  return { gauges, series };
+}
+function monthMoves(rep){
+  const h = S.history || [], a = h[h.length - 1], b = h[h.length - 2];
+  const moves = [];
+  if (a && b){
+    const add = (label, d, fm, upGood) => { if (Math.abs(d) > 1e-9) moves.push({ label, text:fm(d), up:d > 0, good:(d > 0) === upGood }); };
+    add('Capital ratio', a.cap - b.cap, d => (d > 0 ? '+' : '−') + pc(Math.abs(d), 2), true);
+    add('Liquidity', a.liq - b.liq, d => (d > 0 ? '+' : '−') + pc(Math.abs(d), 1), true);
+    add('Customer trust', a.trust - b.trust, d => (d > 0 ? '+' : '−') + Math.abs(d).toFixed(1), true);
+    add('Regulator standing', a.comp - b.comp, d => (d > 0 ? '+' : '−') + Math.abs(d).toFixed(0), true);
+  }
+  const drivers = plRows(rep.pl).filter(r => r[0] !== 'Asset sales').sort((x, y) => Math.abs(y[1]) - Math.abs(x[1])).slice(0, 3).map(r => ({ label:r[0], amt:r[1] }));
+  return { moves, drivers };
+}
+
 const DOCS = {
   onboard: [ { s:'form', t:'Account application', f:['Product','Expected in','First deposit'] }, { s:'id', t:'Identity document', f:['ID check'] }, { s:'report', t:'Verification checks', f:['Address check','Device'] } ],
   mortgage: [ { s:'form', t:'Mortgage application', f:['Property price','Loan','LTV','Repayment','Total interest'] }, { s:'payslip', t:'Income evidence', f:['Income','Joint income','Loan to income','Work'] }, { s:'report', t:'Credit file', f:['Credit score','Missed payments, 2 yrs'] }, { s:'note', t:'Underwriter', f:['Money at stake'] } ],
@@ -3430,7 +3495,7 @@ function layDocs(c, mark){
   deskFor = c.id;
   const box = $('#docsIn'), docs = buildDocs(c);
   const idd = docs.find(d => d.s === 'id'), notes = docs.filter(d => d.s === 'note'), secs = docs.filter(d => d.s !== 'note' && d.s !== 'id');
-  const note = d => `<aside class="nline${d.coach ? ' coach' : ''}"><b>${esc(d.t)}</b>${d.rows.map(f => `<p>${d.coach ? '' : `<span class="nl">${termBtn(esc(f.l), f.t)}</span> `}${esc(f.v)}</p>`).join('')}</aside>`;
+  const note = d => `<div role="note" class="nline${d.coach ? ' coach' : ''}"><b>${esc(d.t)}</b>${d.rows.map(f => `<p>${d.coach ? '' : `<span class="nl">${termBtn(esc(f.l), f.t)}</span> `}${esc(f.v)}</p>`).join('')}</div>`;
   box.innerHTML = `<article class="sheet" id="mainDoc">
     <header class="sh-head"><span>${esc(c.label)}</span><span class="sh-ref">No. ${c.ref}</span></header>
     <div class="sh-who"><strong>${nameHTML(c)}${c.who.age ? ', ' + c.who.age : ''}</strong><span>${esc(c.who.sub)}</span></div>
@@ -3562,9 +3627,7 @@ function closeBooks(){
   served = null; openKey = null; $('#app').dataset.msg = '';
   Scene.sync(); Scene.monthTurn(); Scene.setCard(); hud(true); save();
   Snd.play('vault'); Snd.play(rep.profit >= 0 ? 'coin' : 'bad', 700); Snd.play('mail', 1300);
-  const L = rep.pl, rows = [
-    ['Interest from loans', L.intLoans], ['Interest on gilts', L.intGilts], ['Interest on reserves', L.intRes], ['Interest paid to savers', L.intDep], ['Bank of England and wholesale borrowing', L.intCB],
-    ['Fees', L.fees], ['Wealth management fees', L.wealth || 0], ['Credit losses', L.losses], ['Fraud, refunds & fines', L.redress], ['Running costs', L.costs], ['Asset sales', L.gilts] ].filter(r => Math.abs(r[1]) >= 0.05);
+  const L = rep.pl, rows = plRows(L), mm = monthMoves(rep);
   const m = metrics();
   const nii = L.intLoans + L.intGilts + L.intRes + L.intDep + L.intCB, inc = nii + L.fees + (L.wealth || 0);
   const kpi = { nim: nii * 12 / assets(), ci: inc > 0 ? -L.costs / inc : -1, cor: -L.losses * 12 / Math.max(1, S.legacy + loanSum()) };
@@ -3572,6 +3635,8 @@ function closeBooks(){
   overlay(`<div class="eyebrow">Month ${prevMonth + 1} of 12 · ${prevYear}</div><h2>${MONTHS[prevMonth]} accounts</h2>
     <div><div class="big" style="color:${rep.profit >= 0 ? 'var(--good)' : 'var(--bad)'}">${fmt(rep.profit, true)}</div><div style="color:var(--muted);font-size:13px">Profit this month · ${fmt(m.profit, true)} for the year</div></div>
     <div class="grid2"><div class="stat"><span>Capital ratio</span><b style="color:${m.cap < MIN_CAP ? 'var(--bad)' : 'var(--text)'}">${pc(m.cap)}</b></div><div class="stat"><span>Liquidity</span><b style="color:${m.liq < MIN_LIQ ? 'var(--bad)' : 'var(--text)'}">${pc(m.liq, 0)}</b></div><div class="stat"><span>Customers</span><b>${Math.round(m.trust)}/100</b></div><div class="stat"><span>Regulator</span><b>${regStatus()[0]}</b></div></div>
+    ${mm.moves.length ? `<div class="moves" aria-label="What moved this month">${mm.moves.map(v => `<span class="mv ${v.good ? 'good' : 'bad'}"><span aria-hidden="true">${v.up ? '▲' : '▼'}</span> ${esc(v.label)} ${esc(v.text)}</span>`).join('')}</div>` : ''}
+    ${mm.drivers.length ? `<ul class="drivers" aria-label="Biggest items this month">${mm.drivers.map(d => `<li><span>${esc(d.label)}</span><b class="num" style="color:${d.amt < 0 ? 'var(--bad)' : 'var(--good)'}">${fmt(d.amt, true)}</b></li>`).join('')}</ul>` : ''}
     <p style="color:var(--muted);font-size:14px">${nNew} new message${nNew === 1 ? '' : 's'} in your inbox${bad ? `, ${bad} with bad news` : ''}.</p>
     <details class="more"><summary>Full accounts</summary>
       <table class="ledger">${rows.map(r => `<tr><td>${r[0]}</td><td style="color:${r[1] < 0 ? 'var(--bad)' : 'var(--text)'}">${fmt(r[1], true)}</td></tr>`).join('')}<tr class="tot"><td>Profit</td><td>${fmt(rep.profit, true)}</td></tr></table>
@@ -3879,12 +3944,38 @@ function growthHTML(){
   return `<h3>Growth</h3>${rows ? `<div class="lad ops"><span></span><b>Age</b><b>Last month</b><b>Review</b>${rows}</div>` : '<p class="dim">No products launched.</p>'}
     <p class="dim">Sales volume ${pc(G.sidx - 1, 0) === '0%' ? 'at the normal level' : (G.sidx > 1 ? '+' : '−') + pc(Math.abs(G.sidx - 1), 0) + ' on normal'}. ${G.upheld.length} mis-selling complaint${G.upheld.length === 1 ? '' : 's'} upheld in the last year; ${G.whistle} whistleblower report${G.whistle === 1 ? '' : 's'} so far.</p>
     ${acq ? `<div class="lad ops"><span></span><b>Price</b><b>Goodwill</b><b>Status</b>${acq}</div>` : ''}
+    <div class="tmap" role="img" aria-label="Towns: ${GROWTH_TOWNS.map(t => esc(t.name) + ' ' + (G.townState[t.key] === 0 && t.base === 0 ? 'not open' : ['closed', 'hub', 'branch'][G.townState[t.key]])).join(', ')}">${GROWTH_TOWNS.map(t => { const st = G.townState[t.key] === 0 && t.base === 0 ? 'none' : ['closed', 'hub', 'branch'][G.townState[t.key]], d = 14 + Math.round(t.pop * 0.9); return `<div class="tn ${st}"><i style="width:${d}px;height:${d}px"></i><span>${esc(t.name)}</span></div>`; }).join('')}</div>
     <div class="lad ops"><span></span><b>Now</b><b>Pop.</b><b>Older / cash</b>${towns}</div>`;
 }
 function ladderHTML(){
   const L = maturityLadder(), cell = x => x > 0.5 ? fmt(x) : '–';
   return `<h3>Funding ladder</h3><div class="lad"><span></span><b>Repaying</b><b>Falling due</b><b>After a run</b>${L.rows.map(r => `<span>${esc(r.label)}</span><span>${cell(r.inflow)}</span><span>${cell(r.outflow)}</span><span style="color:${r.cover < 0 ? 'var(--bad)' : 'inherit'}">${fmt(r.cover)}</span>`).join('')}</div>
     <p class="dim">Cash and gilts ${fmt(L.liquid)}. A stressed run on deposits would take ${fmt(L.stressRun)} in the first month${L.collateral > 0.5 ? `, and ${fmt(L.collateral)} of cash is tied up as swap collateral` : ''}. Liquidity coverage ${pc(L.lcr, 0)}.</p>`;
+}
+
+function gaugeHTML(g){
+  const w = Math.max(0, Math.min(100, g.value / g.max * 100)), m = Math.max(0, Math.min(100, g.min / g.max * 100));
+  const lim = g.key === 'trust' || g.key === 'board' ? String(g.min) : pc(g.min, g.key === 'liq' ? 0 : 1);
+  return `<div class="gauge ${g.status}" role="group" aria-label="${esc(g.label)} ${esc(g.shown)}, ${g.status === 'ok' ? 'fine' : g.status === 'watch' ? 'close to the limit' : 'below the limit'}">
+    <span class="gl">${g.term ? termBtn(esc(g.label), g.term) : esc(g.label)}</span><span class="gv">${esc(g.shown)}</span>
+    <div class="gtrack" aria-hidden="true"><i style="width:${w.toFixed(1)}%"></i><u style="left:${m.toFixed(1)}%"></u></div>
+    <span class="gnote">${g.status === 'alarm' ? 'Below the limit' : g.status === 'watch' ? 'Close to the limit' : 'Limit ' + esc(lim)}</span></div>`;
+}
+function chartHTML(s){
+  const p = s.pts; if (p.length < 2) return `<div class="chart"><span class="cl">${esc(s.label)}</span><span class="gnote">Builds up as the year goes on.</span></div>`;
+  const W = 200, H = 56, lo = Math.min(...p, s.min != null ? s.min : Infinity), hi = Math.max(...p, s.min != null ? s.min : -Infinity), span = Math.max(1e-9, hi - lo);
+  const y = v => (H - 4 - (v - lo) / span * (H - 8)).toFixed(1), x = i => (i / (p.length - 1) * W).toFixed(1);
+  return `<div class="chart"><span class="cl">${esc(s.label)}</span>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(s.label)} from ${esc(s.fmt(p[0]))} to ${esc(s.fmt(p[p.length - 1]))}">${s.min != null ? `<line x1="0" x2="${W}" y1="${y(s.min)}" y2="${y(s.min)}" stroke="var(--bad)" stroke-dasharray="4 3" stroke-width="1" opacity=".7"/>` : ''}<polyline fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" points="${p.map((v, i) => x(i) + ',' + y(v)).join(' ')}"/></svg>
+    <span class="cv">${esc(s.fmt(p[p.length - 1]))}</span></div>`;
+}
+function dashboardHTML(){
+  const d = dashboardFacts();
+  return `<div class="gauges">${d.gauges.map(gaugeHTML).join('')}</div><div class="charts">${d.series.map(chartHTML).join('')}</div>`;
+}
+function tourHint(){
+  let seen = false; try { seen = localStorage.getItem('bm-tour') === '1'; } catch (e) {}
+  return seen ? '' : `<div class="hint" id="tourHint"><span>Each seat below reads the same numbers. Run a Stress test before you change anything risky.</span><button type="button" class="btn link" id="tourOk">Got it</button></div>`;
 }
 function teamScreen(){
   const notes = advisers(), ind = indicators();
@@ -3893,10 +3984,11 @@ function teamScreen(){
   const rows = ind.map(i => `<div class="ewi ${i.status}"><span class="pill ${i.status}">${lab[i.status]}</span><div><b>${esc(i.label)}</b><span class="num">${esc(i.shown)}</span></div></div>`).join('');
   overlay(`${execTop('team')}<div class="eyebrow">Chief Executive · ${MONTHS[Math.min(S.month, 11)]} ${S.year}</div><h2>Your executive team</h2>
     <p class="dim">Each adviser reads the same numbers from their own seat, so they will not always agree. ${S.meet ? 'Changes you table in Settings take effect at the start of next month, after this meeting.' : 'Changes you make in Settings apply to new decisions from now on.'}</p>
-    ${boardBlock()}${shareBlock()}${stressLine()}${by}<h3>Early warnings</h3><div class="ewis">${rows}</div>${ladderHTML()}${instrumentsHTML()}${opsHTML()}${growthHTML()}
+    ${tourHint()}${dashboardHTML()}${boardBlock()}${shareBlock()}${stressLine()}${by}<h3>Early warnings</h3><div class="ewis">${rows}</div>${ladderHTML()}${instrumentsHTML()}${opsHTML()}${growthHTML()}
     <details class="more"><summary>Resign as chief executive</summary><div class="acct" style="margin-top:8px"><p class="dim">Resigning ends the game. You are rated on the year so far.</p><button type="button" class="btn no" id="exResign">Resign</button></div></details>
     <div class="stickyfoot"><button type="button" class="btn link" id="plBack">Close</button></div>`);
   tabSel('policy'); execWire();
+  const tk = $('#tourOk'); if (tk) tk.onclick = () => { try { localStorage.setItem('bm-tour', '1'); } catch (e) {} const h = $('#tourHint'); if (h) h.remove(); };
   $('#exResign').onclick = () => { try { dispatch({ type: 'resign' }); save(); closeOverlay(); herald(); } catch (e) { teamScreen(); } };
 }
 function stressScreen(msg, isErr){

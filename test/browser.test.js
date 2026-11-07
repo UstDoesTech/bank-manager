@@ -182,6 +182,8 @@ test('the page works with no server: opened from a file there is no account butt
   assert.match(await page.textContent('.panel'), /Your executive team/);
   for (const r of ['Finance director', 'Chief risk officer', 'Treasurer', 'Head of operations']) assert.match(await page.textContent('.panel'), new RegExp(r));
   assert(await page.locator('.ewi').count() >= 8, 'early warning indicators are listed');
+  assert(await page.locator('.gauge').count() >= 3, 'gauges for capital, liquidity and trust'); assert(await page.locator('.chart').count() === 3, 'trend charts');
+  await page.click('#tourOk'); assert.strictEqual(await page.$('#tourHint'), null, 'the hint goes when dismissed');
   assert.match(await page.textContent('.panel'), /Funding ladder/); assert.match(await page.textContent('.panel'), /Within a month/);
   assert(await page.locator('.ewi').count() >= 12, 'hedging and ladder indicators are listed');
   await page.click('[data-seg=stress]');
