@@ -170,7 +170,20 @@ test('the page works with no server: opened from a file there is no account butt
   assert.strictEqual(await page.isVisible('#policyBtn'), false);
   await page.evaluate(() => { S.progress.unlocked.push('pricing'); closeOverlay(); hud(); });
   assert.strictEqual(await page.isVisible('#policyBtn'), true);
+  await page.evaluate(() => { dispatch({ type: 'nextYear' }); closeOverlay(); });
   await page.click('#policyBtn');
+  // the executive team: four advisers and the early warnings, then the stress test
+  assert.match(await page.textContent('.panel'), /Your executive team/);
+  for (const r of ['Finance director', 'Chief risk officer', 'Treasurer', 'Head of operations']) assert.match(await page.textContent('.panel'), new RegExp(r));
+  assert(await page.locator('.ewi').count() >= 8, 'early warning indicators are listed');
+  await page.click('[data-seg=stress]');
+  const before = await page.evaluate(() => JSON.stringify([S.cash, S.deposits, S.rs, S.month, S.loans.length]));
+  await page.click('#stRun');
+  await waitFor(async () => /Lowest capital ratio/.test(await page.textContent('.panel')), 'stress test result');
+  assert.strictEqual(await page.evaluate(() => JSON.stringify([S.cash, S.deposits, S.rs, S.month, S.loans.length])), before, 'the stress test does not change the real bank');
+  assert.strictEqual(await page.evaluate(() => !!S.stress), true);
+  await page.click('[data-seg=settings]');
+  assert.match(await page.textContent('.panel'), /Stress test \(/);          // the last result stays visible
   assert.match(await page.textContent('.panel'), /Not yet yours/);        // credit is still locked
   await page.fill('input[data-key=mortgageSpread]', '1.4'); await page.click('#plSave');
   await waitFor(async () => /Saved/.test(await page.textContent('.acct .msg')), 'policy saved');
@@ -181,6 +194,13 @@ test('the page works with no server: opened from a file there is no account butt
   await page.click('#plReset');
   await waitFor(async () => /executive team's values/.test(await page.textContent('.acct .msg')), 'reset');
   assert.strictEqual(await page.evaluate(() => S.policy.pricing.mortgageSpread), 1.05);
+  // once an area is taken over the board watches: its confidence shows, and the player can resign
+  await page.evaluate(() => { dispatch({ type: 'setPolicy', area: 'pricing', values: { mortgageSpread: 1.1 } }); for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); dispatch({ type: 'closeMonth' }); closeOverlay(); hud(); });
+  await page.click('#policyBtn');
+  assert.match(await page.textContent('.panel'), /Confidence \d+ \/ 100/);
+  await page.click('summary:has-text("Resign")'); await page.click('#exResign');
+  await waitFor(async () => /steps down/.test(await page.textContent('.panel')), 'the Herald reports the resignation');
+  assert.strictEqual(await page.evaluate(() => S.over), 'resigned');
   assert.deepStrictEqual(errors, []);
   await ctx.close();
 });

@@ -29,7 +29,12 @@ const PATHS = {
   sticky:   { name:'sticky inflation',    rate:[4,4,4.5,4.5,4.5,5,5,5,5.25,5.25,5.25,5.25],       u:[0,1.2], h:[0,-7] },
   downturn: { name:'a recession',          rate:[4,4,4,4,4,3,3,3,2.5,2.5,2.25,2.25],             u:[0,2.7], h:[0,-12] },
   recovery: { name:'a recovery',           rate:[4,4,4,4,4.25,4.25,4.25,4.5,4.5,4.5,4.5,4.5],     u:[0,-1.0], h:[0,7] },
+  // Only the stress test uses this: a severe recession, counted from the month the test starts (see pidx).
+  stress:   { name:'a severe recession', lossMult:2.5,    rate:[4,3.5,3,2.5,2,1.75,1.5,1.5,1.5,1.5,1.5,1.5], uArr:[0.4,1,1.8,2.6,3.3,3.9,4.2,4.4,4.5,4.5,4.5,4.5], hArr:[-2,-5,-9,-13,-17,-20,-22,-23,-23,-23,-23,-23],
+              mktArr:[-3,-6,-4,-8,-2,-5,-1,0,0.5,0.5,0.5,0.5], infArr:[2,1.8,1.6,1.4,1.2,1,1,1,1,1,1,1] },
 };
+// The stress path is indexed by months since the test began, not by the calendar month, so it can run across a year end.
+const pidx = m => S.path === 'stress' ? clamp(S.year * 12 + m - S.stressAbs, 0, 11) : m;
 const KNAME = { mortgage:'mortgage', personal:'personal loan', card:'credit card', business:'business loan' };
 const AMORT = { mortgage:0.003, personal:0.025, card:0.02, business:0.012 };
 const FIRST = ['Ama','Tom','Priya','Callum','Mei','Joseph','Fatima','Ollie','Grace','Kwame','Sinead','Ravi','Ewa','Dylan','Hannah','Yusuf','Chloe','Mateusz','Aisha','George','Niamh','Arjun','Bethany','Leon','Sofia','Imran','Rosa','Theo','Zainab','Harry','Maya','Femi','Ellie','Kofi','Jade','Tomasz','Lucy','Omar','Ruth','Danny','Marcus','Ifeoma','Gareth','Lena'];
@@ -37,14 +42,14 @@ const LAST = ['Mensah','Hughes','Patel','Reid','Chen','Okafor','Khan','Walsh','T
 
 function P(){ return S.path === 'sc' ? SCENARIOS[S.scenario].path : PATHS[S.path]; }
 function ease(t){ t = clamp(t, 0, 1); return t * t * (3 - 2 * t); }
-function unemp(m = S.month){ const p = P(); if (p.uArr) return clamp(S.y0.u + p.uArr[Math.min(11, m)], 3.4, 9.5); return clamp(S.y0.u + (p.u[1] - p.u[0]) * ease(m / 11), 3.6, 8.5); }
-function hpi(m = S.month){ const p = P(); if (p.hArr) return S.y0.h * (1 + p.hArr[Math.min(11, m)] / 100); return S.y0.h * (1 + (p.h[0] + (p.h[1] - p.h[0]) * clamp(m / 11, 0, 1)) / 100); }
+function unemp(m = S.month){ m = pidx(m); const p = P(); if (p.uArr) return clamp(S.y0.u + p.uArr[Math.min(11, m)], 3.4, 9.5); return clamp(S.y0.u + (p.u[1] - p.u[0]) * ease(m / 11), 3.6, 8.5); }
+function hpi(m = S.month){ m = pidx(m); const p = P(); if (p.hArr) return S.y0.h * (1 + p.hArr[Math.min(11, m)] / 100); return S.y0.h * (1 + (p.h[0] + (p.h[1] - p.h[0]) * clamp(m / 11, 0, 1)) / 100); }
 const INFL = { soft:2.0, sticky:4.6, downturn:1.4, recovery:2.3 };
-function inflation(m = S.month){ const p = P(); if (p.infArr) return p.infArr[Math.min(11, m)]; const y0 = S.y0.inf != null ? S.y0.inf : 2.8; return y0 + ((INFL[S.path] != null ? INFL[S.path] : 2.5) - y0) * ease(m / 11); }
+function inflation(m = S.month){ m = pidx(m); const p = P(); if (p.infArr) return p.infArr[Math.min(11, m)]; const y0 = S.y0.inf != null ? S.y0.inf : 2.8; return y0 + ((INFL[S.path] != null ? INFL[S.path] : 2.5) - y0) * ease(m / 11); }
 function hpiYr(m = S.month){ return hpi(m) / S.y0.h - 1; }
-function rateAt(m){ if (P().abs) return P().rate[m]; let d = P().rate[m] - 4; if ((d < 0 && S.y0.base < 2.5) || (d > 0 && S.y0.base > 5.5)) d /= 2; return clamp(Math.round((S.y0.base + d) * 4) / 4, 0.25, 6.5); }
+function rateAt(m){ m = pidx(m); if (P().abs) return P().rate[m]; let d = P().rate[m] - 4; if ((d < 0 && S.y0.base < 2.5) || (d > 0 && S.y0.base > 5.5)) d /= 2; return clamp(Math.round((S.y0.base + d) * 4) / 4, 0.25, 6.5); }
 function collateral(l){ return l.prop * hpi() / (l.hpi0 || 1); }
-function uf(){ return Math.pow(unemp() / 4.3, 1.8); }
+function uf(){ return Math.pow(unemp() / 4.3, 1.8) * (P().lossMult || 1); }
 function mkt(){ return Math.max(0.25, S.base - 1.5); }
 
 /* balance sheet */
@@ -668,7 +673,7 @@ res.complaint = (c, k) => {
 /* ============ WEALTH MANAGEMENT ============ */
 const LEVELS = ['cautious', 'balanced', 'adventurous'], EQ = { cautious:0.25, balanced:0.6, adventurous:0.9 }, STD_FEE = 0.85, HOUSE_FEE = 1.2;
 function aum(){ return S.wm ? S.wm.clients.reduce((a, c) => a + c.amt, 0) : 0; }
-function mktMean(m){ if (P().mktArr) return P().mktArr[m]; return S.path === 'downturn' ? (m < 6 ? -2.2 : 1.0) : ({ soft:0.7, sticky:-0.4, recovery:1.3 })[S.path]; }
+function mktMean(m){ m = pidx(m); if (P().mktArr) return P().mktArr[m]; return S.path === 'downturn' ? (m < 6 ? -2.2 : 1.0) : ({ soft:0.7, sticky:-0.4, recovery:1.3 })[S.path]; }
 function addClient(o){ S.wm.clients.push(Object.assign({ mis:0, house: !!S.wm.houseNew, peak:o.amt }, o)); S.wm.won++; }
 
 gen.wmLaunch = () => card('wmLaunch', { label:'Proposal', who:{ name:'Your board', sub:'Strategy', age:0, hue:0 }, note:'Customers with savings keep asking where to invest. Should you start managing money for them?',
@@ -887,6 +892,7 @@ function newGame(seed, opts = {}){
     engine:ENGINE_VERSION, progress:{ unlocked:['branch'] }, policy:systemPolicy(), ledger:{ bal:{}, n:0 } };
   S.path = pick(['soft', 'sticky', 'downturn']);
   if (opts.households && !opts.tutorial && !opts.scenario) S.households = makeCast();
+  if (opts.chiefExecutive && !opts.tutorial && !opts.scenario) S.progress.unlocked = ['branch'].concat(CE_AREAS);      // start straight in the Chief Executive role
   S.prodOrder = shuffle(['fraudModel','ob','od','branch','cyber','campaign']).concat(shuffle(['broker','ggs']));
   if (S.scenario){ const sc = SCENARIOS[S.scenario]; S.path = 'sc'; S.year = sc.year; S.tutorial = false; S.sched = makeSched(); sc.setup(); S.goals = sc.goals.map(g => ({ id:g.id, label:g.label, ok:null })); }
   else S.sched = makeSched();
@@ -903,7 +909,7 @@ function nextYear(){
   if (S.scenario) return;
   const r = rating();
   S.career.push({ year:S.year, letter:r.letter, profit:r.profit, trust:Math.round(S.trust), comp:Math.round(S.comp) });
-  S.y0 = { base:S.base, u:unemp(11), h:hpi(11), inf:inflation(11) };
+  S.y0 = S.sim ? S.stressY0 : { base:S.base, u:unemp(11), h:hpi(11), inf:inflation(11) };      // a stress test keeps counting from where it began
   for (const l of S.loans){ l.m0 -= 12; if (l.since != null) l.since -= 12; if (!l.hpi0) l.hpi0 = 1; }
   for (const p of S.pending) p.due -= 12;
   S.lastTreasury -= 12;
@@ -913,11 +919,11 @@ function nextYear(){
   S.wmOffer = S.wm ? -1 : 1; S.news = [];
   if (S.wm){ for (const k of ['houseAt','campAt','calm','cashUntil']) S.wm[k] -= 12; }
   const b = S.y0.base, u = S.y0.u;
-  S.path = wpick([['soft', b > 4.5 ? 3 : 2], ['sticky', b < 3 ? 3 : b > 5 ? 0.3 : 1.8], ['downturn', u > 6.5 ? 0.3 : b > 5 ? 2.5 : 1.4], ['recovery', u > 5 ? 4 : 0.4]]);
+  if (S.sim) S.path = 'stress'; else S.path = wpick([['soft', b > 4.5 ? 3 : 2], ['sticky', b < 3 ? 3 : b > 5 ? 0.3 : 1.8], ['downturn', u > 6.5 ? 0.3 : b > 5 ? 2.5 : 1.4], ['recovery', u > 5 ? 4 : 0.4]]);
   if (!S.prodOrder.includes('broker')) S.prodOrder = S.prodOrder.concat(shuffle(['broker','ggs']));
   S.startCap = capital();
   S.stats = freshStats(); S.stats.minCap = capRatio();
-  S.sched = makeSched();
+  S.sched = S.sim ? simSched() : makeSched();
   applyQuiet();
   grantUnlock(r);
   buildMonth();
@@ -1000,7 +1006,7 @@ function hhOutcome(c, k){
   if (!h || (h.loanId && S.loans.some(l => l.id === h.loanId && l.hh === h.id))) return;
   hhSay(h, k === 'no' ? `Was turned down for a ${KNAME[c.kind] || 'loan'}.` : `Did not go ahead with the ${KNAME[c.kind] || 'loan'}.`);
 }
-function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); }
+function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); warnMonth(); }
 function buildMonthCards(){
   const m = S.month, lead = [], other = [];
   S.pl = blankPL();
@@ -1089,7 +1095,7 @@ function sellGiltShare(f){
    crash and the month after) nothing is renewed or topped up, so loans that fall due are simply repaid. */
 const WHOLESALE_MONTHS = 3;
 function marketFrozen(){ const m = S.month, s = S.sched; return (s.liq || []).some(q => m >= q && m < q + 3) || (s.crash >= 0 && m >= s.crash && m < s.crash + 2); }
-function marketStress(){ return Math.min(1, (S.path === 'downturn' || S.path === 'sticky' ? 0.25 : 0) + (marketFrozen() ? 0.5 : 0) + (S.trust < 40 ? 0.15 : 0) + (capRatio() < 0.125 ? 0.2 : 0)); }
+function marketStress(){ return Math.min(1, (S.path === 'downturn' || S.path === 'sticky' ? 0.25 : S.path === 'stress' ? 0.4 : 0) + (marketFrozen() ? 0.5 : 0) + (S.trust < 40 ? 0.15 : 0) + (capRatio() < 0.125 ? 0.2 : 0)); }
 const wholesaleRate = () => S.base + 0.5 + 2.5 * marketStress();
 const FOUNDERS = ['Eastfield Housing Association', 'Marlow District Council', 'Harwood Logistics', 'The Aldric Trust', 'Penrose Developments', 'Calder Valley Co-operative'];
 const largeSum = () => (S.large || []).reduce((x, d) => x + d.amt, 0);
@@ -1305,6 +1311,7 @@ function closeMonth(){
   S.history.push({ m, profit: capital() - S.startCap + (S.divPaid || 0) - (S.injected || 0), cap: cr, liq: lq, trust: S.trust, comp: S.comp });
   S.month++;
   if (!S.over && S.month >= 12) S.over = 'done';
+  boardMonth(rep);
   if (S.over) S.debrief = makeDebrief();
   evalGoals(S.history[S.history.length - 1], !!S.over);
   if (!S.over) buildMonth();
@@ -1374,9 +1381,247 @@ function makeDebrief(){
   for (const c of pick5) seen[c.concept] = (seen[c.concept] || 0) + 1;
   return pick5.map(({ concept, area, big, what, why, ask }) => ({ concept, area, big, what, why, ask }));
 }
+/* ---- executive team, early warnings and the stress test ----
+   Everything here is read-only except runStress, which stores its result, and warnMonth, which writes mail. None of it
+   uses the game's random stream, so it cannot change how a game plays out. It only applies once the player has been
+   handed a Chief Executive area, so branch-manager play is untouched. */
+const CE_AREAS = ['pricing', 'credit', 'treasury', 'funding', 'capital'];
+const ceMode = () => !!(S.progress && S.progress.unlocked.some(a => CE_AREAS.includes(a)));
+const LEVEL = { ok: 0, watch: 1, alarm: 2 };
+const band = (v, watch, alarm) => v >= alarm ? 'alarm' : v >= watch ? 'watch' : 'ok';
+const bandLow = (v, watch, alarm) => v <= alarm ? 'alarm' : v <= watch ? 'watch' : 'ok';
+
+// Days the bank could pay out in a severe run: 5% of ordinary deposits and every large depositor in a month, plus any
+// wholesale money falling due, set against cash and gilts at market value. Bank of England borrowing is not counted.
+function survivalHorizon(){
+  const now = S.year * 12 + S.month, large = largeSum(), retail = S.deposits - large;
+  const dueNow = (S.wsTranches || []).filter(w => w.due <= now + 1).reduce((a, w) => a + w.amt, 0);
+  const out30 = 0.05 * retail + large + dueNow;
+  return out30 > 0 ? clamp(Math.round(30 * (S.cash + giltMV()) / out30), 0, 365) : 365;
+}
+// Change in a year's net interest income if Bank Rate rose one point: reserves and the older book reprice at once,
+// short gilts half, new fixed-rate loans not at all; savers follow at half (all the way once funding is yours), wholesale fully.
+function rateSensitivity(){
+  const beta = S.policy.owner.funding === 'player' ? 1 : 0.5, shortG = S.gilts.filter(g => g.kind === 'short').reduce((a, g) => a + g.amt, 0);
+  return 0.01 * (S.cash + S.legacy + 0.5 * shortG - beta * S.deposits - (S.wholesale || 0));
+}
+function indicators(){
+  const now = S.year * 12 + S.month, dep = S.deposits, fund = dep + S.wholesale + (S.bonds || 0), liquid = S.cash + giltMV();
+  const book = S.legacy + loanSum(), cr = capRatio(), lq = liqRatio();
+  const wDue = (S.wsTranches || []).filter(w => w.due <= now + 6).reduce((a, w) => a + w.amt, 0), bDue = (S.bondTranches || []).filter(x => x.due <= now + 6).reduce((a, x) => a + x.amt, 0);
+  const wall = (wDue + bDue) / Math.max(1, liquid), large = largeSum() / Math.max(1, dep), wShare = S.wholesale / Math.max(1, fund);
+  const bad = S.loans.filter(l => l.status === 'arrears' || l.status === 'plan').reduce((a, l) => a + l.bal, 0) / Math.max(1, book);
+  const risky = S.loans.filter(l => l.pd >= RISKY_PD).reduce((a, l) => a + l.bal, 0) / Math.max(1, book);
+  const horizon = survivalHorizon(), sens = rateSensitivity(), cap = capital();
+  const sensStatus = sens < 0 ? band(-sens / Math.max(1, cap), 0.03, 0.08) : 'ok';
+  return [
+    { key: 'capital', role: 'Chief risk officer', label: 'Capital buffer', value: cr - MIN_CAP, shown: pc(cr) + ' (' + (cr >= MIN_CAP ? '+' : '') + pc(cr - MIN_CAP) + ' on the minimum)', status: bandLow(cr - MIN_CAP, 0.03, 0.01),
+      text: `Capital ratio ${pc(cr)}; the regulator steps in below ${pc(MIN_CAP)}.` },
+    { key: 'liquidity', role: 'Treasurer', label: 'Liquidity ratio', value: lq, shown: pc(lq, 0), status: bandLow(lq, 0.2, 0.12), text: `Cash and gilts are ${pc(lq, 0)} of deposits and wholesale funding; the minimum is ${pc(MIN_LIQ, 0)}.` },
+    { key: 'horizon', role: 'Treasurer', label: 'Survival horizon', value: horizon, shown: horizon >= 365 ? '1 year or more' : horizon + ' days', status: bandLow(horizon, 120, 90),
+      text: `In a severe run the bank could pay out for about ${horizon >= 365 ? 'a year' : horizon + ' days'} before cash runs out. Below 90 days is dangerous.` },
+    { key: 'wholesale', role: 'Treasurer', label: 'Wholesale share of funding', value: wShare, shown: pc(wShare, 0), status: band(wShare, 0.15, 0.25), text: `${pc(wShare, 0)} of funding is borrowed from other banks, which can refuse to renew in a freeze.` },
+    { key: 'wall', role: 'Treasurer', label: 'Maturity wall, next 6 months', value: wall, shown: pc(wall, 0) + ' of liquid assets', status: band(wall, 0.25, 0.5), text: `${fmt(wDue + bDue)} of wholesale and bond funding falls due within six months, ${pc(wall, 0)} of the cash and gilts you hold.` },
+    { key: 'large', role: 'Treasurer', label: 'Large depositor share', value: large, shown: pc(large, 0), status: band(large, 0.1, 0.25), text: `Large depositors hold ${pc(large, 0)} of deposits. One decision can move all of it.` },
+    { key: 'arrears', role: 'Chief risk officer', label: 'Loans behind with payments', value: bad, shown: pc(bad), status: band(bad, 0.03, 0.06), text: `${pc(bad)} of the loan book is behind on payments. Losses follow arrears by a month or two.` },
+    { key: 'risky', role: 'Chief risk officer', label: 'Riskiest lending', value: risky, shown: pc(risky, 0), status: band(risky, 0.15, 0.3), text: `${pc(risky, 0)} of the loan book is lent to borrowers with a high chance of default.` },
+    { key: 'rates', role: 'Treasurer', label: 'Interest-rate sensitivity', value: sens, shown: (sens >= 0 ? '+' : '−') + fmt(Math.abs(sens)) + ' a year for +1 point', status: sensStatus,
+      text: sens >= 0 ? `A one-point rise in Bank Rate would add about ${fmt(sens)} to a year's net interest income.` : `A one-point rise in Bank Rate would cut a year's net interest income by about ${fmt(-sens)}: more of your funding reprices than your assets.` },
+  ];
+}
+const RISKY_PD = 0.08;
+
+// The executive team: four advisers who read the same numbers from different seats, so they often disagree.
+function advisers(){
+  const I = Object.fromEntries(indicators().map(i => [i.key, i])), P = S.policy, sys = systemPolicy(), own = a => P.owner[a] === 'player';
+  const m = metrics(), cr = capRatio(), lq = liqRatio(), notes = [];
+  const add = (role, tone, text) => notes.push({ role, tone, text });
+  const L = S.last ? S.last.pl : null, inc = L ? L.intLoans + L.intGilts + L.intRes + L.intDep + L.intCB + L.fees + (L.wealth || 0) : 0, ci = L && inc > 0 ? -L.costs / inc : null;
+  const st = S.stress;
+
+  // Finance director: profit, cost/income, the dividend
+  if (S.month >= 2 && m.profit < 0) add('Finance director', 'warn', `We are ${fmt(-m.profit)} down for the year. Look at what we charge and what our funding costs.`);
+  else if (m.profit > 0) add('Finance director', 'info', `Profit is ${fmt(m.profit)} for the year so far.${ci != null ? ` Costs take ${pc(ci, 0)} of income.` : ''}`);
+  if (ci != null && ci > 0.7) add('Finance director', 'warn', `Costs take ${pc(ci, 0)} of income. Above 70% the board will ask why.`);
+  if (S.board && S.board.conf < 45) add('Finance director', 'alarm', `The board's confidence is ${Math.round(S.board.conf)}. ${S.board.low > 0 ? 'It was below 20 at the last meeting. ' : ''}Below 20 at two meetings in a row and you are out.`);
+  if (own('capital')){
+    const d = P.capital.dividendPayout;
+    if (d === 0 && m.profit > 0 && cr > P.capital.capitalTarget + 0.02) add('Finance director', 'info', `Shareholders expect a dividend and we can afford one. Paying out ${pc(0.3, 0)} of profit would be about ${fmt(0.3 * m.profit)} a year. The chief risk officer will not like it.`);
+    else if (d > 0.6 && cr < P.capital.capitalTarget + 0.02) add('Finance director', 'warn', `A ${pc(d, 0)} payout leaves little capital. A downturn would force a share issue at the worst price.`);
+  }
+  if (own('pricing')){
+    const sp = P.pricing.mortgageSpread - sys.pricing.mortgageSpread;
+    if (sp < -0.3) add('Finance director', 'warn', `Mortgages are priced ${Math.abs(sp).toFixed(2)} points under the executive team's spread. Volume will rise, but one bad year of defaults wipes out the margin.`);
+    else if (sp > 0.4) add('Finance director', 'info', `Mortgages are priced ${sp.toFixed(2)} points over the executive team's spread. Customers will go elsewhere, and those who stay are riskier.`);
+  }
+  if (lq > 0.35 && I.horizon.status === 'ok') add('Finance director', 'info', `We hold more liquid assets than we need (${pc(lq, 0)}). Lending or buying gilts would add yield. The treasurer disagrees.`);
+  const pushback = lq > 0.35 && I.horizon.status === 'ok';
+
+  // Chief risk officer: credit losses, limits and the stress test
+  if (I.arrears.status !== 'ok') add('Chief risk officer', I.arrears.status === 'alarm' ? 'alarm' : 'warn', `${I.arrears.text} Check how much we lend to people who show warning signs.`);
+  if (I.risky.status !== 'ok') add('Chief risk officer', 'warn', I.risky.text);
+  if (own('credit')){
+    const c = P.credit;
+    if (c.mortgageMaxLtv > sys.credit.mortgageMaxLtv || c.mortgageMinScore < sys.credit.mortgageMinScore - 40 || c.mortgageMaxLti > sys.credit.mortgageMaxLti)
+      add('Chief risk officer', 'warn', `Your credit rules are looser than the executive team's. When house prices fall, loans end up larger than the homes behind them.`);
+    else if (c.mortgageMaxLtv < 80 && c.mortgageMinScore > 650) add('Chief risk officer', 'info', `Your rules are tight. Losses will be low, but the finance director will say we are turning away good customers.`);
+  }
+  if (st){
+    if (st.failed) add('Chief risk officer', 'alarm', `In the last stress test the bank failed: ${st.why}. Do not carry these settings into a recession.`);
+    else if (st.lowCap < MIN_CAP) add('Chief risk officer', 'alarm', `In the last stress test capital fell to ${pc(st.lowCap)} in month ${st.lowCapMonth}, below the ${pc(MIN_CAP)} minimum.`);
+    else add('Chief risk officer', 'info', `In the last stress test capital stayed above the minimum: its low point was ${pc(st.lowCap)} in month ${st.lowCapMonth}.`);
+  } else add('Chief risk officer', 'info', `You have not run a stress test. Run one before changing credit or capital settings.`);
+
+  // Treasurer: liquidity, funding and interest-rate risk
+  for (const k of ['horizon', 'liquidity', 'wholesale', 'wall', 'large', 'rates']) if (I[k].status !== 'ok') add('Treasurer', I[k].status === 'alarm' ? 'alarm' : 'warn', I[k].text);
+  if (own('treasury') && P.treasury.longShare > 0.5) add('Treasurer', 'warn', `Most of our gilts are long. If Bank Rate rises they lose value, and you count them at market value.`);
+  if (own('funding') && P.funding.wholesaleTarget > 0.2) add('Treasurer', 'warn', `${pc(P.funding.wholesaleTarget, 0)} of funding from other banks is cheap until markets freeze and nobody renews.`);
+  if (pushback) add('Treasurer', 'info', `I would keep the cash. It is what carries us through a run: ${I.horizon.shown} of survival horizon at ${pc(lq, 0)} liquidity. Run it down and the finance director's extra yield disappears the first bad month.`);
+  if (!notes.some(n => n.role === 'Treasurer')) add('Treasurer', 'info', `Funding looks sound: ${I.horizon.shown} survival horizon and liquidity at ${pc(lq, 0)}.`);
+
+  // Head of operations: what reaches the counter and the inbox
+  const waiting = counterQueue().length, mail = inboxActions().filter(c => !c.done).length;
+  if (mail > 6) add('Head of operations', 'warn', `${mail} messages are waiting for a reply. Cases left to pile up turn into complaints and regulator letters.`);
+  else add('Head of operations', 'info', `${waiting} at the counter and ${mail} message${mail === 1 ? '' : 's'} waiting.`);
+  if (own('credit')) add('Head of operations', 'info', `Your credit rules decide most applications. Only the borderline ones reach the counter.`);
+  if (quietLeft() > 0) add('Head of operations', 'info', `${quietLeft() - 1} quiet month${quietLeft() === 2 ? '' : 's'} left after this one: nothing outside the bank will go wrong while you learn the new settings.`);
+  return notes;
+}
+
+// At the start of each month the team tells the player when an indicator moves into a worse band.
+function warnMonth(){
+  if (S.sim || !ceMode()) return;
+  const was = S.ewi = S.ewi || {}, worse = [];
+  for (const i of indicators()){
+    if ((LEVEL[i.status] || 0) > (LEVEL[was[i.key]] || 0) && i.status !== 'ok') worse.push(i);
+    was[i.key] = i.status;
+  }
+  worse.sort((a, b) => LEVEL[b.status] - LEVEL[a.status]);
+  for (const i of worse.slice(0, 2)) addMail(i.role, (i.status === 'alarm' ? 'Warning: ' : 'Watch: ') + i.label, i.text + (i.status === 'alarm' ? ' This needs a decision now.' : ' Keep an eye on it.'), i.status === 'alarm' ? 'bad' : '', S.month, S.year);
+}
+
+/* ---- board confidence ----
+   The chief executive answers to the board. Confidence (0 to 100) starts at 60 and moves a little every month:
+   up when return on capital is ahead of peer banks and a dividend is paid steadily; down when it lags, when capital or
+   liquidity is breached, when the regulator is unhappy, when the bank borrows from the Bank of England or takes a big loss,
+   and while risk indicators sit in alarm. It drifts back toward 55 when nothing happens. Every third month there is a board
+   meeting: the board tells the player where they stand. Confidence below 20 at two meetings in a row, or regulator
+   enforcement action at a meeting, ends the job. Uses no random numbers, and only applies in the Chief Executive role. */
+const BOARD_START = 60, BOARD_MID = 55, BOARD_SACK = 20;
+// The board only watches once the player has actually taken over an area, so being offered one and leaving it alone is safe.
+const boardActive = () => CE_AREAS.some(a => S.policy.owner[a] === 'player');
+function boardOf(){
+  if (!S.board) S.board = { conf: BOARD_START, hist: [], low: 0, q: { perf: 0, shock: 0, div: 0, warn: 0 }, divM: [], seen: { cb: S.stats.capBreach, em: S.stats.emergency, fi: S.stats.fines, dv: S.divPaid || 0 } };
+  return S.board;
+}
+function boardBand(c){ return c >= 75 ? 'strong' : c >= 55 ? 'steady' : c >= 40 ? 'uneasy' : c >= BOARD_SACK ? 'losing patience' : 'ready to replace you'; }
+function boardMonth(rep){
+  if (S.sim || !boardActive() || (S.over && S.over !== 'done')) return;
+  const B = boardOf(), r = rating(), k = Math.max(1, S.month), cr = capRatio(), lq = liqRatio();
+  const gap = r.roe * 12 / k - r.peer, perf = clamp(gap * 25, -3, 2.5);
+  const d = (cur, key) => { const x = Math.max(0, cur - B.seen[key]); B.seen[key] = cur; return x; };      // counters reset every year
+  const breach = d(S.stats.capBreach, 'cb'), emerg = d(S.stats.emergency, 'em'), fined = d(S.stats.fines, 'fi'), paid = d(S.divPaid || 0, 'dv') > 0;
+  let shock = -4 * breach - 4 * emerg - Math.min(3, fined / 50);
+  if (lq < MIN_LIQ) shock -= 2;
+  if (S.comp < 40) shock -= 2;
+  if (rep && rep.profit < -0.03 * Math.max(1, capital())) shock -= 1.5;
+  B.divM.push(paid ? 1 : 0); if (B.divM.length > 3) B.divM.shift();
+  let div = B.divM.reduce((a, b) => a + b, 0) >= 2 ? 0.6 : 0;
+  if (paid && cr < MIN_CAP) div = -1;
+  const alarms = indicators().filter(i => i.status === 'alarm').length, warn = -Math.min(1.2, 0.4 * alarms);
+  B.conf = clamp(B.conf + perf + shock + div + warn + (BOARD_MID - B.conf) * 0.04, 0, 100);
+  B.q.perf += perf; B.q.shock += shock; B.q.div += div; B.q.warn += warn; B.gap = gap;
+  if (S.month % 3 === 0) boardMeeting(r);
+}
+function boardMeeting(r){
+  const B = boardOf(), conf = Math.round(B.conf), prev = B.hist.length ? B.hist[B.hist.length - 1].conf : BOARD_START, q = B.q;
+  const reasons = [];
+  if (q.perf > 1) reasons.push(`return on capital ahead of peer banks (${pc(r.roe * 12 / Math.max(1, S.month))} a year against ${pc(r.peer)})`);
+  if (q.perf < -1) reasons.push(`return on capital behind peer banks (${pc(r.roe * 12 / Math.max(1, S.month))} a year against ${pc(r.peer)})`);
+  if (q.shock < -1) reasons.push('breaches, regulator concern, Bank of England borrowing or a big loss');
+  if (q.div > 0.5) reasons.push('a steady dividend');
+  if (q.div < 0) reasons.push('a dividend paid while capital was below the minimum');
+  if (q.warn < -0.5) reasons.push('risk indicators left in alarm');
+  const quarter = S.month / 3, enforcement = regStatus()[1] === 'alarm';
+  B.hist.push({ year: S.year, q: quarter, conf });
+  B.low = conf < BOARD_SACK ? B.low + 1 : 0;
+  B.q = { perf: 0, shock: 0, div: 0, warn: 0 };
+  const change = conf - prev, dir = change >= 3 ? `up ${change}` : change <= -3 ? `down ${-change}` : 'little changed';
+  let sack = '';
+  if (B.low >= 2) sack = 'confidence';
+  else if (enforcement) sack = 'enforcement';
+  let body = `Board meeting, quarter ${quarter} of ${S.year}. The board's confidence in you is ${conf} out of 100 (${boardBand(conf)}), ${dir} on last quarter.${reasons.length ? ' The main reasons: ' + reasons.join('; ') + '.' : ''}`;
+  if (sack === 'confidence') body += ' Confidence has been below 20 at two meetings in a row. The board has decided to replace you.';
+  else if (sack === 'enforcement') body += ' The regulator has taken enforcement action against the bank. The board has decided that you cannot stay.';
+  else if (B.low === 1) body += ' If confidence is still below 20 at the next meeting, you will be asked to leave.';
+  else if (conf < 40) body += ' The board expects to see the numbers improve before the next meeting.';
+  addMail('The board', sack ? 'The board has removed you' : `Board meeting: confidence ${conf} (${boardBand(conf)})`, body, sack || conf < 40 ? 'bad' : conf >= 70 ? 'good' : '', Math.max(0, S.month - 1), S.year);
+  if (sack){
+    S.over = 'sacked'; S.sackedWhy = sack;
+    news(5, 'Counting House chief executive ousted', sack === 'enforcement' ? 'The board removed the chief executive after the regulator took enforcement action against the bank.' : 'The board has removed the chief executive after two quarters of falling confidence.');
+  }
+}
+function resign(){
+  if (!ceMode()) throw new Error('only a chief executive can resign');
+  if (S.over) throw new Error('the game is already over');
+  S.over = 'resigned'; S.debrief = makeDebrief();
+  news(4, 'Counting House chief executive steps down', 'The chief executive has resigned. The board says it thanks them for their service.');
+}
+
+// The stress test: copy the bank, impose a severe recession from next month with a funding freeze and a market crash, and let the player's
+// rules run it. Cards that need a decision take their first allowed option, as if the bank carried on as it is.
+function simSched(){
+  const abs = S.stressAbs, at = k => { const t = abs + k - S.year * 12; return t >= 0 && t <= 11 ? t : -1; };
+  return { crash: at(3), pep: -1, prod: [], liq: [at(2), at(6)].filter(t => t >= 0), out: -1, sanc: [] };
+}
+function stressTest(overrides, months = 9){
+  const real = S, realOut = OUT, realSink = LEDGER_SINK, start = { cap: capRatio(), liq: liqRatio(), horizon: survivalHorizon() };
+  const r = { months, startCap: start.cap, lowCap: start.cap, lowCapMonth: 0, lowLiq: start.liq, lowLiqMonth: 0, lowHorizon: start.horizon, peakBoe: S.cb || 0, failed: false, why: '', capChange: 0 };
+  try {
+    S = JSON.parse(JSON.stringify(real)); OUT = null; LEDGER_SINK = null;      // nothing the copy does may reach the real ledger
+    S.sim = true; S.stressAbs = S.year * 12 + S.month;
+    S.stressY0 = { base: S.base, u: unemp(S.month), h: hpi(S.month), inf: inflation(S.month) };      // today's conditions, read before the path changes
+    S.y0 = S.stressY0; S.path = 'stress';
+    S.progress.quiet = null; S.sched = simSched();
+    for (const [area, values] of Object.entries(overrides || {})){ Object.assign(S.policy[area], values); S.policy.owner[area] = 'player'; if (area === 'treasury') syncGilts(); }
+    const cap0 = capital() + (S.divPaid || 0);
+    for (let i = 1; i <= months; i++){
+      for (let c; (c = S.queue.find(x => !x.done));){ const o = c.opts.find(optionAllowed) || c.opts[0]; resolveCard(c, o.k); }
+      archiveMonth(); closeMonth();
+      const cr = capRatio(), lq = liqRatio(), hz = survivalHorizon();
+      if (cr < r.lowCap){ r.lowCap = cr; r.lowCapMonth = i; }
+      if (lq < r.lowLiq){ r.lowLiq = lq; r.lowLiqMonth = i; }
+      r.lowHorizon = Math.min(r.lowHorizon, hz); r.peakBoe = Math.max(r.peakBoe, S.cb || 0);
+      r.endCap = cr; r.endLiq = lq; r.capChange = capital() - cap0; r.ran = i;
+      if (S.over && S.over !== 'done'){ r.failed = true; r.why = S.over === 'capital' ? `capital fell to ${pc(cr)}, below the ${pc(FAIL_CAP, 0)} at which the regulator closes a bank` : S.over === 'licence' ? 'the regulator withdrew the licence' : 'the bank failed'; break; }
+      if (S.over === 'done') nextYear();
+    }
+  } finally { S = real; OUT = realOut; LEDGER_SINK = realSink; }
+  r.lowBelowMin = r.lowCap < MIN_CAP; r.liqBelowMin = r.lowLiq < MIN_LIQ;
+  for (const k of ['startCap', 'lowCap', 'lowLiq', 'endCap', 'endLiq', 'capChange']) if (typeof r[k] === 'number') r[k] = Math.round(r[k] * 1e5) / 1e5;
+  return r;
+}
+function runStress(overrides){
+  if (!ceMode()) throw new Error('the stress test is part of the Chief Executive role');
+  if (S.over) throw new Error('the stress test needs a month to start from: begin the new year first');
+  const ov = {};
+  if (overrides){
+    if (typeof overrides !== 'object' || Array.isArray(overrides)) throw new Error('bad overrides');
+    for (const [area, values] of Object.entries(overrides)){
+      const lim = POLICY_LIMITS[area];
+      if (!lim || !S.progress.unlocked.includes(area)) throw new Error(area + ' policy is not unlocked');
+      if (!values || typeof values !== 'object') throw new Error('no values');
+      for (const [k, v] of Object.entries(values)) if (!lim[k] || typeof v !== 'number' || !isFinite(v) || v < lim[k][0] || v > lim[k][1]) throw new Error('bad value for ' + k);
+      ov[area] = values;
+    }
+  }
+  S.stress = { month: S.month, year: S.year, custom: Object.keys(ov).length > 0, ...stressTest(ov) };
+  return S.stress;
+}
+
 function rating(){
   const profit = capital() - S.startCap + (S.divPaid || 0) - (S.injected || 0), roe = profit / (S.startCap + (S.injected || 0) / 2);
-  if (S.over && S.over !== 'done') return { letter:'D', score:0, profit, roe, peer:0 };
+  if (S.over && S.over !== 'done' && S.over !== 'resigned') return { letter:'D', score:0, profit, roe, peer:0 };      // resigning is judged on the year so far
   const avgBase = S.rateSum ? S.rateSum / Math.max(1, S.month) : S.base;
   const peer = clamp(-0.43 + 0.112 * avgBase + (S.career && S.career.length ? 0.07 : 0), -0.25, 0.3);
   const pP = clamp(0.5 + (roe - peer) / 0.15, -1, 1.5) * 30, pC = S.trust * 0.35, pK = S.comp * 0.25;
@@ -1457,6 +1702,8 @@ function dispatchInner(cmd){
     case 'nextYear': return nextYear();
     case 'buy': return buyUpgrade(cmd.key);
     case 'setPolicy': return setPolicy(cmd.area, cmd.values, cmd.release);
+    case 'stress': return runStress(cmd.overrides);
+    case 'resign': return resign();
     default: throw new Error('unknown command ' + cmd.type);
   }
 }

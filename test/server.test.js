@@ -462,3 +462,35 @@ test('guests: a game played without signing in is recorded under an opaque key a
   // an account cannot be made without an email and password except as a guest
   await assert.rejects(pool.query('INSERT INTO account.player (guest) VALUES (false)'), /player_guest_or_account/);
 });
+
+test('chief executive: policy and stress commands are recorded with their details and the replay agrees', async () => {
+  const cookie = await newPlayer('ceo@example.com');
+  const plain = (await call('POST', '/api/games', {}, cookie)).json;
+  const no = await call('POST', `/api/games/${plain.id}/commands`, { seq: 2, command: { type: 'stress' } }, cookie);
+  assert.strictEqual(no.status, 403); assert.strictEqual(no.json.error, 'not_unlocked');
+  const g = (await call('POST', '/api/games', { chiefExecutive: true }, cookie)).json;
+  assert.deepStrictEqual(g.state.progress.unlocked, ['branch', 'pricing', 'credit', 'treasury', 'funding', 'capital']);
+  const url = `/api/games/${g.id}/commands`; let seq = 1;
+  const send = (command) => call('POST', url, { seq: ++seq, command }, cookie);
+  assert.strictEqual((await send({ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 80 } })).status, 200);
+  const st = await send({ type: 'stress', overrides: { credit: { mortgageMaxLtv: 70 } } });
+  assert.strictEqual(st.status, 200); assert(st.json.state.stress && st.json.state.stress.custom === true && st.json.state.stress.lowCap > 0);
+  assert.strictEqual(st.json.state.policy.credit.mortgageMaxLtv, 80, 'the stress test did not change the saved settings');
+  assert.strictEqual((await send({ type: 'stress', overrides: { credit: { mortgageMaxLtv: 500 } } })).status >= 400, true); seq--;       // refused, so the sequence number is not used
+  const stored = (await pool.query("SELECT payload FROM bank.command WHERE game_id = $1 AND type IN ('setPolicy','stress') ORDER BY seq", [g.id])).rows.map((r) => r.payload);
+  assert.deepStrictEqual(stored, [{ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 80 } }, { type: 'stress', overrides: { credit: { mortgageMaxLtv: 70 } } }]);
+  const played = await play(cookie, g.id, st.json.state, seq, 3);
+  assert(played.state.month >= 3);
+  const v = await verifyGame(pool, host, g.id);
+  assert.deepStrictEqual(v.problems, []); assert.strictEqual(v.ok, true);
+  // resigning ends the game as finished, is replayed, and nothing more is accepted
+  const rs = await call('POST', url, { seq: played.seq + 1, command: { type: 'resign' } }, cookie);
+  assert.strictEqual(rs.status, 200); assert.strictEqual(rs.json.state.over, 'resigned');
+  assert.strictEqual((await pool.query('SELECT status FROM bank.game WHERE id = $1', [g.id])).rows[0].status, 'finished');
+  assert.strictEqual((await call('POST', url, { seq: played.seq + 2, command: { type: 'closeMonth' } }, cookie)).status, 409);
+  assert.strictEqual((await verifyGame(pool, host, g.id)).ok, true);
+  assert.strictEqual((await call('POST', `/api/games/${plain.id}/commands`, { seq: 2, command: { type: 'resign' } }, cookie)).json.error, 'not_unlocked');
+  const { validate } = require('../server/games');
+  assert.throws(() => validate({ over: null, progress: { unlocked: ['branch'] } }, { type: 'stress' }), /Chief Executive/);
+  assert.throws(() => validate({ over: 'done', progress: { unlocked: ['branch', 'pricing'] } }, { type: 'stress' }), /year is over/);
+});

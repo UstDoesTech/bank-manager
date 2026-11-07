@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const { HttpError } = require('./auth');
 
 const PENCE_PER_K = 1e5;                  // the engine counts £ thousands; the database counts pence
-const COMMANDS = new Set(['newGame', 'resolve', 'closeMonth', 'nextYear', 'buy', 'read', 'setPolicy']);
+const COMMANDS = new Set(['newGame', 'resolve', 'closeMonth', 'nextYear', 'buy', 'read', 'setPolicy', 'stress', 'resign']);
 
 // Converts one engine journal entry to whole pence. Rounding each line can leave the entry off by a penny or two,
 // so the difference goes on the largest line and the stored entry sums to exactly zero.
@@ -42,6 +42,13 @@ function validate(state, cmd) {
     if (!['pricing', 'credit', 'treasury', 'funding', 'capital'].includes(cmd.area)) throw new HttpError(400, 'bad_command', 'Unknown policy area.');
     if (!state.progress.unlocked.includes(cmd.area)) throw new HttpError(403, 'not_unlocked', 'You do not control that policy yet.');
     if (!cmd.release && (!cmd.values || typeof cmd.values !== 'object' || Array.isArray(cmd.values))) throw new HttpError(400, 'bad_command', 'Missing values.');
+  } else if (cmd.type === 'resign') {
+    if (state.over) throw new HttpError(409, 'game_over', 'The game is already over.');
+    if (!state.progress.unlocked.some((a) => ['pricing', 'credit', 'treasury', 'funding', 'capital'].includes(a))) throw new HttpError(403, 'not_unlocked', 'Only a chief executive can resign.');
+  } else if (cmd.type === 'stress') {
+    if (state.over) throw new HttpError(409, 'game_over', 'The year is over.');
+    if (!state.progress.unlocked.some((a) => ['pricing', 'credit', 'treasury', 'funding', 'capital'].includes(a))) throw new HttpError(403, 'not_unlocked', 'The stress test comes with the Chief Executive role.');
+    if (cmd.overrides != null && (typeof cmd.overrides !== 'object' || Array.isArray(cmd.overrides))) throw new HttpError(400, 'bad_command', 'Bad overrides.');
   } else if (cmd.type === 'read') {
     if (typeof cmd.key !== 'string' || !/^[cm]\d+$/.test(cmd.key)) throw new HttpError(400, 'bad_command', 'Bad message key.');
   }
@@ -53,6 +60,7 @@ function cleanCommand(cmd) {
   if (cmd.type === 'resolve') { out.id = cmd.id; out.k = cmd.k; }
   if (cmd.type === 'buy' || cmd.type === 'read') out.key = cmd.key;
   if (cmd.type === 'setPolicy') { out.area = cmd.area; out.values = cmd.values; if (cmd.release) out.release = true; }
+  if (cmd.type === 'stress' && cmd.overrides) out.overrides = cmd.overrides;
   if (cmd.type === 'newGame') { out.seed = cmd.seed; out.opts = cmd.opts || {}; }
   return out;
 }
@@ -159,7 +167,7 @@ async function persist(client, game, seq, cmd, before, out) {
           pence(c.buckets.current), pence(c.buckets.d30), pence(c.buckets.d60), pence(c.buckets.plan)]);
   }
 
-  const status = facts.over === 'done' ? 'finished' : facts.over ? 'failed' : 'active';
+  const status = facts.over === 'done' || facts.over === 'resigned' ? 'finished' : facts.over ? 'failed' : 'active';
   await client.query(
     `INSERT INTO bank.game_state (game_id, seq, state) VALUES ($1, $2, $3)
      ON CONFLICT (game_id) DO UPDATE SET seq = EXCLUDED.seq, state = EXCLUDED.state, updated_at = now()`, [gid, seq, JSON.stringify(state)]);
@@ -191,6 +199,7 @@ function register(app, { pool, host }) {
     if (body.tutorial) opts.tutorial = true;
     if (body.scenario) opts.scenario = String(body.scenario);
     if (body.households && !opts.tutorial && !opts.scenario) opts.households = true;
+    if (body.chiefExecutive && !opts.tutorial && !opts.scenario) opts.chiefExecutive = true;
     const seed = crypto.randomInt(1, 0x7fffffff);
     const cmd = { type: 'newGame', seed, opts };
     let out;

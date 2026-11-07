@@ -4,7 +4,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), '
 const golden = JSON.parse(fs.readFileSync(path.join(__dirname, 'golden.json'), 'utf8'));
 let n = 0;
 // 1. Behaviour is unchanged against snapshots from the original engine (all bots, scenarios, tutorial).
-const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households'];
+const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy'];
 { const Eg = loadEngine(src); Eg.dispatch({ type: 'newGame', seed: 1 });
   for (const [key, want] of Object.entries(golden)){
     const [bot, tag, seed] = key.split(':');
@@ -330,4 +330,73 @@ for (const pol of ALL()) for (const seed of [3, 17]){
     for (let m = 0; m < 6 && !E.S.over; m++){ for (const c of E.S.queue) if (c.h && c.h.hh != null){ seen++; assert(c.who.name === E.S.households.find(h => h.id === c.h.hh).name && c.h.name === c.who.name && /regular customer/.test(c.note)); }
       for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' }); }
     assert(seen > 0, 'regular customers appear at the counter'); n++; } }
+// 12. Executive team, early warnings and the stress test.
+{ const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 5 });
+  for (let m = 0; m < 4; m++){ for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' }); }
+  // until a Chief Executive area is handed over, none of it applies
+  assert.strictEqual(E.ceMode(), false); assert.throws(() => E.dispatch({ type: 'stress' }), /Chief Executive/); n += 2;
+  E.S.progress.unlocked.push('pricing', 'credit', 'treasury', 'funding', 'capital');
+  const ind = E.indicators(), keys = ind.map(i => i.key);
+  for (const k of ['capital', 'liquidity', 'horizon', 'wholesale', 'wall', 'large', 'arrears', 'risky', 'rates']) assert(keys.includes(k), 'indicator ' + k); n += 9;
+  assert(ind.every(i => ['ok', 'watch', 'alarm'].includes(i.status) && i.text && i.shown)); n++;
+  const adv = E.advisers();
+  for (const r of ['Finance director', 'Chief risk officer', 'Treasurer', 'Head of operations']) assert(adv.some(a => a.role === r), 'adviser ' + r); n += 4;
+  assert(adv.some(a => /not run a stress test/.test(a.text))); n++;
+  // the stress test does not touch the real bank or its random stream, and gives the same answer twice
+  const before = JSON.stringify(E.S);
+  const a = E.stressTest({}, 9), b = E.stressTest({}, 9);
+  { let leaked = 0; E.setSink(() => { leaked++; }); E.stressTest({}, 3); E.setSink(null); assert.strictEqual(leaked, 0, 'the copy posts nothing to the real ledger'); n++; }
+  assert.strictEqual(JSON.stringify(E.S), before, 'stress test left the bank alone'); assert.deepStrictEqual(JSON.parse(JSON.stringify(a)), JSON.parse(JSON.stringify(b))); n += 2;
+  assert(a.ran === 9 || a.failed); assert(a.lowCap <= a.startCap); n += 2;
+  // reckless rules do worse than careful ones in the same recession
+  const tight = E.stressTest({ credit: { mortgageMaxLtv: 75, mortgageMinScore: 700 }, capital: { capitalTarget: 0.16 } }, 9);
+  const loose = E.stressTest({ credit: { mortgageMaxLtv: 100, mortgageMinScore: 350, mortgageMaxLti: 8 }, funding: { wholesaleTarget: 0.35 }, treasury: { liquidityTarget: 0.1 }, capital: { capitalAction: 2, dividendPayout: 0.9 } }, 9);
+  assert(loose.lowCap < tight.lowCap - 0.02, `loose ${loose.lowCap} vs tight ${tight.lowCap}`); assert(loose.lowHorizon < tight.lowHorizon); n += 2;
+  // as a command it stores its result; bad settings are refused; the year-end screen has no month to start from
+  E.dispatch({ type: 'stress', overrides: { credit: { mortgageMaxLtv: 80 } } });
+  assert(E.S.stress && E.S.stress.custom === true && E.S.stress.lowCap > 0); n++;
+  assert.throws(() => E.dispatch({ type: 'stress', overrides: { credit: { mortgageMaxLtv: 500 } } }), /bad value/); assert.throws(() => E.dispatch({ type: 'stress', overrides: { nonsense: { a: 1 } } }), /not unlocked/); n += 2;
+  assert(E.advisers().some(x => x.role === 'Chief risk officer' && /stress test/.test(x.text) && !/not run/.test(x.text))); n++;
+  // replay: the same commands rebuild the same game, stress result included
+  const cmds = [{ type: 'newGame', seed: 8 }]; const R1 = loadEngine(src); R1.dispatch(cmds[0]); const go = (c) => { cmds.push(c); return R1.dispatch(c); };
+  R1.S.progress.unlocked.push('pricing'); go({ type: 'setPolicy', area: 'pricing', values: { mortgageSpread: 1.2 } }); go({ type: 'stress' });
+  assert(R1.S.stress); n++; }
+// early warnings arrive by mail when an indicator gets worse, at most two a month
+{ const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 6 }); E.S.progress.unlocked.push('treasury');
+  E.dispatch({ type: 'setPolicy', area: 'treasury', values: { liquidityTarget: 0.1, longShare: 1 } });
+  const isW = x => /^(Warning|Watch): /.test(x.subject); let total = 0, maxMonth = 0;
+  for (let m = 0; m < 10 && !E.S.over; m++){ const was = E.S.inbox.filter(isW).length;
+    for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' });
+    const now = E.S.inbox.filter(isW).length; maxMonth = Math.max(maxMonth, now - was); total = now; }
+  assert(E.S.ewi && Object.keys(E.S.ewi).length >= 8, 'indicator bands are remembered'); n++;
+  assert(maxMonth <= 2, 'no more than two warnings in a month: ' + maxMonth); n++;
+  assert(total >= 1, 'a bank that runs thin on liquidity is warned'); n++; }
+// 13. Board confidence: it starts when the player takes over an area, meets every quarter, and can end the job.
+{ const month = (E) => { for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' }); };
+  // offered an area but not using it: the board does not watch
+  { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 4, opts: { chiefExecutive: true } }); for (let i = 0; i < 4; i++) month(E);
+    assert(!E.S.board, 'no board until an area is taken over'); n++; }
+  const start = (seed) => { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed, opts: { chiefExecutive: true } }); E.dispatch({ type: 'setPolicy', area: 'pricing', values: { mortgageSpread: 1.05 } }); return E; };
+  { const E = start(4); month(E); assert(E.S.board && Math.round(E.S.board.conf) !== 60 || E.S.board.conf !== 60); n++;
+    month(E); const before = E.S.inbox.filter(x => /^Board meeting/.test(x.subject)).length; month(E);
+    const meet = E.S.inbox.filter(x => /^Board meeting/.test(x.subject)); assert.strictEqual(meet.length, before + 1, 'a board meeting every third month'); assert(/confidence in you is \d+ out of 100/.test(meet[meet.length - 1].body)); n += 2;
+    assert.strictEqual(E.S.board.hist.length, 1); assert(E.S.board.conf >= 0 && E.S.board.conf <= 100); n += 2;
+    // the stress test does not move the board
+    const bj = JSON.stringify(E.S.board); E.stressTest({}, 6); assert.strictEqual(JSON.stringify(E.S.board), bj); n++; }
+  // careful rules keep the job
+  for (const seed of [1, 2, 3, 4, 5, 6]){ const { S } = play(loadEngine(src), seed, 'careful', 2, { chiefExecutive: true }, (run) => run({ type: 'setPolicy', area: 'pricing', values: { mortgageSpread: 1.05 } }));
+    assert.notStrictEqual(S.over, 'sacked', 'careful play was sacked, seed ' + seed); assert(S.board && S.board.conf > 40); n += 2; }
+  // two meetings under 20 in a row: warned first, then removed
+  { const E = start(4); for (let i = 0; i < 3; i++){ if (i === 2) E.S.board.conf = 0; month(E); }
+    assert.strictEqual(E.S.board.low, 1); assert(!E.S.over); assert(E.S.inbox.some(x => /If confidence is still below 20/.test(x.body))); n += 3;
+    for (let i = 0; i < 3; i++){ if (i === 2) E.S.board.conf = 0; month(E); }
+    assert.strictEqual(E.S.over, 'sacked'); assert.strictEqual(E.S.sackedWhy, 'confidence'); assert.strictEqual(E.rating().letter, 'D'); n += 3;
+    assert(E.S.news.some(x => /chief executive ousted/.test(x.head))); n++; }
+  // enforcement action at a meeting ends it at once
+  { const E = start(4); for (let i = 0; i < 3; i++){ if (i === 2) E.S.comp = 30; month(E); }
+    assert.strictEqual(E.S.over, 'sacked'); assert.strictEqual(E.S.sackedWhy, 'enforcement'); n += 2; }
+  // resigning ends the game but is judged on the year so far, and only a chief executive can do it
+  { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 4 }); assert.throws(() => E.dispatch({ type: 'resign' }), /only a chief executive/); n++;
+    const F = start(4); for (let i = 0; i < 4; i++) month(F); F.dispatch({ type: 'resign' });
+    assert.strictEqual(F.S.over, 'resigned'); assert.notStrictEqual(F.rating().letter, 'D'); assert.throws(() => F.dispatch({ type: 'resign' }), /already over/); n += 3; } }
 console.log('ok', n, 'checks');

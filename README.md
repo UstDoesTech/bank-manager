@@ -85,6 +85,43 @@ request Lakebase credentials for the project; the workflow does not grant that).
 Not done: there is no email service, so on Azure the confirmation link is still only in `account.outbox` (the smoke test reads
 it from there). Replace `server/mailer.js` with Azure Communication Services before real players sign up.
 
+## Executive team, early warnings and the stress test
+
+Once a player has been handed any Chief Executive area, the Policy tab opens three screens (Team, Settings, Stress test); none
+of this applies to branch-manager play. All of it is in `engine/engine.js` (`indicators()`, `advisers()`, `warnMonth()`,
+`stressTest()`, `runStress()`) and uses no random numbers, so it cannot change how a game plays.
+
+- **Early warnings** (`indicators()`): capital buffer, liquidity ratio, survival horizon (days a severe run could be paid out:
+  5% of ordinary deposits, every large depositor and any wholesale falling due, against cash and gilts), wholesale share,
+  maturity wall over six months, large depositor share, loans behind with payments, riskiest lending, and interest-rate
+  sensitivity of a year's net interest income. Each is ok, watch or alarm. At the start of each month the treasurer or
+  chief risk officer mails when one gets worse (at most two a month, once per move into a worse band).
+- **Executive team** (`advisers()`): finance director, chief risk officer, treasurer and head of operations comment from
+  the same numbers and your settings, and some of their advice conflicts (extra yield against the cash that carries you
+  through a run). The rules are simple thresholds, not a model.
+- **Stress test** (`stress` command): copies the bank, imposes a severe recession counted from the next month (unemployment
+  up 4.5 points, house prices down 23%, losses 2.5 times the normal rate, a funding freeze and a market crash) for nine
+  months, and lets your standing rules run it. Cards that need a decision take their first allowed option. Overrides let the
+  Settings screen test values that have not been saved. The result is stored in `S.stress` and shown on every screen. It
+  cannot run on the year-end screen, because there is no month to start from. The copy is isolated: it does not touch the real
+  bank, the random stream or the ledger sink (a test checks all three).
+- **Starting as Chief Executive:** `POST /api/games` with `chiefExecutive: true` (engine option `opts.chiefExecutive`) starts with
+  every area handed over. The page has no button for it yet.
+
+- **Board confidence** (`boardMonth()`, `boardMeeting()`, `resign()`): the board starts to watch once the player has taken over an
+  area (being offered one and leaving it alone is safe, so branch play and the golden games are unchanged). Confidence runs
+  0 to 100 from 60 and moves every month: up with return on capital ahead of the peer benchmark and a steadily paid
+  dividend, down with a lagging return, capital or liquidity breaches, a regulator in enforcement, Bank of England
+  borrowing, a big monthly loss, and risk indicators left in alarm, drifting back toward 55 when nothing happens. Every third
+  month the board meets and mails where the player stands and why. Below 20 at two meetings in a row, or regulator
+  enforcement action at a meeting, ends the job (`over: 'sacked'`, a Herald story, rating D). `resign` ends it voluntarily
+  (`over: 'resigned'`), rated on the year so far. In 30 seeds over three years, careful rules were never sacked, greedy
+  play was sacked twice, and reckless settings lost the job in 16 and failed the bank in 14. The Team screen shows the
+  meter, the next meeting and the last six quarters, and has the resign button.
+
+Not built: the monthly executive meeting (settings still apply at once), share price, and indicators for staffing and alerts
+(they need the operations phase).
+
 ## Things to know
 
 - Game state is stored as `json`, not `jsonb`. Postgres `jsonb` reorders keys and the engine sums floating-point numbers in key order, so a reloaded game could differ by a rounding error from a replayed one.
