@@ -45,6 +45,7 @@ jobs:
       DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
       APP_ID: ${{ secrets.BANK_DATABRICKS_CLIENT_ID }}
       APP_SECRET: ${{ secrets.BANK_DATABRICKS_CLIENT_SECRET }}
+      ANALYSIS_ID: ${{ secrets.ANALYSIS_DATABRICKS_CLIENT_ID }}      # optional: a service principal that may read the metric views
       RG: ${{ vars.RESOURCE_GROUP || 'rg-personal-n-ust-ust-built-on-playground' }}
       ACR: ${{ vars.ACR_NAME || 'builtonplayground' }}
       EP: projects/bank-manager/branches/production/endpoints/primary
@@ -81,6 +82,11 @@ jobs:
           code=$?
           echo "::notice title=lakebase role exit=${code}::$(grep -v '^::add-mask::' "$RUNNER_TEMP/pgout" | tr '\n' '|' | cut -c1-600)"
           exit $code
+      - name: Read-only role for analysis (only if ANALYSIS_DATABRICKS_CLIENT_ID is set)
+        if: ${{ env.ANALYSIS_ID != '' }}
+        run: |
+          echo "::add-mask::$ANALYSIS_ID"
+          bash scripts/pg.sh -q -v analyst="$ANALYSIS_ID" -f scripts/analysis-role.sql
       - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}

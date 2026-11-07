@@ -239,7 +239,34 @@ profit and to deposits, not as loans and accounts; acquisitions are on the balan
 - **Data:** migration 011 adds `goodwill` and `equity.writedown` accounts and `bank.product`, `bank.product_review`, `bank.acquisition` (with
   the hidden loss rate the engine knew), `bank.incentive_month` and `bank.branch_site`; the replay checks products and acquisitions.
 
-Every control area in the design is now built. Still to do: metric views over the data, the remaining analysis tables and the Azure email service.
+Every control area in the design is now built.
+
+## The analysis layer
+
+Migration 012 completes the data model and defines the metrics once, as SQL views, in `db/semantic/bank_metrics.yaml` (24 metrics, each
+with its view, column, grain and unit; the layout follows the Open Semantic Interchange idea and can be converted to an Apache Ossie model).
+
+- **Tables added:** `market_state` (Bank Rate, unemployment, house prices, share index, inflation, the economy), `policy_setting` (every rule
+  change and when it took effect), `account` (the retail pool, each large depositor, each bond, each household's savings), `party_role`
+  (borrower and guarantor), `security_holding` (month-end gilts), `risk_month` (rate sensitivity, survival horizon, LCR, wholesale and top-10
+  depositor shares, loan to deposit, hedge ratio, collateral, change meter), `year_result` (return on capital and the peer benchmark),
+  `alert_month`, `product_month`; `bank.decision` now keeps the papers shown on the desk. `bank."case"` and `bank.document` are views over
+  decisions. Every `bank` table carries its FIBO or UOP term in a comment, and a test fails if one does not.
+- **Metric views:** `metric_month` (net interest margin, cost/income, cost of risk, capital and liquidity ratios, loan to deposit, arrears
+  rates, goodwill share, rate sensitivity, survival horizon, funding concentration, change load), `metric_year` (return on capital against
+  peers), `metric_decision_accuracy` (by decision maker and case type: fraud, laundering, sanctions, onboarding, personal and business loans),
+  `metric_fraud_month` and `metric_alerts_month` (detection and false alarms), `metric_team_month` (utilisation and oldest case age),
+  `metric_product_month` and `metric_conduct_month` (complaints per 1,000 sales). They are built from the ledger (`v_month_pl`, `v_position`)
+  and the stored facts, and a test checks them against the game's own figures (net interest, loan to deposit, capital ratio, the parts adding up to profit).
+  There is no 90+ day arrears bucket because the game writes an account off after two months.
+- **Privacy:** every view reads only games that allow analysis, are synthetic and are not the training day (`v_game`); a test confirms an opted-out
+  player appears in none of them. The `bank_analysis` role can read the metric views, `bank."case"`, `bank.document` and the literacy views, and
+  is refused everything underneath. Migration 012 creates it if it may; on Lakebase the deploy can create a login for a service principal
+  (secret `ANALYSIS_DATABRICKS_CLIENT_ID`, optional) with `scripts/analysis-role.sql`.
+- **Example queries:** `db/analysis/metrics.sql` (nine, including which settings were changed before a bank failed, whether hedging protected the
+  margin, and which products pay in which economy); a test runs each, and the metric-only ones as the read-only role.
+
+Still to do: the Azure email service (this subscription cannot create one) and a few hosting pieces (Key Vault, scale to zero, Application Insights, the read replica).
 
 ## Things to know
 
