@@ -29,6 +29,14 @@ param pgDatabase string = 'bank'
 @description('Public address of the app, used in emailed links. Leave empty to use the address Azure gives it.')
 param baseUrl string = ''
 
+@description('Resend API key. Leave empty and confirmation links are only written to the database, which a real player cannot use.')
+@secure()
+param resendApiKey string = ''
+@description('The address mail is sent from: it must be on a domain verified with Resend, for example Bank Manager <noreply@yourdomain>.')
+param mailFrom string = ''
+
+var sendMail = !empty(resendApiKey) && !empty(mailFrom)
+
 var acrPull = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
@@ -72,7 +80,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         allowInsecure: false
       }
       registries: [{ server: acr.properties.loginServer, identity: identity.id }]
-      secrets: [{ name: 'databricks-secret', value: databricksClientSecret }]
+      secrets: concat([{ name: 'databricks-secret', value: databricksClientSecret }], sendMail ? [{ name: 'resend-key', value: resendApiKey }] : [])
     }
     template: {
       // The server keeps nothing in memory between requests, so it can scale out; two replicas keep it up through a restart.
@@ -82,7 +90,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'app'
           image: image
           resources: { cpu: json('0.5'), memory: '1Gi' }
-          env: [
+          env: concat([
             { name: 'DATABRICKS_HOST', value: databricksHost }
             { name: 'DATABRICKS_CLIENT_ID', value: databricksClientId }
             { name: 'DATABRICKS_CLIENT_SECRET', secretRef: 'databricks-secret' }
@@ -91,7 +99,10 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'PGDATABASE', value: pgDatabase }
             { name: 'MIGRATE', value: 'off' }
             { name: 'BASE_URL', value: empty(baseUrl) ? 'https://${prefix}-app.${env.properties.defaultDomain}' : baseUrl }
-          ]
+          ], sendMail ? [
+            { name: 'RESEND_API_KEY', secretRef: 'resend-key' }
+            { name: 'MAIL_FROM', value: mailFrom }
+          ] : [])
           probes: [
             { type: 'Liveness', httpGet: { path: '/healthz', port: 8080 }, initialDelaySeconds: 10, periodSeconds: 30 }
             { type: 'Readiness', httpGet: { path: '/healthz', port: 8080 }, periodSeconds: 10 }

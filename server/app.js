@@ -4,7 +4,7 @@ const Fastify = require('fastify');
 const config = require('./config');
 const { createPool, migrate } = require('./db');
 const { createHost } = require('./engine-host');
-const { createDevMailer } = require('./mailer');
+const { createMailer } = require('./mailer');
 const auth = require('./auth');
 const games = require('./games');
 
@@ -36,7 +36,7 @@ async function build({ pool, cfg = config, logger = true, mailer } = {}) {
     reply.code(500).send({ error: 'server_error', message: 'Something went wrong.' });
   });
 
-  auth.register(app, { pool: db, mailer: mailer || createDevMailer(db, logger ? app.log : null), config: cfg });
+  auth.register(app, { pool: db, mailer: mailer || createMailer({ pool: db, log: logger ? app.log : null }), config: cfg });
   games.register(app, { pool: db, host });
   require('./literacy').register(app, { pool: db });
 

@@ -82,8 +82,12 @@ app's Postgres role, builds the image in the registry, rolls out the Bicep and r
 `BANK_DATABRICKS_CLIENT_ID`, `BANK_DATABRICKS_CLIENT_SECRET` (the app's own service principal, which must be allowed to
 request Lakebase credentials for the project; the workflow does not grant that). `ci` runs all the tests on every push.
 
-Not done: there is no email service, so on Azure the confirmation link is still only in `account.outbox` (the smoke test reads
-it from there). Replace `server/mailer.js` with Azure Communication Services before real players sign up.
+**Email** goes out through [Resend](https://resend.com) when `RESEND_API_KEY` and `MAIL_FROM` are set (`server/mailer.js`): add the secret
+`RESEND_API_KEY` and the repo variable `MAIL_FROM` (an address on a domain verified with Resend, for example `Bank Manager <noreply@yourdomain>`);
+the deploy passes them to the app. Without them the app still runs, but confirmation links only land in `account.outbox`, which a real
+player cannot use. With Resend on, a real player's link is never stored in the outbox; addresses at `smoke.invalid` stay on the server so the deploy's
+smoke test can read its own link. A failed send is logged with the address's domain only and does not fail the request, because sign-up must not
+reveal whether an address is registered; the player can use "Forgot password" for another link. Not yet tried against the real service.
 
 ## Executive team, early warnings and the stress test
 
@@ -266,10 +270,10 @@ with its view, column, grain and unit; the layout follows the Open Semantic Inte
 - **Example queries:** `db/analysis/metrics.sql` (nine, including which settings were changed before a bank failed, whether hedging protected the
   margin, and which products pay in which economy); a test runs each, and the metric-only ones as the read-only role.
 
-Still to do: the Azure email service (this subscription cannot create one) and a few hosting pieces (Key Vault, scale to zero, Application Insights, the read replica).
+Still to do: a few hosting pieces (Key Vault, scale to zero, Application Insights, the read replica).
 
 ## Things to know
 
 - Game state is stored as `json`, not `jsonb`. Postgres `jsonb` reorders keys and the engine sums floating-point numbers in key order, so a reloaded game could differ by a rounding error from a replayed one.
 - The page does not hide a case's hidden truth from the player, since it plays on its own engine. That is fine for a single-player game but would need changing before any competitive mode.
-- Not built yet: the Azure email service (replace `server/mailer.js`), and the security-holding and hedge tables, which need the treasury work in a later step.
+- Not built yet: Key Vault, scale to zero, Application Insights and a read replica for the hosting.

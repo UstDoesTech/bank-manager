@@ -3,7 +3,7 @@
 # role, since there is no email service yet), sign in, accept the notice, start a game, then delete the test player.
 #   scripts/smoke.sh https://<app url>        needs scripts/pg.sh to work (DATABRICKS_* in the environment)
 set -euo pipefail
-URL=${1:?app url}; EMAIL="smoke-$(date +%s)@example.com"; PW="smoke test password $RANDOM$RANDOM"; JAR=$(mktemp)
+URL=${1:?app url}; EMAIL="smoke-$(date +%s)@smoke.invalid"; PW="smoke test password $RANDOM$RANDOM"; JAR=$(mktemp)
 j() { curl -fsS -b "$JAR" -c "$JAR" -H 'content-type: application/json' "$@"; }
 curl -fsS "$URL/healthz"; echo
 j -X POST "$URL/api/register" -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\"}" >/dev/null

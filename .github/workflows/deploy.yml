@@ -8,6 +8,8 @@
 #                   Repo variables RESOURCE_GROUP and ACR_NAME are optional. They default to the playground's
 #                   rg-personal-n-ust-ust-built-on-playground and its registry builtonplayground, which this app
 #                   reuses with the Container Apps environment managedEnvironment-rgpersonalnustu-b3e2.
+#   repo secret     RESEND_API_KEY and repo variable MAIL_FROM (an address on a domain verified with Resend) turn real email on.
+#                   Without them the app still runs, but confirmation links only land in account.outbox.
 #   repo secrets    DATABRICKS_HOST, DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET
 #                       the admin service principal: it applies the migrations and creates the role below
 #                   BANK_DATABRICKS_CLIENT_ID, BANK_DATABRICKS_CLIENT_SECRET
@@ -45,6 +47,8 @@ jobs:
       DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
       APP_ID: ${{ secrets.BANK_DATABRICKS_CLIENT_ID }}
       APP_SECRET: ${{ secrets.BANK_DATABRICKS_CLIENT_SECRET }}
+      RESEND_KEY: ${{ secrets.RESEND_API_KEY }}      # without it no real email is sent
+      MAIL_FROM: ${{ vars.MAIL_FROM }}               # for example: Bank Manager <noreply@yourdomain>
       ANALYSIS_ID: ${{ secrets.ANALYSIS_DATABRICKS_CLIENT_ID }}      # optional: a service principal that may read the metric views
       RG: ${{ vars.RESOURCE_GROUP || 'rg-personal-n-ust-ust-built-on-playground' }}
       ACR: ${{ vars.ACR_NAME || 'builtonplayground' }}
@@ -97,11 +101,12 @@ jobs:
       - name: Create or update the app
         run: |
           set -e
-          echo "::add-mask::$APP_SECRET"
+          echo "::add-mask::$APP_SECRET"; [ -z "$RESEND_KEY" ] || echo "::add-mask::$RESEND_KEY"
           server=$(az acr show -n "$ACR" --query loginServer -o tsv)
           az deployment group create -g "$RG" -n bank-manager-app -f infra/main.bicep -o none \
             -p acrName="$ACR" image="$server/bank-manager:${{ github.sha }}" databricksHost="$DATABRICKS_HOST" \
-               databricksClientId="$APP_ID" databricksClientSecret="$APP_SECRET" pgHost="$PG_HOST"
+               databricksClientId="$APP_ID" databricksClientSecret="$APP_SECRET" pgHost="$PG_HOST" \
+               resendApiKey="$RESEND_KEY" mailFrom="$MAIL_FROM"
           url=$(az deployment group show -g "$RG" -n bank-manager-app --query properties.outputs.url.value -o tsv)
           echo "APP_URL=$url" >> "$GITHUB_ENV"
           echo "::notice title=bank manager::$url"
