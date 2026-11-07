@@ -114,7 +114,7 @@ test('accounts: register, confirm, sign in; passwords are Argon2id; sign-up does
   assert.strictEqual(login.status, 200);
   assert(/HttpOnly/i.test(String(login.res.headers['set-cookie'])) && /SameSite=Lax/i.test(String(login.res.headers['set-cookie'])));
   const me = await call('GET', '/api/me', null, login.cookie);
-  assert.strictEqual(me.json.signedIn, true); assert.strictEqual(me.json.email, email); assert.strictEqual(me.json.consented, false);
+  assert.strictEqual(me.json.signedIn, true); assert.strictEqual(me.json.email, email); assert.strictEqual(me.json.consented, true, 'signing in is all the agreement there is');
   assert.strictEqual((await call('GET', '/api/me')).json.signedIn, false);
   assert.strictEqual((await call('POST', '/api/logout', {}, login.cookie)).status, 200);
   assert.strictEqual((await call('GET', '/api/me', null, login.cookie)).json.signedIn, false);
@@ -148,11 +148,10 @@ test('accounts: password reset works once, expires, and signs out other sessions
 });
 
 // --- games -------------------------------------------------------------------
-test('games: signed-out and unconsented players cannot start a game', async () => {
+test('games: signed-out players cannot start a game, and signing in is all it takes to record one', async () => {
   assert.strictEqual((await call('POST', '/api/games', {})).status, 401);
   const cookie = await newPlayer('dee@example.com', { consent: false });
-  const r = await call('POST', '/api/games', {}, cookie);
-  assert.strictEqual(r.status, 409); assert.strictEqual(r.json.error, 'consent_required');
+  assert.strictEqual((await call('POST', '/api/games', {}, cookie)).status, 201);
 });
 
 test('games: a year played through the API is recorded, balances to zero and replays exactly', async () => {
@@ -291,8 +290,6 @@ test('households: a game started with them records the cast and each month, and 
 test('literacy: five questions before the first game and one more after each year, scored on the server', async () => {
   const { QUESTIONS } = require('../server/literacy');
   assert.strictEqual((await call('GET', '/api/literacy')).status, 401);
-  const noConsent = await newPlayer('lou@example.com', { consent: false });
-  assert.strictEqual((await call('POST', '/api/literacy', { answers: {} }, noConsent)).status, 409);
 
   const cookie = await newPlayer('mia@example.com');
   const first = (await call('GET', '/api/literacy', null, cookie)).json;

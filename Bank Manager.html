@@ -353,6 +353,9 @@ details.more > *:not(summary){margin-top:10px}
 #pop{position:fixed;z-index:30;left:max(16px,env(safe-area-inset-left,0px));right:max(16px,env(safe-area-inset-right,0px));top:calc(env(safe-area-inset-top,0px) + 96px);max-width:420px;margin:0 auto;background:var(--ink);color:var(--paper);border:1px solid var(--brass-dim);border-radius:12px;padding:12px 14px;font-size:14px;box-shadow:0 10px 30px rgba(0,0,0,.5);animation:fade .2s}
 .qline{margin:14px 4px 0;color:var(--muted);font-size:12.5px;text-align:center}
 .panel .stickyfoot{position:sticky;bottom:0;background:var(--hall-2);padding-block:10px 4px;margin-bottom:-4px;display:grid;gap:8px;z-index:2}
+#cookieNote{position:fixed;z-index:40;left:12px;right:12px;top:calc(env(safe-area-inset-top,0px) + 10px);max-width:520px;margin:0 auto;display:flex;gap:12px;align-items:center;justify-content:space-between;background:var(--ink);color:var(--paper);border:1px solid var(--brass-dim);border-radius:12px;padding:10px 12px 10px 14px;font-size:13.5px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+#cookieNote[hidden]{display:none}
+#cookieNote button{background:var(--brass);color:#1a1405;border:0;border-radius:8px;padding:8px 16px;font-weight:800;flex:0 0 auto}
 #pop b{color:var(--brass);display:block;font-size:12px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:2px}
 
 @media (min-width:880px){
@@ -420,6 +423,7 @@ details.more > *:not(summary){margin-top:10px}
 </div>
 <div id="ov" hidden></div>
 <div id="pop" hidden></div>
+<div id="cookieNote" role="region" aria-label="Cookie notice" hidden><span>This game uses a cookie to record your game sessions.</span><button type="button" id="cookieOk">OK</button></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
@@ -4051,7 +4055,7 @@ async function offerLiteracy(){
 
 async function startGame(opts = {}){
   if (!opts.tutorial && !opts.scenario && opts.households === undefined) opts = Object.assign({}, opts, { households: true, meetings: true });
-  clearSave(); Remote.drop();
+  clearSave(); Remote.drop(); acknowledgeCookie();
   let seed = null;
   await Remote.guest();
   if (Remote.ready()){ await literacyCheck('before'); const g = await Remote.create(opts); if (g) seed = g.seed; }
@@ -4061,18 +4065,8 @@ async function startGame(opts = {}){
 function accountScreen(msg, isErr){
   const m = Remote.me(), note = (t, err) => `<div class="msg${err ? ' err' : ''}" role="status">${esc(t || '')}</div>`;
   const back = '<button type="button" class="btn link" id="acBack">Back</button>';
-  if (m && !m.consented){
-    overlay(`<div class="eyebrow">Before your first recorded game</div><h2>What gets recorded</h2>
-      <p>While you are signed in, each decision you make and what happened as a result is saved on the game server, along with the bank's ledger. Everything in the game is invented. Your email address and password are kept apart from the game data.</p>
-      <p>You can delete your account and every game at any time.</p>
-      <div class="acct">${note(msg, isErr)}
-      <button type="button" class="btn primary" id="acOk">Continue</button>${back}</div>`);
-    $('#acOk').onclick = async () => { const r = await Remote.api('POST', '/api/consent', {}); if (r.ok){ Remote.setMe({ ...m, consented: true, signedIn: true }); accountScreen('Recording is on. Games you start from now on are saved.'); } else accountScreen(r.json.message, true); };
-    $('#acBack').onclick = titleScreen; return;
-  }
   if (m && !m.guest){
     overlay(`<div class="eyebrow">Signed in</div><h2>${esc(Remote.who())}</h2>
-      <p>${Remote.recording() ? 'The game you are playing is being recorded.' : 'New games you start are recorded.'}</p>
       <div class="acct">${note(msg, isErr)}
       <button type="button" class="btn neutral" id="acOut">Sign out</button>
       <details class="more"><summary>Delete my account</summary><div class="acct" style="margin-top:8px"><label>Password<input type="password" id="acDelPw" autocomplete="current-password"></label>
@@ -4113,8 +4107,8 @@ function menuScreen(msg, isErr){
   if (!S) return;
   const m = Remote.me(), guest = !!(m && m.guest), signedIn = !!(m && !m.guest), recording = Remote.recording();
   const status = !Remote.available() ? 'Your game saves itself on this device after every move.'
-    : signedIn ? (recording ? `This game is being recorded to ${esc(m.email)}.` : `Signed in as ${esc(m.email)}. New games you start are recorded.`)
-    : guest ? 'Playing as a guest: this game is recorded without a name or email.'
+    : signedIn ? `Signed in as ${esc(m.email)}.`
+    : guest ? 'Playing as a guest.'
     : 'Your game saves itself on this device after every move.';
   overlay(`<div class="eyebrow">Paused</div><h2>Menu</h2><p class="dim">${status}</p>
     <div class="msg${isErr ? ' err' : ''}" role="status">${esc(msg || '')}</div>
@@ -4136,10 +4130,18 @@ function menuScreen(msg, isErr){
     if (!menuConfirm){ menuConfirm = true; menuScreen(); return; }
     menuConfirm = false; save();
     try { await Remote.api('POST', '/api/logout', {}); } catch (e) { return menuScreen('Could not reach the server to sign out. Try again when you are online.', true); }
-    Remote.setMe(null); Remote.drop(); menuScreen('Signed out. This game is no longer being recorded, and stays saved on this device.');
+    Remote.setMe(null); Remote.drop(); menuScreen('Signed out. Your game stays saved on this device.');
   };
 }
 $('#menuBtn').onclick = () => { if (S && $('#ov').hidden) { Snd.play('click'); menuConfirm = false; menuScreen(); } };
+/* The only notice: the cookie that records game sessions. Shown once on a first visit when there is a server, and gone for good when dismissed or when a game starts. */
+function cookieNote(){
+  const el = $('#cookieNote'); if (!el) return;
+  let ok = false; try { ok = localStorage.getItem('bm-cookie') === '1'; } catch (e) {}
+  el.hidden = ok || !Remote.available();
+}
+function acknowledgeCookie(){ try { localStorage.setItem('bm-cookie', '1'); } catch (e) {} const el = $('#cookieNote'); if (el) el.hidden = true; }
+$('#cookieOk').onclick = acknowledgeCookie;
 function titleScreen(){
   const saved = load(), resumable = saved && (!saved.over || saved.over === 'done');
   let best = null; try { best = JSON.parse(localStorage.getItem('ch-best') || 'null'); } catch (e) {}
@@ -4154,7 +4156,7 @@ function titleScreen(){
       ${Remote.available() ? `<button type="button" class="btn link" id="ovAcct">${Remote.ready() ? (Remote.me().guest ? 'Playing as a guest · sign in to keep your games' : 'Recording as ' + esc(Remote.who())) : 'Sign in to save your games'}</button>` : ''}
     </div>
     ${resumable ? '<p style="color:var(--muted);font-size:12.5px;margin:0">Starting something new replaces your saved game.</p>' : ''}
-    ${Remote.available() ? '<p style="color:var(--muted);font-size:12.5px;margin:0">Game sessions are recorded.</p>' : ''}`);
+`);
   const g = $('#ovGo'); if (g) g.onclick = () => { S = saved; save(); play(); };
   $('#ovTrain').onclick = () => startGame({ tutorial:true });
   $('#ovNew').onclick = () => startGame();
@@ -4170,6 +4172,7 @@ function start(data){
 }
 window.claude?.hot?.snapshot?.(() => (S ? { save: JSON.stringify(S) } : {}));
 const boot = d => {
+  cookieNote();
   start(d || {});
   Remote.init().then(() => {
     const q = new URLSearchParams(location.search);

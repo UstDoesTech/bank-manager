@@ -21,8 +21,10 @@ docker compose up --build          # Postgres + the game server
 ```
 
 Open http://localhost:8080. A game started without signing in is still recorded, anonymously: the server makes a guest
-player (a random key, no name or email, a one-year cookie) and the title screen says "Game sessions are recorded". There is
-no opt-out: nobody can switch recording off, and the server ignores a request for it. Opening the page records nothing; the
+player (a random key, no name or email, a one-year cookie). The only notice is about that cookie: a banner on a first visit says "This game
+uses a cookie to record your game sessions", with an OK button, and goes for good once it is dismissed or a game starts. There is no other
+notice, no consent step after signing in (signing in is all the agreement there is) and no opt-out: nobody can switch recording off, and
+the server ignores a request for it. Opening the page records nothing; the
 guest is created when a game starts. (Playing the file offline, with no server, records nothing because there is nowhere to send it.) A guest can sign in or create an account to keep their games (registering claims the same player row). A guest
 cannot delete their games (the server refuses it); only an account can. Guests do not get the literacy check, which is for signed-in players.
 To sign in to an account, choose "Sign in to save your games", create one, and confirm the address. There is no email

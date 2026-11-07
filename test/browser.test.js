@@ -67,10 +67,8 @@ test('the page: sign up, confirm, accept the notice, play online and offline, an
   await page.click('#acIn');
 
   // first sign-in shows the recording notice; a game cannot be recorded until it is accepted
-  await page.waitForSelector('#acOk');
-  assert.match(await page.textContent('.panel'), /What gets recorded/);
-  await page.click('#acOk');
-  await waitFor(async () => /Recording is on/.test(await page.textContent('.acct .msg')), 'consent message');
+  await page.waitForSelector('#acOut');            // signed in: there is no further notice or agreement
+  assert.doesNotMatch(await page.textContent('.panel'), /What gets recorded|Start recording/);
   await page.click('#acBack');
   await waitFor(async () => /Recording as pat@example.com/.test(await page.textContent('#ovAcct')), 'signed-in title');
 
@@ -138,7 +136,7 @@ test('the page: sign up, confirm, accept the notice, play online and offline, an
   // the menu says the game is being recorded, and signing out takes two taps and stops the recording
   await page.waitForSelector('#ovGo'); await page.click('#ovGo'); await waitFor(async () => await page.evaluate(() => !!S), 'the saved game to resume');
   await page.evaluate(() => closeOverlay()); await page.click('#menuBtn');
-  assert.match(await page.textContent('.panel'), /being recorded to pat@example.com/);
+  assert.match(await page.textContent('.panel'), /Signed in as pat@example.com/);
   await page.click('#menuOut'); assert.match(await page.textContent('#menuOut'), /Tap again/);
   await page.click('#menuOut'); await waitFor(async () => /Signed out/.test(await page.textContent('.msg')), 'signed out');
   assert.strictEqual((await (await fetch(base + '/api/me', { headers: { cookie: (await ctx.cookies()).map((c) => c.name + '=' + c.value).join('; ') } })).json()).signedIn, false);
@@ -229,7 +227,11 @@ test('the page without an account: the game is recorded anonymously, the player 
   const errors = []; page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(base + '/');
   await page.waitForSelector('#ovTrain');
-  assert.match(await page.textContent('.panel'), /Game sessions are recorded/);
+  // the only notice is about the cookie, and it goes when it is dismissed and stays gone
+  assert.strictEqual(await page.isVisible('#cookieNote'), true); assert.match(await page.textContent('#cookieNote'), /uses a cookie to record your game sessions/);
+  assert.doesNotMatch(await page.textContent('.panel'), /recorded|recording/i, 'no other notice on the title screen');
+  await page.click('#cookieOk'); assert.strictEqual(await page.isHidden('#cookieNote'), true);
+  await page.reload(); await page.waitForSelector('#ovTrain'); assert.strictEqual(await page.isHidden('#cookieNote'), true);
   assert.strictEqual((await pool.query('SELECT count(*)::int n FROM account.player WHERE guest')).rows[0].n, 0, 'nobody is created just by opening the page');
 
   await page.click('#ovNew');
@@ -249,7 +251,7 @@ test('the page without an account: the game is recorded anonymously, the player 
   assert.strictEqual(await page.locator('text=/delete/i').count(), 0, 'a guest is not offered deletion');
   assert.strictEqual(await page.locator('text=/record/i').filter({ hasText: /don.t|stop|off|opt/i }).count(), 0, 'no way to switch recording off on the account screen');
   await page.click('#acBack');
-  assert.strictEqual(await page.$('#ovRecOff'), null, 'no switch on the title screen'); assert.match(await page.textContent('.panel'), /Game sessions are recorded/);
+  assert.strictEqual(await page.$('#ovRecOff'), null, 'no switch on the title screen');
   await page.click('#ovNew');
   await waitFor(async () => (await pool.query('SELECT count(*)::int n FROM bank.game g JOIN account.player p ON p.player_key = g.player_key WHERE p.guest')).rows[0].n === 2, 'the next game is recorded too');
   assert.deepStrictEqual(errors, []);

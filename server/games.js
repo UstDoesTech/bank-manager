@@ -336,7 +336,6 @@ function register(app, { pool, host }) {
 
   app.post('/api/games', auth, async (req, reply) => {
     const p = req.player;
-    if (!p.consent_at) throw new HttpError(409, 'consent_required', 'Read and accept the recording notice first.');
     const body = req.body || {};
     const opts = {};
     if (body.tutorial) opts.tutorial = true;

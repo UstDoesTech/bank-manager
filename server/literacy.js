@@ -53,7 +53,6 @@ function register(app, { pool }) {
 
   app.post('/api/literacy', auth, async (req, reply) => {
     const p = req.player;
-    if (!p.consent_at) throw new HttpError(409, 'consent_required', 'Read and accept the recording notice first.');
     const body = req.body || {}, { answers, correct, score } = scoreAnswers(body.answers);
     const key = p.player_key, years = await yearsPlayed(key), done = await attempts(key);
     if (done >= 1 + years) throw new HttpError(409, 'not_due', 'There is no check due yet. One more is offered after each year you play.');

@@ -129,6 +129,8 @@ function register(app, { pool, mailer, config }) {
     }
     if (!p.email_confirmed_at) throw new HttpError(403, 'email_not_confirmed', 'Confirm your email address first.');
     await pool.query('DELETE FROM account.login_attempt WHERE lower(email) = lower($1)', [email]);
+    // The only notice is the cookie, and a session cookie is what records the games, so signing in is all the agreement there is.
+    await pool.query('UPDATE account.player SET consent_at = COALESCE(consent_at, now()) WHERE id = $1', [p.id]);
     await startSession(reply, p.id);
     return { ok: true };
   });
