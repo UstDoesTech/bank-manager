@@ -2347,6 +2347,18 @@ function dashboardFacts(){
   ];
   return { gauges, series };
 }
+/* ---- the executive meeting room: who is at the table, how worried each one is, and the numbers on the wall. Pure; no random numbers. ---- */
+function roomFacts(){
+  const notes = advisers(), rank = { ok:0, watch:1, alarm:2 };
+  const seats = ['Finance director', 'Chief risk officer', 'Treasurer', 'Head of operations'].map(role => {
+    const mine = notes.filter(n => n.role === role);
+    return { role, status: mine.some(n => n.tone === 'alarm') ? 'alarm' : mine.some(n => n.tone === 'warn') ? 'watch' : 'ok', notes: mine.length };
+  });
+  const d = dashboardFacts();
+  return { seats, gauges: d.gauges.map(g => ({ label:g.label, shown:g.shown, status:g.status, fill:Math.max(0, Math.min(1, g.value / g.max)) })),
+    board: S.board ? boardBand(Math.round(S.board.conf)) : null, open: seats.filter(s => rank[s.status] > 0).length };
+}
+
 function monthMoves(rep){
   const h = S.history || [], a = h[h.length - 1], b = h[h.length - 2];
   const moves = [];

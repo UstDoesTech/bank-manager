@@ -636,5 +636,7 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   const mm = E.monthMoves({ pl: { intLoans: 50, intGilts: 5, intRes: 1, intDep: -20, intCB: 0, fees: 10, losses: -30, redress: -2, costs: -60, gilts: 0 } });
   assert.strictEqual(mm.drivers.length, 3); assert(Math.abs(mm.drivers[0].amt) >= Math.abs(mm.drivers[1].amt));
   assert.strictEqual(hashState(E.S) + JSON.stringify(E.S.rngState || ''), before, 'drawing facts never changes the game');
-  const seen = new Set(); for (let y = 2027; y < 2040; y++) for (let m = 0; m < 12; m++){ E.S.year = y; E.S.month = m; seen.add(E.sceneFacts().weather); } assert(seen.size === 4, 'all four kinds of weather occur'); n += 7; }
+  { const rf = E.roomFacts(); assert.strictEqual(rf.seats.length, 4); assert(rf.seats.every(x => ['ok', 'watch', 'alarm'].includes(x.status))); assert(rf.gauges.length >= 3);
+    assert.strictEqual(hashState(E.S) + JSON.stringify(E.S.rngState || ''), before, 'the meeting room never changes the game'); }
+  const seen = new Set(); for (let y = 2027; y < 2040; y++) for (let m = 0; m < 12; m++){ E.S.year = y; E.S.month = m; seen.add(E.sceneFacts().weather); } assert(seen.size === 4, 'all four kinds of weather occur'); n += 10; }
 console.log('ok', n, 'checks');

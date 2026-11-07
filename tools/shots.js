@@ -11,7 +11,7 @@ const url = 'file:///' + path.resolve(__dirname, '..', 'Bank Manager.html').repl
 const sizes = { phone: { width: 390, height: 844 }, desktop: { width: 1280, height: 800 } };
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: EDGE, headless: true });
+  const browser = await chromium.launch({ executablePath: EDGE, headless: true, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
   for (const [name, viewport] of Object.entries(sizes)) {
     const page = await (await browser.newContext({ viewport })).newPage();
     const errors = []; page.on('pageerror', (e) => errors.push(e.message));

@@ -412,6 +412,7 @@ html{scroll-padding-top:env(safe-area-inset-top,0px)}
 .tn.branch i{background:var(--brass);border-color:var(--brass)}.tn.hub i{background:var(--hall-3);border-color:var(--brass)}.tn.closed i,.tn.none i{opacity:.45}
 .hint{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border:1px dashed var(--brass-dim);border-radius:10px;padding:10px 12px;font-size:13.5px}
 .hint button{flex:0 0 auto}
+.roomimg{width:100%;height:auto;display:block;border-radius:10px;border:1px solid var(--line)}
 </style>
 </head>
 <body>
@@ -2815,6 +2816,18 @@ function dashboardFacts(){
   ];
   return { gauges, series };
 }
+/* ---- the executive meeting room: who is at the table, how worried each one is, and the numbers on the wall. Pure; no random numbers. ---- */
+function roomFacts(){
+  const notes = advisers(), rank = { ok:0, watch:1, alarm:2 };
+  const seats = ['Finance director', 'Chief risk officer', 'Treasurer', 'Head of operations'].map(role => {
+    const mine = notes.filter(n => n.role === role);
+    return { role, status: mine.some(n => n.tone === 'alarm') ? 'alarm' : mine.some(n => n.tone === 'warn') ? 'watch' : 'ok', notes: mine.length };
+  });
+  const d = dashboardFacts();
+  return { seats, gauges: d.gauges.map(g => ({ label:g.label, shown:g.shown, status:g.status, fill:Math.max(0, Math.min(1, g.value / g.max)) })),
+    board: S.board ? boardBand(Math.round(S.board.conf)) : null, open: seats.filter(s => rank[s.status] > 0).length };
+}
+
 function monthMoves(rep){
   const h = S.history || [], a = h[h.length - 1], b = h[h.length - 2];
   const moves = [];
@@ -2906,7 +2919,7 @@ const $ = s => document.querySelector(s);
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const Scene = (() => {
-  const stub = { sync(){}, setCard(){}, react(){}, monthTurn(){}, boards(){}, setView(){}, setPaused(){}, isPaused: false, snapshot(){ return null; } };
+  const stub = { boardroom(){ return null; }, sync(){}, setCard(){}, react(){}, monthTurn(){}, boards(){}, setView(){}, setPaused(){}, isPaused: false, snapshot(){ return null; } };
   if (!window.THREE) return stub;
   const T = THREE, canvas = $('#c'), stage = $('#stage');
   let renderer;
@@ -3276,7 +3289,7 @@ const Scene = (() => {
     const a = cam.aspect || 1;
     const vf = hdeg => clamp(T.MathUtils.radToDeg(2 * Math.atan(Math.tan(T.MathUtils.degToRad(hdeg) / 2) / Math.max(a, 0.5))), 34, 76);
     if (mode === 'booth'){ want.pos.set(0, 1.8, -2.62); want.tgt.set(0, 1.54, 2.2); want.fov = vf(a < 1.2 ? 52 : 58); }
-    else { const tall = a < 1.15; want.pos.set(0, tall ? 6.4 : 6.2, tall ? 10.4 : 10.2); want.tgt.set(0, tall ? 1.7 : 1.2, -1.8); want.fov = vf(64); }
+    else { const tall = a < 1.15; want.pos.set(0, tall ? 6.4 : 6.2, tall ? 10.4 : 10.2); want.tgt.set(0, tall ? 1.7 : 1.2, -1.8); want.fov = a > 2.6 ? 30 : Math.max(vf(64), a > 1.6 ? 46 : 0); if (a > 2.6) want.tgt.y = 1.9; }
     tellers[1].visible = mode !== 'booth'; greeterP.visible = mode !== 'booth' && !!sceneNow.refurb; analystP.visible = mode !== 'booth' && !!sceneNow.analyst; front.visible = mode === 'booth'; faceLight.intensity = mode === 'booth' ? 1.6 : 0.6;
     const ab = $('#app'); if (ab) ab.dataset.booth = mode === 'booth' ? '1' : '';
   }
@@ -3349,6 +3362,52 @@ const Scene = (() => {
   }
   requestAnimationFrame(frame);
 
+  // The executive meeting room. It stands well away from the hall and is drawn on demand as a still picture for the Team screen,
+  // because that screen covers the live scene. Each adviser has a lamp on the table: green, amber or red as their worries grow.
+  const room = new T.Group(); room.position.set(80, 0, 0); room.visible = false; scene.add(room);
+  const rm = (g, m, x, y, z) => { const o = new T.Mesh(g, m); o.position.set(x, y, z); o.castShadow = true; o.receiveShadow = true; room.add(o); return o; };
+  const leather = M(0x5a3a2a, { roughness:0.5 }), RSTAT = { ok:'#71d49c', watch:'#d9ab4f', alarm:'#ff7a6c' };
+  rm(new T.BoxGeometry(18, 0.1, 14), M(0x2a1d14, { roughness:0.55 }), 0, -0.05, 0);
+  rm(new T.BoxGeometry(18, 5.2, 0.2), M(0x1f5246), 0, 2.6, -4.2);
+  rm(new T.BoxGeometry(18, 1.2, 0.12), walnut, 0, 0.6, -4.06);
+  rm(new T.BoxGeometry(7.2, 0.1, 2.0), walnut, 0, 0.8, -0.4);
+  rm(new T.BoxGeometry(6.6, 0.74, 1.5), M(0x1c120c), 0, 0.37, -0.4);
+  rm(new T.BoxGeometry(7.3, 0.03, 2.1), brass, 0, 0.74, -0.4);
+  rm(new T.BoxGeometry(5.6, 0.06, 0.5), M(0xfff1d0, { emissive:0xffe2a8, emissiveIntensity:1.2 }), 0, 4.2, -0.4);
+  const roomLight = new T.PointLight(0xffd9a0, 1.3, 22); roomLight.position.set(0, 3.8, 0.5); room.add(roomLight);
+  const ROLE_X = [-2.4, -0.8, 0.8, 2.4], seatP = [], plateT = [], lamps = [];
+  ['Finance director', 'Chief risk officer', 'Treasurer', 'Head of operations'].forEach((role, i) => {
+    const x = ROLE_X[i], p = makePerson({ hue:[0.12, 0.58, 0.83, 0.31][i], staff:true, age:[52, 44, 38, 47][i] }); room.add(p); p.position.set(x, -0.12, -1.5); seatP.push(p);
+    rm(new T.BoxGeometry(0.7, 0.9, 0.1), leather, x, 0.85, -2.05); rm(new T.BoxGeometry(0.8, 0.12, 0.8), leather, x, 0.4, -1.6);
+    const cv = document.createElement('canvas'); cv.width = 256; cv.height = 64; const tx = new T.CanvasTexture(cv); tx.colorSpace = T.SRGBColorSpace; plateT.push({ cv, tx, role });
+    const pl = new T.Mesh(new T.PlaneGeometry(1.2, 0.3), new T.MeshBasicMaterial({ map:tx })); pl.position.set(x, 1.0, -0.55); pl.rotation.x = -0.45; room.add(pl);
+    const lm = M(0x71d49c, { emissive:0x71d49c, emissiveIntensity:1.4 }); rm(new T.SphereGeometry(0.09, 16, 12), lm, x, 0.9, -0.95); lamps.push(lm);
+  });
+  const rwin = document.createElement('canvas'); rwin.width = 384; rwin.height = 256; const rwinT = new T.CanvasTexture(rwin); rwinT.colorSpace = T.SRGBColorSpace;
+  const rwall = document.createElement('canvas'); rwall.width = 576; rwall.height = 320; const rwallT = new T.CanvasTexture(rwall); rwallT.colorSpace = T.SRGBColorSpace;
+  rm(new T.BoxGeometry(3.5, 2.5, 0.08), M(0xd9ab4f, { metalness:0.4 }), -4.6, 2.7, -4.05);
+  { const w = new T.Mesh(new T.PlaneGeometry(3.3, 2.3), new T.MeshBasicMaterial({ map:rwinT })); w.position.set(-4.6, 2.7, -3.99); room.add(w); }
+  rm(new T.BoxGeometry(4.0, 2.3, 0.08), M(0x111a18), 3.6, 2.8, -4.05);
+  { const w = new T.Mesh(new T.PlaneGeometry(3.84, 2.14), new T.MeshBasicMaterial({ map:rwallT })); w.position.set(3.6, 2.8, -3.99); room.add(w); }
+  function drawRoom(f){
+    const wx2 = rwin.getContext('2d'), wthr = sceneFacts().weather, g = wx2.createLinearGradient(0, 0, 0, 256);
+    g.addColorStop(0, wthr === 'rain' ? '#6c7a86' : wthr === 'snow' ? '#a9b6c2' : wthr === 'cloud' ? '#8fa3b3' : '#8fb7d6'); g.addColorStop(1, wthr === 'clear' ? '#e3eef3' : '#c9d2d8');
+    wx2.fillStyle = g; wx2.fillRect(0, 0, 384, 256);
+    wx2.fillStyle = '#1b2a2c'; [[0, 150, 40, 106], [48, 120, 56, 136], [112, 160, 36, 96], [156, 100, 60, 156], [226, 140, 44, 116], [276, 110, 56, 146], [338, 150, 46, 106]].forEach(r => wx2.fillRect(r[0], r[1], r[2], r[3]));
+    wx2.fillStyle = 'rgba(255,214,140,.8)'; for (let i = 0; i < 26; i++) wx2.fillRect(8 + (i * 37) % 360, 130 + (i * 23) % 110, 5, 7);
+    if (wthr === 'rain'){ wx2.strokeStyle = 'rgba(205,225,240,.7)'; wx2.lineWidth = 2; wx2.beginPath(); for (let i = 0; i < 50; i++){ const x = (i * 31) % 384, y = (i * 67) % 256; wx2.moveTo(x, y); wx2.lineTo(x - 6, y + 22); } wx2.stroke(); }
+    if (wthr === 'snow'){ wx2.fillStyle = '#fff'; for (let i = 0; i < 40; i++){ wx2.beginPath(); wx2.arc((i * 53) % 384, (i * 41) % 256, 2 + i % 3, 0, 7); wx2.fill(); } }
+    wx2.strokeStyle = '#d9ab4f'; wx2.lineWidth = 5; wx2.beginPath(); wx2.moveTo(192, 0); wx2.lineTo(192, 256); wx2.moveTo(0, 128); wx2.lineTo(384, 128); wx2.stroke(); rwinT.needsUpdate = true;
+    const c = rwall.getContext('2d'); c.fillStyle = '#0d1f1b'; c.fillRect(0, 0, 576, 320);
+    c.fillStyle = '#d9ab4f'; c.font = '800 26px Archivo, Arial Narrow, sans-serif'; c.textAlign = 'left'; c.textBaseline = 'alphabetic'; c.fillText('BOARD PACK', 24, 42);
+    c.fillStyle = '#94aea5'; c.font = '500 20px "IBM Plex Mono", monospace'; c.textAlign = 'right'; c.fillText(f.board ? 'BOARD: ' + f.board.toUpperCase() : MONTHS[Math.min(S.month, 11)].toUpperCase() + ' ' + S.year, 552, 42);
+    f.gauges.slice(0, 4).forEach((gg, i) => { const y = 78 + i * 58; c.textAlign = 'left'; c.fillStyle = '#e8efe9'; c.font = '600 22px Archivo, Arial Narrow, sans-serif'; c.fillText(gg.label.toUpperCase(), 24, y + 18); c.textAlign = 'right'; c.fillStyle = RSTAT[gg.status]; c.font = '600 26px "IBM Plex Mono", monospace'; c.fillText(gg.shown, 552, y + 18); c.fillStyle = 'rgba(148,174,165,.25)'; c.fillRect(24, y + 28, 528, 8); c.fillStyle = RSTAT[gg.status]; c.fillRect(24, y + 28, 528 * gg.fill, 8); });
+    rwallT.needsUpdate = true;
+    f.seats.forEach((s, i) => { const { cv, tx, role } = plateT[i], x = cv.getContext('2d'); x.fillStyle = '#e9e3d2'; x.fillRect(0, 0, 256, 64); x.fillStyle = RSTAT[s.status]; x.fillRect(0, 0, 14, 64); x.fillStyle = '#1b1712'; x.font = '700 19px Archivo, Arial Narrow, sans-serif'; x.textAlign = 'left'; x.textBaseline = 'middle'; x.fillText(role.toUpperCase(), 26, 24); x.fillStyle = '#5a5040'; x.font = '500 18px "IBM Plex Mono", monospace'; x.fillText(s.status === 'ok' ? 'No concerns' : s.status === 'watch' ? 'Watching' : 'Alarmed', 26, 48); tx.needsUpdate = true;
+      lamps[i].color.set(RSTAT[s.status]); lamps[i].emissive.set(RSTAT[s.status]); setFace(seatP[i], s.status === 'alarm' ? 'worried' : s.status === 'watch' ? 'neutral' : 'smile'); });
+  }
+  const cam2 = new T.PerspectiveCamera(46, 2.4, 0.1, 60);
+
   return {
     setPaused(v){ paused = !!v; if (!paused) last = performance.now(); },
     get isPaused(){ return paused; },
@@ -3401,6 +3460,13 @@ const Scene = (() => {
       if (d < -0.4) flashT = 1;
     },
     monthTurn(){ vaultSpin = reduce ? 0 : 1.6; },
+    boardroom(w = 960, h = 400){
+      try {
+        drawRoom(roomFacts()); room.visible = true; cam2.aspect = w / h; cam2.updateProjectionMatrix(); cam2.position.set(80, 2.0, 3.3); cam2.lookAt(80, 1.35, -1.8);
+        const cw = stage.clientWidth, ch = stage.clientHeight; renderer.setSize(w, h, false); renderer.render(scene, cam2); const u = canvas.toDataURL('image/jpeg', 0.82);
+        room.visible = false; if (cw && ch) renderer.setSize(cw, ch, false); snap = true; return u;
+      } catch (e) { room.visible = false; return null; }
+    },
     setView(m, instant){ if (m !== mode){ mode = m; preset(); if (instant) snap = true; } },
     snapshot(){ try { const pm = mode; mode = 'hall'; preset(); cam.aspect = 1.6; cam.position.copy(want.pos); target.copy(want.tgt); cam.fov = 46; cam.updateProjectionMatrix(); cam.lookAt(target); const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(960, 600, false); renderer.render(scene, cam); const u = canvas.toDataURL('image/jpeg', 0.8); renderer.setSize(w, h, false); cam.aspect = w / h; mode = pm; preset(); snap = true; return u; } catch (e) { return null; } },
   };
@@ -4014,6 +4080,11 @@ function tourHint(){
   let seen = false; try { seen = localStorage.getItem('bm-tour') === '1'; } catch (e) {}
   return seen ? '' : `<div class="hint" id="tourHint"><span>Each seat below reads the same numbers. Run a Stress test before you change anything risky.</span><button type="button" class="btn link" id="tourOk">Got it</button></div>`;
 }
+function roomPicture(){
+  const f = roomFacts(), src = Scene.boardroom(); if (!src) return '';
+  const word = { ok:'at ease', watch:'watching', alarm:'alarmed' };
+  return `<img class="roomimg" src="${src}" alt="The meeting room. ${f.seats.map(s => s.role + ' ' + word[s.status]).join('. ')}.${f.board ? ' The board is ' + f.board + '.' : ''}">`;
+}
 function teamScreen(){
   const notes = advisers(), ind = indicators();
   const by = ROLES.map(r => `<div class="advs"><h3>${r}</h3>${notes.filter(n => n.role === r).map(n => `<div class="adv ${n.tone}"><p>${esc(n.text)}</p></div>`).join('')}</div>`).join('');
@@ -4021,7 +4092,7 @@ function teamScreen(){
   const rows = ind.map(i => `<div class="ewi ${i.status}"><span class="pill ${i.status}">${lab[i.status]}</span><div><b>${esc(i.label)}</b><span class="num">${esc(i.shown)}</span></div></div>`).join('');
   overlay(`${execTop('team')}<div class="eyebrow">Chief Executive · ${MONTHS[Math.min(S.month, 11)]} ${S.year}</div><h2>Your executive team</h2>
     <p class="dim">Each adviser reads the same numbers from their own seat, so they will not always agree. ${S.meet ? 'Changes you table in Settings take effect at the start of next month, after this meeting.' : 'Changes you make in Settings apply to new decisions from now on.'}</p>
-    ${tourHint()}${dashboardHTML()}${boardBlock()}${shareBlock()}${stressLine()}${by}<h3>Early warnings</h3><div class="ewis">${rows}</div>${ladderHTML()}${instrumentsHTML()}${opsHTML()}${growthHTML()}
+    ${roomPicture()}${tourHint()}${dashboardHTML()}${boardBlock()}${shareBlock()}${stressLine()}${by}<h3>Early warnings</h3><div class="ewis">${rows}</div>${ladderHTML()}${instrumentsHTML()}${opsHTML()}${growthHTML()}
     <details class="more"><summary>Resign as chief executive</summary><div class="acct" style="margin-top:8px"><p class="dim">Resigning ends the game. You are rated on the year so far.</p><button type="button" class="btn no" id="exResign">Resign</button></div></details>
     <div class="stickyfoot"><button type="button" class="btn link" id="plBack">Close</button></div>`);
   tabSel('policy'); execWire();
