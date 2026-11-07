@@ -2310,6 +2310,55 @@ function welcomeMail(){
 }
 function markRead(key){ const id = +key.slice(1); const it = key[0] === 'c' ? S.queue.find(x => x.id === id) : (S.inbox || []).find(x => x.id === id); if (it) it.read = true; }
 
+/* ---- presentation data the page reads, kept here so the page only draws ---- */
+const DOCS = {
+  onboard: [ { s:'form', t:'Account application', f:['Product','Expected in','First deposit'] }, { s:'id', t:'Identity document', f:['ID check'] }, { s:'report', t:'Verification checks', f:['Address check','Device'] } ],
+  mortgage: [ { s:'form', t:'Mortgage application', f:['Property price','Loan','LTV','Repayment','Total interest'] }, { s:'payslip', t:'Income evidence', f:['Income','Joint income','Loan to income','Work'] }, { s:'report', t:'Credit file', f:['Credit score','Missed payments, 2 yrs'] }, { s:'note', t:'Underwriter', f:['Money at stake'] } ],
+  personal: [ { s:'form', t:'Loan application', f:['Amount','Income','Other debts'] }, { s:'report', t:'Credit file', f:['Credit score','Spending insight'] }, { s:'note', t:'Underwriter', f:['Money at stake'] } ],
+  business: [ { s:'form', t:'Business loan application', f:['Loan','Sector','Trading for'] }, { s:'report', t:'Management accounts', f:['Turnover','Profit','Debt service cover'] }, { s:'note', t:'Underwriter', f:['Money at stake'] } ],
+  app: [ { s:'form', t:'Payment instruction', f:['Amount','Payee','Name check','Receiving account'] }, { s:'id', t:'Identity document', f:[] }, { s:'note', t:"Cashier's note", f:['Behaviour'] } ],
+  hardship: [ { s:'form', t:'Income and spending', f:['Reason','Outlook'] }, { s:'report', t:'Arrears statement', f:['Loan','Balance','Behind by','Home worth now'] }, { s:'note', t:'Branch note', f:['Vulnerability'] } ],
+  wmClient: [ { s:'form', t:'Fact-find', f:['Investing','Needs it in','Other assets','Experience'] }, { s:'report', t:'Risk questionnaire', f:['Risk questionnaire'] }, { s:'payslip', t:'Growth illustration', f:['If balanced, 4.5% a year'] } ],
+  wmPep: [ { s:'form', t:'Private client onboarding', f:['Investing','Wants'] }, { s:'id', t:'Passport', f:[] }, { s:'report', t:'Due diligence', f:['Family','Documents'] } ],
+  wmVuln: [ { s:'form', t:'Withdrawal request', f:['Withdrawal'] }, { s:'note', t:"Adviser's note", f:['Recent change',"Who's pushing"] } ],
+};
+function buildDocs(c){
+  const spec = (DOCS[c.kind] || [{ s:'form', t:c.label, f:[] }]).map(d => ({ ...d, rows:[] }));
+  const used = new Set();
+  for (const d of spec) for (const l of d.f){ const f = c.fields.find(x => x.l === l); if (f){ d.rows.push(f); used.add(l); } }
+  for (const f of c.fields) if (!used.has(f.l)) spec[0].rows.push(f);
+  if (c.coach) spec.push({ s:'note', t:'Your trainer', coach:true, rows:[F('Trainer', c.coach, null, true)] });
+  return spec.filter((d, i) => i === 0 || d.rows.length || d.s === 'id');
+}
+const HERALD_FAIL = { capital:['Counting House collapses as losses wipe out capital', 'The regulator has put the high street bank into resolution. Most savers are covered by the deposit guarantee scheme.'], licence:['Regulator shuts Counting House', 'The bank has lost its licence after a string of failings. Customers are being moved to another bank.'], sacked:['Counting House chief executive ousted', 'The board has removed the chief executive. Directors say they had lost confidence in the leadership.'], resigned:['Counting House chief executive steps down', 'The chief executive has resigned. The board has thanked them and begun a search for a successor.'], run:['Savers queue around the block as Counting House runs out of money', 'The bank could not pay depositors who wanted their money back. The Bank of England has stepped in.'] };
+function heraldStories(){
+  const st = S.stats, r = rating(), c = [];
+  const fail = HERALD_FAIL[S.over];
+  if (fail) c.push({ w:100, head:fail[0], body:fail[1] });
+  for (const n of S.news || []) c.push({ w:n.w + n.m / 30, head:n.head, body:n.body });
+  const yr = P().name.replace(/^an? /, '');
+  if (!fail) c.push(r.profit >= 0 ? { w:4 + Math.max(0, r.roe - r.peer) * 25, head:`Counting House makes ${fmt(r.profit)} in a year of ${yr}`, body:`A return on capital of ${pc(r.roe)}, against about ${pc(r.peer, 0)} for similar banks.` } : { w:4 + Math.max(0, r.peer - r.roe) * 25, head:`Counting House loses ${fmt(-r.profit)} in a year of ${yr}`, body:`A return on capital of ${pc(r.roe)}. Similar banks managed about ${pc(r.peer, 0)}.` });
+  if (st.scamStop >= 2) c.push({ w:3 + st.scamStop, head:`Branch staff stopped ${st.scamStop} scams this year`, body:'Cashiers called police while customers were still on the phone to fraudsters.' });
+  if (st.scamMiss >= 2) c.push({ w:2 + st.scamMiss, head:`${st.scamMiss} customers scammed in branch`, body:'Victims say staff did not ask enough questions.' });
+  if (st.fines >= 60) c.push({ w:4 + st.fines / 60, head:`Fines and refunds cost Counting House ${fmt(st.fines)}`, body:'The bank says it has tightened its controls.' });
+  if (st.defaults >= 3) c.push({ w:3 + st.defaults / 2, head:'Borrowers fall behind as bad loans mount', body:`The bank wrote off ${st.defaults} new loans, costing ${fmt(st.losses)}.` });
+  if (st.wrongNo >= 3) c.push({ w:3, head:'Applicants say they were turned away', body:`At least ${st.wrongNo} people with good records were refused.` });
+  if (st.lent > 1500) c.push({ w:3 + st.lent / 2500, head:`${fmt(st.lent)} lent to local homes and firms`, body:`${st.loans} new loans this year.` });
+  if (st.sars >= 3) c.push({ w:2, head:`Bank files ${st.sars} suspicious activity reports`, body:'Reports go to the National Crime Agency.' });
+  { const real = mkt() - inflation(11); if (real < -0.75) c.push({ w:3.5, head:'Savers lose ground as prices outpace interest', body:`The best easy-access rate is ${mkt().toFixed(2)}% while prices rose ${inflation(11).toFixed(1)}%. Money in savings buys about ${Math.abs(real).toFixed(1)}% less than a year ago.` }); else if (real > 1) c.push({ w:2.5, head:'Savers finally beat inflation', body:`Easy-access accounts pay ${mkt().toFixed(2)}% against inflation of ${inflation(11).toFixed(1)}%.` }); }
+  if (S.wm && aum() > 3000) c.push({ w:3, head:`Wealth arm now manages ${fmt(aum())}`, body:'Fees rise and fall with the stock market.' });
+  const seen = new Set(); return c.sort((a, b) => b.w - a.w).filter(x => !seen.has(x.head) && seen.add(x.head));
+}
+function endingText(){
+  return { capital:'Losses ate through your capital. The regulator has put the bank into resolution.', licence:'The regulator has withdrawn your banking licence.', sacked:S.sackedWhy === 'enforcement' ? 'The regulator took enforcement action and the board has removed you as chief executive.' : 'The board lost confidence in you for two quarters running and has replaced you as chief executive.', resigned:'You resigned as chief executive. This is how the bank stood.', run:'Depositors ran and you could not pay them. The bank has failed.' }[S.over];
+}
+function stressVerdict(st){
+  if (st.failed) return ['The bank fails: ' + st.why + '.', 'alarm'];
+  if (st.lowBelowMin) return ['Capital falls below the ' + pc(MIN_CAP) + ' minimum, to ' + pc(st.lowCap) + ' in month ' + st.lowCapMonth + '. The regulator would step in.', 'alarm'];
+  if (st.liqBelowMin) return ['Capital holds, but liquidity falls below the ' + pc(MIN_LIQ, 0) + ' minimum in month ' + st.lowLiqMonth + '.', 'warn'];
+  return ['The bank gets through. Capital never falls below ' + pc(st.lowCap) + '.', 'info'];
+}
+
 /* ---- command interface: the only way the outside world changes the game ----
    A game is fully defined by its seed, engine version and the ordered list of commands. */
 function dispatch(cmd){
