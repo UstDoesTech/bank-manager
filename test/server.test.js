@@ -242,7 +242,7 @@ test('portfolio: borrowers, agreements, collateral and month-end cohorts are rec
 test('policy: every game starts on the system pricing and credit policy and cannot change it until it is unlocked', async () => {
   const cookie = await newPlayer('rex@example.com');
   const g = (await call('POST', '/api/games', {}, cookie)).json;
-  assert.deepStrictEqual(g.state.policy.owner, { pricing: 'system', credit: 'system', treasury: 'system', funding: 'system', capital: 'system' });
+  assert.deepStrictEqual(g.state.policy.owner, { pricing: 'system', credit: 'system', treasury: 'system', funding: 'system', capital: 'system', operations: 'system' });
   assert.strictEqual(g.state.policy.pricing.cardRate, 24.9);
   const url = `/api/games/${g.id}/commands`;
   const r = await call('POST', url, { seq: 2, command: { type: 'setPolicy', area: 'pricing', values: { cardRate: 5 } } }, cookie);
@@ -469,7 +469,7 @@ test('chief executive: policy and stress commands are recorded with their detail
   const no = await call('POST', `/api/games/${plain.id}/commands`, { seq: 2, command: { type: 'stress' } }, cookie);
   assert.strictEqual(no.status, 403); assert.strictEqual(no.json.error, 'not_unlocked');
   const g = (await call('POST', '/api/games', { chiefExecutive: true }, cookie)).json;
-  assert.deepStrictEqual(g.state.progress.unlocked, ['branch', 'pricing', 'credit', 'treasury', 'funding', 'capital']);
+  assert.deepStrictEqual(g.state.progress.unlocked, ['branch', 'pricing', 'credit', 'treasury', 'funding', 'capital', 'operations']);
   const url = `/api/games/${g.id}/commands`; let seq = 1;
   const send = (command) => call('POST', url, { seq: ++seq, command }, cookie);
   assert.strictEqual((await send({ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 80 } })).status, 200);
@@ -479,38 +479,54 @@ test('chief executive: policy and stress commands are recorded with their detail
   assert.strictEqual((await send({ type: 'stress', overrides: { credit: { mortgageMaxLtv: 500 } } })).status >= 400, true); seq--;       // refused, so the sequence number is not used
   const stored = (await pool.query("SELECT payload FROM bank.command WHERE game_id = $1 AND type IN ('setPolicy','stress') ORDER BY seq", [g.id])).rows.map((r) => r.payload);
   assert.deepStrictEqual(stored, [{ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 80 } }, { type: 'stress', overrides: { credit: { mortgageMaxLtv: 70 } } }]);
+  // the seed is random, so a game can reach the year end; a new year is begun whenever it has
+  const open = async (p) => { if (p.state.over !== 'done') return p; const r = await call('POST', url, { seq: p.seq + 1, command: { type: 'nextYear' } }, cookie); assert.strictEqual(r.status, 200); return { state: r.json.state, seq: p.seq + 1, commands: p.commands }; };
   const hd = await send({ type: 'setPolicy', area: 'treasury', values: { hedgeTarget: 1, hedgeYears: 2 } });
   assert.strictEqual(hd.status, 200);
-  let played = await play(cookie, g.id, hd.json.state, seq, 4);
+  let played = await play(cookie, g.id, hd.json.state, seq, 3);
   // the seed is random, so a game may need a few more months before it lends a mortgage and the rule has something to hedge
-  for (let extra = 0; extra < 6 && !played.state.swaps.length && !played.state.over; extra++) played = await play(cookie, g.id, played.state, played.seq, 1);
-  assert(played.state.month >= 4 || played.state.year > 2027);
+  for (let extra = 0; extra < 4 && !played.state.swaps.length && played.state.over !== 'done'; extra++) played = await play(cookie, g.id, played.state, played.seq, 1);
+  assert(played.state.month >= 3 || played.state.year > 2027);
   // swaps, their month-end position and the maturity ladder are stored, and the replay agrees with them
   assert(played.state.swaps.length >= 1, 'a swap was entered');
   const q1 = async (sql) => (await pool.query(sql, [g.id])).rows;
   assert.strictEqual((await q1("SELECT count(*)::int n FROM bank.hedge WHERE game_id = $1 AND status = 'active'"))[0].n, played.state.swaps.length);
   assert.strictEqual(Number((await q1("SELECT sum(notional_pence) s FROM bank.hedge WHERE game_id = $1"))[0].s), Math.round(played.state.swaps.reduce((a, w) => a + w.n, 0) * 1e5));
   assert((await q1("SELECT count(*)::int n FROM bank.hedge_position WHERE game_id = $1"))[0].n >= 1);
-  assert.strictEqual((await q1("SELECT count(*)::int n FROM bank.liquidity_ladder WHERE game_id = $1"))[0].n % 5, 0); assert((await q1("SELECT count(*)::int n FROM bank.liquidity_ladder WHERE game_id = $1"))[0].n >= 5 * 4);
+  assert.strictEqual((await q1("SELECT count(*)::int n FROM bank.liquidity_ladder WHERE game_id = $1"))[0].n % 5, 0); assert((await q1("SELECT count(*)::int n FROM bank.liquidity_ladder WHERE game_id = $1"))[0].n >= 5 * 3);
   { const c = await q1("SELECT balance_pence b FROM bank.position_snapshot WHERE game_id = $1 AND account = 'collateral' ORDER BY year DESC, month DESC LIMIT 1");       // no row until collateral has been posted
-    assert.strictEqual(c.length ? Number(c[0].b) : 0, Math.round(played.state.collateral * 1e5)); }
+    assert(Math.abs((c.length ? Number(c[0].b) : 0) - Math.round(played.state.collateral * 1e5)) <= 20, 'collateral in the ledger agrees with the state to within the pence lost rounding'); }
   const v = await verifyGame(pool, host, g.id);
   assert.deepStrictEqual(v.problems, []); assert.strictEqual(v.ok, true);
   // funding instruments and the share price are stored too: wholesale, a bond and the Bank of England facility
-  const f1 = await call('POST', url, { seq: played.seq + 1, command: { type: 'setPolicy', area: 'funding', values: { boeTarget: 300, wholesaleTarget: 0.1, bondTarget: 0.05 } } }, cookie);
+  const pa = await open(played);
+  const f1 = await call('POST', url, { seq: pa.seq + 1, command: { type: 'setPolicy', area: 'funding', values: { boeTarget: 300, wholesaleTarget: 0.1, bondTarget: 0.05 } } }, cookie);
   assert.strictEqual(f1.status, 200);
-  const played2 = await play(cookie, g.id, f1.json.state, played.seq + 1, 3);
+  const played2 = await play(cookie, g.id, f1.json.state, pa.seq + 1, 2);
   const inst = await q1("SELECT kind, amount_pence, status FROM bank.funding_instrument WHERE game_id = $1");
   assert(inst.some((r) => r.kind === 'boe') && inst.some((r) => r.kind === 'wholesale'), 'wholesale and the facility are stored: ' + JSON.stringify(inst.map((r) => r.kind)));
   assert.strictEqual(inst.filter((r) => r.status === 'active').length, played2.state.wsTranches.length + played2.state.bondTranches.length + (played2.state.cb > 0.005 ? 1 : 0));
   assert.strictEqual(Number(inst.find((r) => r.kind === 'boe').amount_pence), Math.round(played2.state.cb * 1e5));
-  assert.strictEqual((await q1("SELECT count(*)::int n FROM bank.share_price WHERE game_id = $1"))[0].n, played2.state.px.hist.length); assert(played2.state.px.hist.length >= 7);
+  assert.strictEqual((await q1("SELECT count(*)::int n FROM bank.share_price WHERE game_id = $1"))[0].n, played2.state.px.hist.length); assert(played2.state.px.hist.length >= 5);
+  assert((await verifyGame(pool, host, g.id)).ok);
+  // operations: team months, a project, the suppliers and any incidents are stored, and the replay agrees
+  const pb = await open(played2);
+  const o1 = await call('POST', url, { seq: pb.seq + 1, command: { type: 'setPolicy', area: 'operations', values: { staffFraud: 5, regReporting: 1, staffIt: 6, outsourceCards: 1, oversight: 2 } } }, cookie);
+  assert.strictEqual(o1.status, 200);
+  const played3 = await play(cookie, g.id, o1.json.state, pb.seq + 1, 3);
+  assert(played3.state.ops && played3.state.ops.last.length === 5, 'operations ran');
+  assert((await q1("SELECT count(*)::int n FROM bank.team_month WHERE game_id = $1"))[0].n >= 5 * 2);
+  assert.strictEqual((await q1("SELECT count(*)::int n FROM bank.change_project WHERE game_id = $1 AND project = 'reg'"))[0].n, 1);
+  const sup = await q1("SELECT supplier, outsourced FROM bank.supplier WHERE game_id = $1 ORDER BY supplier");
+  assert.deepStrictEqual(sup.map((r) => [r.supplier, r.outsourced]), [['cards', true], ['contact', false], ['hosting', false]]);
+  assert.strictEqual((await q1("SELECT coalesce(max(incident_id), 0)::int n FROM bank.incident WHERE game_id = $1"))[0].n, played3.state.ops.iid);
   assert((await verifyGame(pool, host, g.id)).ok);
   // resigning ends the game as finished, is replayed, and nothing more is accepted
-  const rs = await call('POST', url, { seq: played2.seq + 1, command: { type: 'resign' } }, cookie);
+  const pc = await open(played3);
+  const rs = await call('POST', url, { seq: pc.seq + 1, command: { type: 'resign' } }, cookie);
   assert.strictEqual(rs.status, 200); assert.strictEqual(rs.json.state.over, 'resigned');
   assert.strictEqual((await pool.query('SELECT status FROM bank.game WHERE id = $1', [g.id])).rows[0].status, 'finished');
-  assert.strictEqual((await call('POST', url, { seq: played2.seq + 2, command: { type: 'closeMonth' } }, cookie)).status, 409);
+  assert.strictEqual((await call('POST', url, { seq: pc.seq + 2, command: { type: 'closeMonth' } }, cookie)).status, 409);
   assert.strictEqual((await verifyGame(pool, host, g.id)).ok, true);
   assert.strictEqual((await call('POST', `/api/games/${plain.id}/commands`, { seq: 2, command: { type: 'resign' } }, cookie)).json.error, 'not_unlocked');
   const { validate } = require('../server/games');

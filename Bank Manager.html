@@ -335,6 +335,7 @@ table.ledger{width:100%;border-collapse:collapse;font-size:13.5px}
 .ewis{display:grid;gap:6px}.ewi{display:flex;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line)}.ewi b{display:block;font-size:14px}.ewi .num{font-size:12.5px;color:var(--muted)}
 .ewi .pill{min-width:56px;text-align:center}
 .lad.ins{grid-template-columns:1.5fr 1fr .8fr 1fr}
+.lad.ops{grid-template-columns:1.6fr 1.1fr .8fr 1fr}
 .lad{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;gap:6px 8px;font-size:13px;font-family:var(--f-mono)}.lad b{font-family:var(--f-display);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:700}.lad span:nth-child(4n+1){font-family:var(--f-display)}
 .panel .stickyfoot.cols{grid-template-columns:1fr 1fr}.panel .stickyfoot.cols .full,.panel .stickyfoot.cols .btn.link{grid-column:1/-1}
 .panel select{width:100%;max-width:100%;font:inherit;color:var(--text);background:var(--hall);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
@@ -593,14 +594,18 @@ function systemPolicy(){
     treasury: { liquidityTarget: 0.2, longShare: 0, hedgeTarget: 0, hedgeYears: 3 },
     funding: { boeTarget: 0, savingsSpread: 0, wholesaleTarget: 0, bondTarget: 0, bondTermYears: 1, bondPremium: 0.5, largeCap: 0, poolWhenShort: 0, poolShare: 0.25, poolMode: 0 },
     capital: { capitalTarget: 0.125, capitalAction: 0, raiseAmount: 300, dividendPayout: 0 },
-    owner: { pricing: 'system', credit: 'system', treasury: 'system', funding: 'system', capital: 'system' } };
+    operations: { staffCounter: 6, staffCredit: 3, staffFraud: 4, staffFincrime: 3, staffComplaints: 3, staffIt: 3, overtime: 0, fraudSensitivity: 0.5, amlSensitivity: 0.5,
+      coreMigration: 0, paymentsUpgrade: 0, regReporting: 0, mobileApp: 0, dataPlatform: 0, outsourceCards: 0, outsourceContact: 0, outsourceHosting: 0, oversight: 0 },
+    owner: { pricing: 'system', credit: 'system', treasury: 'system', funding: 'system', capital: 'system', operations: 'system' } };
 }
 const POLICY_LIMITS = {
   pricing: { mortgageSpread: [0, 6], mortgagePremium: [0, 3], personalLow: [0, 40], personalHigh: [0, 40], cardRate: [0, 40] },
   credit: { mortgageMaxLtv: [50, 100], mortgageMaxLti: [2, 8], mortgageMaxAff: [0.2, 0.8], mortgageMinScore: [300, 900], personalMinScore: [300, 900], personalMaxDebtRatio: [0.2, 2] },
   treasury: { liquidityTarget: [0.1, 0.5], longShare: [0, 1], hedgeTarget: [0, 1.5], hedgeYears: [1, 5] },
   funding: { boeTarget: [0, 5000], savingsSpread: [-1.5, 2], wholesaleTarget: [0, 0.35], bondTarget: [0, 0.3], bondTermYears: [1, 3], bondPremium: [0, 2], largeCap: [0, 0.5], poolWhenShort: [0, 1], poolShare: [0.05, 0.5], poolMode: [0, 2] },
-  capital: { capitalTarget: [0.105, 0.25], capitalAction: [0, 3], raiseAmount: [100, 1000], dividendPayout: [0, 1] } };
+  capital: { capitalTarget: [0.105, 0.25], capitalAction: [0, 3], raiseAmount: [100, 1000], dividendPayout: [0, 1] },
+  operations: { staffCounter: [1, 40], staffCredit: [1, 40], staffFraud: [1, 40], staffFincrime: [1, 40], staffComplaints: [1, 40], staffIt: [1, 40], overtime: [0, 1], fraudSensitivity: [0, 1], amlSensitivity: [0, 1],
+    coreMigration: [0, 2], paymentsUpgrade: [0, 1], regReporting: [0, 1], mobileApp: [0, 1], dataPlatform: [0, 1], outsourceCards: [0, 1], outsourceContact: [0, 1], outsourceHosting: [0, 1], oversight: [0, 15] } };
 // Prices above the system's lose customers and attract riskier ones; at or below the system's nothing changes.
 // excess() is how many points a price is above the system price; dem() is the share of customers who still say yes;
 // adv() scales default risk for the customers who do. No random draw happens at the system prices.
@@ -610,12 +615,13 @@ const adv = ex => 1 + 0.08 * ex;
 const takeUp = (ex, slope) => ex <= 0 || chance(dem(ex, slope));
 const MORTGAGE_SLOPE = 1.2;   // mortgage customers shop around hard: 0.5 points dearer loses about 40% of them
 /* ---- unlocks: a strong year (rating A or better) hands over the next area, with a briefing letter from the board ---- */
-const UNLOCK_ORDER = ['pricing', 'credit', 'treasury', 'funding', 'capital'];
+const UNLOCK_ORDER = ['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations'];
 const STRONG = ['AAA', 'AA', 'A'];
 const BRIEFING = {
   pricing: ['Pricing is yours', 'The board was impressed by your year. From now on you set the prices: the mortgage spread over Bank Rate, the personal loan rates and the card rate. Until today the executive team set them. Price too high and customers go elsewhere, and the ones who stay are riskier. Price too low and you give away margin. Open Policy from the menu to change them, or return to the executive team\'s prices at any time.'],
   treasury: ['Treasury is yours', 'A third strong year. You now set the treasury rules: how much cash the bank keeps as a share of deposits, and how much of any surplus goes into long gilts rather than short ones. Your treasurer follows the rules every month and will sell gilts to restore the cash target. From the day you take it over, gilts are counted at market value, so a fall in their value shows in your capital straight away instead of only when they are sold. Long gilts pay more but lose value when rates rise. A low cash target earns more and leaves less to meet a run.'],
   funding: ['Funding is yours', 'You now decide where the money comes from. Your savings rate is set as a gap to the market rate, and your funding team can also borrow from other banks (wholesale) up to a share of your deposits, in three-month loans that must be renewed. Wholesale money is dearer than savings and it can disappear: when markets freeze, nobody renews, and the money you were counting on has to be repaid. You can also issue fixed-term bonds for one to three years, which cannot leave early but must be repaid or refinanced when they mature, so watch for many falling due together. Large depositors such as housing associations and councils will offer big sums at a good rate, and one of them can take it all away at once, so set a cap on how much of your deposits they may hold. If liquidity runs short you can sell a pool of mortgages to investors: you get cash and free up capital, but you keep a slice of the risk and the first losses, and the price falls in a stressed market. Watch how much of your funding is wholesale and how much falls due soon.'],
+  operations: ['Operations is yours', 'The board now hands you the running of the bank: how many people work in each team, how sensitive the fraud and money-laundering alerts are, which IT projects go ahead, and what to outsource. Until today the executive team ran it well. From now on every team has a capacity, and work beyond it becomes a backlog that ages into unhappy customers, upheld complaints, missed fraud and regulator fines. Hiring takes two months to arrive and a month to train. A very sensitive alert setting catches more crime but swamps your analysts with false alarms and blocks genuine customers. Too many projects at once overload your IT staff and bring outages. Outsourcing saves money but the regulator still holds you responsible when a supplier fails, unless you pay to oversee them. Watch utilisation and the age of your oldest cases: they show trouble months before the losses.'],
   capital: ['Capital is yours', 'You now set the capital rules: the ratio you want to stay above, what to do when you fall below it, how much to raise, and what share of each month\'s profit to pay out as dividends. Dividends please shareholders and the board, and they leave the bank with less capital. Paying them while thin on capital annoys the regulator. Raising shares dilutes the owners and lowers the return the board sees. Selling mortgages shrinks the bank. Carrying on risks the regulator.'],
   credit: ['Credit policy is yours', 'Another strong year. You now set the credit policy: how much of a home\'s price we lend, how many times income, how much of take-home pay a mortgage may take, and the lowest credit scores we accept. Loosening it wins customers and brings losses a year or two later.'] };
 function grantUnlock(r){
@@ -1354,7 +1360,7 @@ function nextYear(){
   grantUnlock(r);
   buildMonth();
 }
-function migrate(s){ if (s.policy && s.policy.funding && s.policy.funding.boeTarget == null) s.policy.funding.boeTarget = 0; for (const t of s.wsTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 3; } for (const t of s.bondTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 12; } if (s.swaps == null){ s.swaps = []; s.collateral = 0; } if (s.policy && s.policy.treasury && s.policy.treasury.hedgeTarget == null){ s.policy.treasury.hedgeTarget = 0; s.policy.treasury.hedgeYears = 3; } if (s.wholesale == null){ s.wholesale = 0; s.wsTranches = []; } if (s.bonds == null){ s.bonds = 0; s.bondTranches = []; s.retained = 0; s.pools = []; s.large = []; } if (!s.policy) s.policy = systemPolicy(); { const sp = systemPolicy(); for (const a of ['treasury', 'funding', 'capital']) if (!s.policy[a]) s.policy[a] = sp[a]; if (s.policy.capital.dividendPayout == null) s.policy.capital.dividendPayout = 0; for (const [k, v] of Object.entries(sp.funding)) if (s.policy.funding[k] == null) s.policy.funding[k] = v; for (const a of Object.keys(sp.owner)) if (!s.policy.owner[a]) s.policy.owner[a] = 'system'; } if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
+function migrate(s){ if (s.policy && !s.policy.operations){ s.policy.operations = systemPolicy().operations; s.policy.owner.operations = 'system'; } if (s.policy && s.policy.funding && s.policy.funding.boeTarget == null) s.policy.funding.boeTarget = 0; for (const t of s.wsTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 3; } for (const t of s.bondTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 12; } if (s.swaps == null){ s.swaps = []; s.collateral = 0; } if (s.policy && s.policy.treasury && s.policy.treasury.hedgeTarget == null){ s.policy.treasury.hedgeTarget = 0; s.policy.treasury.hedgeYears = 3; } if (s.wholesale == null){ s.wholesale = 0; s.wsTranches = []; } if (s.bonds == null){ s.bonds = 0; s.bondTranches = []; s.retained = 0; s.pools = []; s.large = []; } if (!s.policy) s.policy = systemPolicy(); { const sp = systemPolicy(); for (const a of ['treasury', 'funding', 'capital']) if (!s.policy[a]) s.policy[a] = sp[a]; if (s.policy.capital.dividendPayout == null) s.policy.capital.dividendPayout = 0; for (const [k, v] of Object.entries(sp.funding)) if (s.policy.funding[k] == null) s.policy.funding[k] = v; for (const a of Object.keys(sp.owner)) if (!s.policy.owner[a]) s.policy.owner[a] = 'system'; } if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
 /* ---- recurring households ----
    Seven named households (a student, a young renter, a couple buying their first home, a family, a self-employed
    tradesperson, a retiree and a single parent) stay with the bank for the whole game. Their money moves each month
@@ -1432,7 +1438,7 @@ function hhOutcome(c, k){
   if (!h || (h.loanId && S.loans.some(l => l.id === h.loanId && l.hh === h.id))) return;
   hhSay(h, k === 'no' ? `Was turned down for a ${KNAME[c.kind] || 'loan'}.` : `Did not go ahead with the ${KNAME[c.kind] || 'loan'}.`);
 }
-function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); boeFacility(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); warnMonth(); }
+function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); boeFacility(); opsByPolicy(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); warnMonth(); }
 function buildMonthCards(){
   const m = S.month, lead = [], other = [];
   S.pl = blankPL();
@@ -1692,6 +1698,7 @@ function closeMonth(){
   for (const w of S.wsTranches) post('intCB', -w.amt * w.rate / 1200);
   if (upMonthly()) post('costs', -upMonthly());
   post('costs', -(38 - (S.flags.branch === 'closed' ? 10 : S.flags.branch === 'hub' ? 6 : 0)) * Math.pow(Math.max(1, assets() / 16800), 0.5));
+  opsMonth(ev);
   if (S.flags.od !== undefined && S.flags.od !== false && S.flags.od < m){
     post('fees', 7); S.flags.odTotal += 7; S.trust = clamp(S.trust - 0.8, 0, 100);
     if (m - S.flags.od >= 3 && R() < 0.3){ post('redress', -(S.flags.odTotal + 25)); S.comp = clamp(S.comp - 12, 0, 100); S.stats.fines += S.flags.odTotal + 25; news(8, 'Regulator orders refunds over unfair overdraft fee', `Customers charged £6 a day for going overdrawn will get ${fmt(S.flags.odTotal)} back.`); ev(`The regulator ruled your overdraft fee unfair. You refund ${fmt(S.flags.odTotal)} and pay a ${fmt(25)} fine.`, 'bad'); S.flags.od = false; }
@@ -1809,6 +1816,145 @@ function makeDebrief(){
   for (const c of pick5) seen[c.concept] = (seen[c.concept] || 0) + 1;
   return pick5.map(({ concept, area, big, what, why, ask }) => ({ concept, area, big, what, why, ask }));
 }
+/* ---- operations ----
+   Six teams each handle a number of cases per person per month. Demand above capacity joins a backlog, and a backlog ages
+   into customer harm and regulatory trouble: unanswered complaints are upheld, unreviewed alerts mean missed fraud and
+   missed money laundering, queues cost trust. Hiring takes two months to arrive and one to train; overtime adds 20% for up to
+   three months; sustained overload makes people leave. Two thresholds trade detection against false alarms. The change
+   programme (five projects, each with a cost, a duration, a benefit and a delivery risk) draws on IT change capacity, and above
+   that capacity every month carries a rising chance of an incident. Three suppliers can be outsourced for lower costs, and
+   the regulator still holds the bank responsible unless it pays for oversight.
+   Until the player takes over operations the executive team runs it well and none of this happens. Uses the game's random
+   stream, but only when the player owns operations, so branch play and the golden games are unchanged. */
+const OPS_TEAMS = [['counter', 'Counter'], ['credit', 'Credit referrals'], ['fraud', 'Fraud operations'], ['fincrime', 'Financial crime'], ['complaints', 'Complaints'], ['it', 'IT change']];
+const OPS_CAP = { counter: 20, credit: 12, fraud: 12, fincrime: 12, complaints: 10, it: 12 };      // cases a person handles in a month; for IT, points of change load
+const OPS_DEFAULT = { counter: 6, credit: 3, fraud: 4, fincrime: 3, complaints: 3, it: 3 };
+const STAFF_COST = 1.2, HIRE_COST = 1.5, FIRE_COST = 3, HIRE_MONTHS = 3;       // £k a head a month, one off to hire, one off to let go; hires arrive in two months and train for one
+const PROJECT_DEFS = {
+  core:     { name: 'Core banking migration', field: 'coreMigration', spec: mode => mode === 2 ? { cost: 120, months: 12, load: 20 } : { cost: 160, months: 18, load: 12 } },
+  payments: { name: 'Payments upgrade', field: 'paymentsUpgrade', spec: () => ({ cost: 50, months: 9, load: 12 }) },
+  reg:      { name: 'Regulatory reporting platform', field: 'regReporting', spec: () => ({ cost: 25, months: 6, load: 8 }) },
+  mobile:   { name: 'Mobile app rebuild', field: 'mobileApp', spec: () => ({ cost: 60, months: 9, load: 12 }) },
+  data:     { name: 'Data and analytics platform', field: 'dataPlatform', spec: () => ({ cost: 45, months: 9, load: 10 }) },
+};
+const SUPPLIER_DEFS = { cards: { name: 'Card processing', field: 'outsourceCards', save: 4 }, contact: { name: 'Contact centre', field: 'outsourceContact', save: 3.5 }, hosting: { name: 'IT hosting', field: 'outsourceHosting', save: 5 } };
+const opsOwned = () => S.policy.owner.operations === 'player';
+// Heads each team needs to run at about 80% of capacity on last month's demand, so the player can see what growth asks for.
+function opsRecommended(){
+  const O = opsOf(); if (!O.last.length) return Object.assign({}, OPS_DEFAULT);
+  const r = Object.assign({}, O.staff); for (const row of O.last) r[row.team] = Math.max(1, Math.ceil(row.demand / (OPS_CAP[row.team] * (O.otActive ? 1.2 : 1) * 0.8)));
+  return r;
+}
+function opsOf(){
+  if (!S.ops) S.ops = { staff: Object.assign({}, OPS_DEFAULT), hiring: [], backlog: { counter: 0, credit: 0, fraud: 0, fincrime: 0, complaints: 0 }, ot: 0, otWant: false, otActive: false,
+    projects: [], done: {}, incidents: [], iid: 0, last: [], m: null, extraComplaints: 0, sup: { cards: 0, contact: 0, hosting: 0 } };
+  return S.ops;
+}
+const detectRate = (s, bonus) => Math.min(0.99, 1 - Math.pow(1 - s, 1.5) + bonus);       // the share of true cases an alert threshold catches
+const staffKey = t => 'staff' + t[0].toUpperCase() + t.slice(1);
+const opsHeads = () => OPS_TEAMS.reduce((a, [t]) => a + opsOf().staff[t], 0);
+
+// At the start of each month: hire or let go towards the staffing targets, switch overtime on or off, start and stop projects.
+function opsByPolicy(){
+  if (!opsOwned() || S.over || S.tutorial || S.scenario) return;
+  const O = opsOf(), op = S.policy.operations, now = S.year * 12 + S.month, notes = [];
+  for (const [t, label] of OPS_TEAMS){
+    const target = op[staffKey(t)], pending = O.hiring.filter(h => h.team === t).reduce((a, h) => a + h.n, 0), have = O.staff[t] + pending;
+    if (target > have){ const n = target - have; O.hiring.push({ team: t, n, ready: now + HIRE_MONTHS }); post('costs', -n * HIRE_COST); notes.push(`hiring ${n} for ${label.toLowerCase()} (they arrive in two months and train for a third)`); }
+    else if (target < have){
+      let cut = have - target;
+      for (const h of O.hiring.filter(h => h.team === t)){ const d = Math.min(h.n, cut); h.n -= d; cut -= d; }
+      O.hiring = O.hiring.filter(h => h.n > 0);
+      if (cut > 0){ O.staff[t] -= cut; post('costs', -cut * FIRE_COST); notes.push(`letting ${cut} go from ${label.toLowerCase()}`); }
+    }
+  }
+  O.otWant = !!op.overtime;
+  for (const [key, def] of Object.entries(PROJECT_DEFS)){
+    const mode = op[def.field], run = O.projects.find(p => p.key === key);
+    if (mode > 0 && !run && !O.done[key]){ const sp = def.spec(mode); O.projects.push({ key, mode, start: now, left: sp.months, months: sp.months, cost: sp.cost, load: sp.load }); notes.push(`starting ${def.name.toLowerCase()}: ${full(sp.cost)} over ${sp.months} months`); }
+    else if (mode === 0 && run){ O.projects = O.projects.filter(p => p !== run); notes.push(`stopping ${def.name.toLowerCase()}; the money already spent is lost`); }
+  }
+  if (notes.length) addMail('Head of operations', 'Operations changes', `Following your settings: ${notes.join('; ')}.`, '', S.month, S.year);
+}
+
+function opsIncident(O, kind, cause, cost, trust, comp, complaints, ev){
+  post('redress', -cost); S.trust = clamp(S.trust - trust, 0, 100); S.comp = clamp(S.comp - comp, 0, 100); O.extraComplaints += complaints;
+  O.incidents.push({ id: ++O.iid, y: S.year, m: S.month, kind, cause, cost }); if (O.incidents.length > 24) O.incidents.shift();
+  ev(`${kind === 'outage' ? 'Outage' : kind === 'data' ? 'Data error' : 'Missed regulatory report'}: ${cause}. It cost ${fmt(cost)}.`, 'bad');
+  if (kind === 'outage' && cost >= 100) news(8, 'Counting House systems fail for days', 'Customers could not use the bank after a systems change went wrong.');
+}
+
+// Each month's work, backlog, losses, people leaving, projects and supplier incidents.
+function opsMonth(ev){
+  if (!opsOwned() || S.tutorial || S.scenario) return;
+  const O = opsOf(), op = S.policy.operations, now = S.year * 12 + S.month, f = Math.sqrt(clamp(S.deposits / 15650, 0.6, 3));      // a bigger bank needs more people, but not in proportion
+  for (const h of O.hiring.filter(h => h.ready <= now)) O.staff[h.team] += h.n;
+  O.hiring = O.hiring.filter(h => h.ready > now);
+  const ot = O.otWant && O.ot < 3; if (ot) O.ot++; else if (!O.otWant) O.ot = 0; O.otActive = ot;
+  const bonus = O.done.data ? 0.06 : 0, sF = op.fraudSensitivity, sA = op.amlSensitivity, noise = () => 0.92 + 0.16 * R();
+  const trueF = 10 * f * noise(), tAF = trueF * detectRate(sF, bonus), fAF = 120 * f * sF * sF * noise();
+  const trueA = 2 * f * noise(), tAA = trueA * detectRate(sA, bonus), fAA = 80 * f * sA * sA * noise();
+  const D = { counter: 90 * f * noise() * (O.done.mobile ? 0.85 : 1), credit: 27 * f * noise() * (S.policy.owner.credit === 'player' ? 1.5 : 1), fraud: tAF + fAF, fincrime: tAA + fAA,
+    complaints: 14 * f * (1 + 0.8 * (unemp() / 4.3 - 1)) + 0.15 * (fAF + fAA) + 0.4 * S.loans.filter(l => l.status === 'arrears').length + O.extraComplaints };
+  O.extraComplaints = 0;
+  const rows = [], x = {}, load = {}, age = {};
+  for (const [t] of OPS_TEAMS){
+    if (t === 'it') continue;
+    const cap = O.staff[t] * OPS_CAP[t] * (ot ? 1.2 : 1), work = O.backlog[t] + D[t], done = Math.min(work, cap), left = work - done;
+    x[t] = work > 0 ? left / work : 0; load[t] = D[t] / Math.max(1, cap); O.backlog[t] = left; age[t] = left / Math.max(1, cap);
+    rows.push({ team: t, staff: O.staff[t], demand: Math.round(D[t] * 10) / 10, cap: Math.round(cap * 10) / 10, backlog: Math.round(left * 10) / 10, util: Math.round(load[t] * 1000) / 1000 });
+  }
+  // what unmet work costs
+  S.trust = clamp(S.trust - Math.min(2.5, x.counter * 10) - Math.min(1.5, x.credit * 6), 0, 100);
+  const pF = 1 - x.fraud, caughtF = tAF * pF, missedF = Math.max(0, trueF - caughtF), blocked = fAF * pF;
+  const baseF = 10 * f * (1 - detectRate(0.5, 0)), baseA = 2 * f * (1 - detectRate(0.5, 0));      // what the executive team's plan misses; the bank's normal losses already include it
+  post('redress', -(missedF - baseF) * 0.9); S.trust = clamp(S.trust - Math.min(2, blocked / (60 * f)), 0, 100);
+  const pA = 1 - x.fincrime, missedA = Math.max(0, trueA - tAA * pA), unreviewed = (tAA + fAA) * x.fincrime, fines = Math.max(0, missedA - baseA) * 0.4;
+  for (let i = 0, n = Math.floor(fines) + (R() < fines - Math.floor(fines) ? 1 : 0); i < n; i++)
+    later(3, { text: 'The regulator fines us for money laundering we missed', cash: -30, key: 'redress', fine: true, comp: -4, tone: 'bad', news: [6, 'Counting House fined over money laundering checks', 'The regulator says alerts were closed without being properly reviewed.'] });
+  const capC = O.staff.complaints * OPS_CAP.complaints * (ot ? 1.2 : 1), overdue = Math.max(0, O.backlog.complaints - 2 * capC);
+  if (overdue > 0.5){ O.backlog.complaints -= overdue; post('redress', -overdue * 0.8); S.trust = clamp(S.trust - Math.min(2, overdue / 10), 0, 100); S.comp = clamp(S.comp - Math.min(3, overdue / 10), 0, 100); S.stats.fines += overdue * 0.8; ev(`${Math.round(overdue)} complaints went unanswered for over eight weeks and were upheld.`, 'bad'); }
+  // people leave when the work is too much
+  for (const [t, label] of OPS_TEAMS){
+    const l = t === 'it' ? 0 : load[t], exp = O.staff[t] * (0.012 + 0.07 * Math.max(0, l - 1) + (O.ot >= 3 ? 0.02 : 0)), n = Math.floor(exp) + (R() < exp - Math.floor(exp) ? 1 : 0);
+    if (n > 0 && O.staff[t] - n >= 1){ O.staff[t] -= n; if (l > 1) ev(`${n} left ${label.toLowerCase()}, worn down by the workload.`, 'bad'); }
+  }
+  // the change programme
+  const limit = O.staff.it * OPS_CAP.it, projLoad = O.projects.reduce((a, p) => a + p.load, 0), meter = projLoad / Math.max(1, limit);
+  let spend = 0;
+  for (const p of [...O.projects]){
+    spend += p.cost / p.months; p.left -= meter > 1 ? 0.5 : 1;
+    if (p.left <= 0){
+      O.projects = O.projects.filter(q => q !== p); O.done[p.key] = now; const def = PROJECT_DEFS[p.key];
+      addMail('Head of operations', `${def.name} complete`, p.key === 'core' ? 'The migration is finished. Running costs fall by about £6k a month.' : p.key === 'payments' ? 'Payments are upgraded: fewer failed payments and faster fraud checks.' : p.key === 'reg' ? 'The reporting platform is live, so a missed regulatory report is much less likely.' : p.key === 'mobile' ? 'The new app is live. Fewer customers need the counter, though there are launch defects to deal with.' : 'The data platform is live. Fraud and money laundering scoring is a little better.', 'good', S.month, S.year);
+      if (p.key === 'core' && R() < (p.mode === 2 ? 0.3 : 0.05)) opsIncident(O, 'outage', p.mode === 2 ? 'the big-bang cutover failed and customers were locked out for days' : 'the phased cutover had a bad weekend', p.mode === 2 ? 150 : 40, p.mode === 2 ? 8 : 2, p.mode === 2 ? 8 : 2, 20, ev);
+      if (p.key === 'payments' && R() < 0.12) opsIncident(O, 'outage', 'payments failed during the switchover', 60, 3, 4, 10, ev);
+      if (p.key === 'mobile') O.extraComplaints += 25;
+    }
+  }
+  if (meter > 1 && R() < Math.min(0.6, 0.12 + 0.3 * (meter - 1))){
+    const r = R();
+    if (r < 0.5) opsIncident(O, 'outage', 'too much change at once and not enough IT staff', 60, 3, 4, 8, ev);
+    else if (r < 0.8) opsIncident(O, 'data', 'a rushed release corrupted a batch of records', 25, 1, 1, 15, ev);
+    else if (R() < (O.done.reg ? 0.4 : 1)) opsIncident(O, 'report', 'the team was too stretched to file on time', 40, 0, 6, 0, ev);
+  }
+  // suppliers
+  let saving = 0, oversight = 0, supInc = 0;
+  for (const [k, def] of Object.entries(SUPPLIER_DEFS)){
+    if (!(op[def.field] > 0)) continue;
+    saving += def.save; oversight += op.oversight;
+    const p = 0.05 * (1 - Math.min(0.8, op.oversight / 5)), mult = 1 - Math.min(0.6, op.oversight / 6);
+    if (R() < p){ O.sup[k]++; opsIncident(O, 'outage', `${def.name.toLowerCase()} supplier failed, and the regulator holds us responsible`, 100 * mult, 3 * mult, 6 * mult, 10, ev); }
+  }
+  supInc = O.incidents.filter(i => /supplier/.test(i.cause) && (S.year * 12 + S.month) - (i.y * 12 + i.m) < 12).length;
+  // what it all costs, against the executive team's plan
+  const heads = opsHeads(), defaultHeads = OPS_TEAMS.reduce((a, [t]) => a + OPS_DEFAULT[t], 0);
+  post('costs', -((heads - defaultHeads) * STAFF_COST + (ot ? heads * STAFF_COST * 0.5 : 0) + spend + oversight - saving - (O.done.core ? 6 : 0)));
+  const fr = { trueCases: Math.round(trueF * 10) / 10, caught: Math.round(caughtF * 10) / 10, missed: Math.round(missedF * 10) / 10, falseAlerts: Math.round(fAF * 10) / 10 };
+  O.last = rows;
+  O.m = { load, age, fraud: fr, falseRate: fAF / Math.max(1, tAF + fAF), alertsPer: (D.fraud + D.fincrime) / Math.max(1, O.staff.fraud + O.staff.fincrime), unreviewed: Math.round(unreviewed * 10) / 10, meter, limit, supInc, missedA: Math.round(missedA * 100) / 100, overdue: Math.round(overdue * 10) / 10 };
+}
+
 /* ---- Bank of England facility ----
    The central bank lends against the loan book at Bank Rate plus 1%, after a haircut on the collateral. It is always
    available, which is the trap: using it shows in the Herald and costs the chief executive the board's confidence for as long
@@ -1916,7 +2062,7 @@ function maturityLadder(){
    Everything here is read-only except runStress, which stores its result, and warnMonth, which writes mail. None of it
    uses the game's random stream, so it cannot change how a game plays out. It only applies once the player has been
    handed a Chief Executive area, so branch-manager play is untouched. */
-const CE_AREAS = ['pricing', 'credit', 'treasury', 'funding', 'capital'];
+const CE_AREAS = ['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations'];
 const ceMode = () => !!(S.progress && S.progress.unlocked.some(a => CE_AREAS.includes(a)));
 const LEVEL = { ok: 0, watch: 1, alarm: 2 };
 const band = (v, watch, alarm) => v >= alarm ? 'alarm' : v >= watch ? 'watch' : 'ok';
@@ -1947,7 +2093,7 @@ function indicators(){
   const mortBook = loanSum('mortgage'), hedgeRatio = mortBook > 0 ? swapNotional() / mortBook : swapNotional() > 0 ? 9 : 0, coll = S.collateral || 0;
   const worst = maturityLadder().rows.reduce((a, r) => r.cover < a.cover ? r : a);
   const sensStatus = sens < 0 ? band(-sens / Math.max(1, cap), 0.03, 0.08) : 'ok';
-  return [
+  const list = [
     { key: 'capital', role: 'Chief risk officer', label: 'Capital buffer', value: cr - MIN_CAP, shown: pc(cr) + ' (' + (cr >= MIN_CAP ? '+' : '') + pc(cr - MIN_CAP) + ' on the minimum)', status: bandLow(cr - MIN_CAP, 0.03, 0.01),
       text: `Capital ratio ${pc(cr)}; the regulator steps in below ${pc(MIN_CAP)}.` },
     { key: 'liquidity', role: 'Treasurer', label: 'Liquidity ratio', value: lq, shown: pc(lq, 0), status: bandLow(lq, 0.2, 0.12), text: `Cash and gilts are ${pc(lq, 0)} of deposits and wholesale funding; the minimum is ${pc(MIN_LIQ, 0)}.` },
@@ -1968,6 +2114,22 @@ function indicators(){
       text: worst.cover < 0 ? `By the ${worst.label.toLowerCase()} bucket, what falls due plus a stressed run on deposits exceeds cash, gilts and loan repayments by ${fmt(-worst.cover)}.` : `Cash, gilts and loan repayments cover every maturity bucket after a stressed run. The tightest is ${worst.label.toLowerCase()}.` },
     { key: 'rates', role: 'Treasurer', label: 'Interest-rate sensitivity', value: sens, shown: (sens >= 0 ? '+' : '−') + fmt(Math.abs(sens)) + ' a year for +1 point', status: sensStatus,
       text: sens >= 0 ? `A one-point rise in Bank Rate would add about ${fmt(sens)} to a year's net interest income.` : `A one-point rise in Bank Rate would cut a year's net interest income by about ${fmt(-sens)}: more of your funding reprices than your assets.` },
+  ];
+  return list.concat(opsIndicators());
+}
+// Early warnings from operations, only once the player runs it. The trouble they show comes months before the losses.
+function opsIndicators(){
+  if (!opsOwned() || !S.ops || !S.ops.m) return [];
+  const O = S.ops, m = O.m, worst = (o) => Object.entries(o).reduce((a, [k, v]) => v > a[1] ? [k, v] : a, ['', -1]);
+  const lab = Object.fromEntries(OPS_TEAMS), [lt, lv] = worst(m.load), [at, av] = worst(m.age);
+  return [
+    { key: 'util', role: 'Head of operations', label: 'Team utilisation, busiest', value: lv, shown: pc(lv, 0) + ' (' + lab[lt].toLowerCase() + ')', status: band(lv, 0.95, 1.1), text: `${lab[lt]} is running at ${pc(lv, 0)} of capacity. Above 100% work piles up, and people start to leave.` },
+    { key: 'age', role: 'Head of operations', label: 'Oldest case, longest', value: av, shown: av < 0.05 ? 'no backlog' : av.toFixed(1) + ' months (' + lab[at].toLowerCase() + ')', status: band(av, 0.5, 2), text: `The ${lab[at].toLowerCase()} backlog is ${av.toFixed(1)} months of work. Complaints over eight weeks old are upheld; old alerts are closed without review.` },
+    { key: 'alerts', role: 'Head of operations', label: 'Alerts per analyst', value: m.alertsPer, shown: m.alertsPer.toFixed(1) + ' a month', status: band(m.alertsPer, 10, 14), text: `Each fraud and financial crime analyst has ${m.alertsPer.toFixed(1)} alerts a month. Above about 12 they cannot review each one properly.` },
+    { key: 'falsealarm', role: 'Chief risk officer', label: 'False-alarm rate, fraud', value: m.falseRate, shown: pc(m.falseRate, 0), status: band(m.falseRate, 0.85, 0.93), text: `${pc(m.falseRate, 0)} of fraud alerts are genuine customers. A very sensitive threshold blocks payments and swamps the analysts.` },
+    { key: 'unreviewed', role: 'Chief risk officer', label: 'Alerts closed without review', value: m.unreviewed, shown: m.unreviewed.toFixed(1) + ' this month', status: band(m.unreviewed, 1, 5), text: `${m.unreviewed.toFixed(1)} money-laundering alerts were closed unreviewed this month. That is how laundering is missed, and the fine arrives months later.` },
+    { key: 'change', role: 'Head of operations', label: 'Change capacity meter', value: m.meter, shown: pc(m.meter, 0) + ' of IT capacity', status: band(m.meter, 0.85, 1.0001), text: `Running projects use ${pc(m.meter, 0)} of what your IT staff can deliver. Above 100% every month carries a rising chance of an outage or a data error.` },
+    { key: 'suppliers', role: 'Head of operations', label: 'Supplier incidents, last year', value: m.supInc, shown: String(m.supInc), status: band(m.supInc, 1, 3), text: `${m.supInc} supplier failure${m.supInc === 1 ? '' : 's'} in the last year. The regulator holds the bank responsible, and oversight spending reduces both the chance and the harm.` },
   ];
 }
 const RISKY_PD = 0.08;
@@ -2034,6 +2196,22 @@ function advisers(){
   if (mail > 6) add('Head of operations', 'warn', `${mail} messages are waiting for a reply. Cases left to pile up turn into complaints and regulator letters.`);
   else add('Head of operations', 'info', `${waiting} at the counter and ${mail} message${mail === 1 ? '' : 's'} waiting.`);
   if (own('credit')) add('Head of operations', 'info', `Your credit rules decide most applications. Only the borderline ones reach the counter.`);
+  if (own('operations')){
+    const op = P.operations, m = S.ops && S.ops.m, defaultHeads = OPS_TEAMS.reduce((a, [t]) => a + OPS_DEFAULT[t], 0), heads = OPS_TEAMS.reduce((a, [t]) => a + op[staffKey(t)], 0), lab = Object.fromEntries(OPS_TEAMS);
+    if (heads < defaultHeads - 1) add('Finance director', 'info', `Staffing is ${defaultHeads - heads} below the executive team's plan, saving about ${fmt((defaultHeads - heads) * STAFF_COST * 12)} a year. The head of operations disagrees.`);
+    else if (heads > defaultHeads + 2) add('Finance director', 'warn', `Staffing is ${heads - defaultHeads} above the executive team's plan, which costs about ${fmt((heads - defaultHeads) * STAFF_COST * 12)} a year. Is the extra capacity being used?`);
+    if (m){
+      const [lt, lv] = Object.entries(m.load).reduce((a, [k, v]) => v > a[1] ? [k, v] : a, ['', -1]);
+      if (lv > 1.05) add('Head of operations', lv > 1.25 ? 'alarm' : 'warn', `${lab[lt]} is at ${pc(lv, 0)} of capacity. Hiring takes three months, so decide now. Overtime helps for up to three months and then people burn out.`);
+      if (m.age[Object.keys(m.age).reduce((a, k) => m.age[k] > m.age[a] ? k : a)] > 0.5) add('Head of operations', 'warn', `There is a backlog in ${lab[Object.keys(m.age).reduce((a, k) => m.age[k] > m.age[a] ? k : a)].toLowerCase()}. Cases left too long turn into upheld complaints, missed fraud and fines.`);
+      if (op.fraudSensitivity > 0.7 && m.falseRate > 0.85) add('Head of operations', 'warn', `The fraud threshold is very sensitive: ${pc(m.falseRate, 0)} of alerts are genuine customers, who find their payments blocked. The chief risk officer will say it is worth it.`);
+      if (op.fraudSensitivity < 0.25) add('Chief risk officer', 'warn', `The fraud threshold is lax. We missed about ${m.fraud.missed.toFixed(1)} fraud cases last month and refund every one.`);
+      if (op.amlSensitivity < 0.25) add('Chief risk officer', 'warn', `The money-laundering threshold is lax. Laundering we miss comes back as a fine months later.`);
+      if (m.meter > 1) add('Head of operations', 'warn', `We are running ${pc(m.meter, 0)} of the change our IT team can deliver. Each month at this level risks an outage, and projects slip.`);
+    }
+    const out = ['outsourceCards', 'outsourceContact', 'outsourceHosting'].filter(k => op[k] > 0).length;
+    if (out && op.oversight < 2) add('Head of operations', 'warn', `We have outsourced ${out} service${out === 1 ? '' : 's'} with almost no oversight. The regulator still holds us responsible when a supplier fails.`);
+  }
   if (quietLeft() > 0) add('Head of operations', 'info', `${quietLeft() - 1} quiet month${quietLeft() === 2 ? '' : 's'} left after this one: nothing outside the bank will go wrong while you learn the new settings.`);
   return notes;
 }
@@ -3253,6 +3431,21 @@ const POLICY_FIELDS = {
     ['poolShare', 'Share of current mortgages in a pool', 'share', 0.05, ''],
     ['poolMode', 'Which mortgages go in', '0 best, 1 worst, 2 largest', 1, 'Selling the best loans leaves you with weaker ones.']],
     note: 'Saving these takes over funding. Your savings rate follows the market from then on, and the Bank Rate cards stop.' },
+  operations: { title: 'Operations', rows: OPS_TEAMS.map(([t, label]) => [staffKey(t), label + ' staff', 'people', 1, t === 'it' ? 'Sets how much change your IT team can deliver (12 points of load per person). Hiring takes two months and training a third; letting people go is immediate and costs.' : 'People who handle ' + ({ counter: 'customers at the counter', credit: 'loan applications referred to people', fraud: 'fraud alerts', fincrime: 'money-laundering alerts', complaints: 'complaints' })[t] + '. Work beyond their capacity becomes a backlog.'])
+    .concat([
+    ['overtime', 'Overtime', '0 off, 1 on', 1, 'Adds 20% capacity for up to three months, at a premium. After that people burn out and leave.'],
+    ['fraudSensitivity', 'Fraud alert sensitivity', 'share, 0 to 1', 0.05, 'Higher catches more fraud and creates far more false alarms, which block genuine customers and swamp your analysts.'],
+    ['amlSensitivity', 'Money-laundering alert sensitivity', 'share, 0 to 1', 0.05, 'Higher catches more laundering and swamps the team. Lower misses laundering, and the fine arrives months later.'],
+    ['coreMigration', 'Core banking migration', '0 no, 1 phased, 2 big-bang', 1, 'Lowers running costs by about £6k a month when finished. Big-bang is cheaper and faster but risks a multi-day outage on cutover.'],
+    ['paymentsUpgrade', 'Payments upgrade', '0 no, 1 yes', 1, 'Fewer failed payments and faster fraud checks. A small chance of an outage during the switchover.'],
+    ['regReporting', 'Regulatory reporting platform', '0 no, 1 yes', 1, 'Makes a missed regulatory report much less likely.'],
+    ['mobileApp', 'Mobile app rebuild', '0 no, 1 yes', 1, 'Fewer customers need the counter, but launch defects bring complaints.'],
+    ['dataPlatform', 'Data and analytics platform', '0 no, 1 yes', 1, 'Fraud and laundering scoring improves a little. Benefits arrive slowly.'],
+    ['outsourceCards', 'Outsource card processing', '0 no, 1 yes', 1, 'Saves about £4k a month. The supplier can fail, and the regulator still holds you responsible.'],
+    ['outsourceContact', 'Outsource the contact centre', '0 no, 1 yes', 1, 'Saves about £3.5k a month, with the same risk.'],
+    ['outsourceHosting', 'Outsource IT hosting', '0 no, 1 yes', 1, 'Saves about £5k a month, with the same risk.'],
+    ['oversight', 'Oversight spend per outsourced supplier', '£k a month', 0.5, 'Reduces both the chance a supplier fails and the harm when it does. About £2.5k a month each is usually enough.']]),
+    note: 'Saving these takes over operations. Every team has a capacity from now on. Projects started cannot be refunded if you stop them.' },
   capital: { title: 'Capital', rows: [
     ['capitalTarget', 'Capital ratio to stay above', 'ratio', 0.005, 'The regulator steps in below 10.5%. Holding much more than you need lowers the return the board sees.'],
     ['capitalAction', 'When below it', '0 to 3', 1, '0 raise shares, 1 sell half the new mortgages, 2 carry on, 3 sell a mortgage pool (set in Funding) and keep 5% of the risk.'],
@@ -3305,6 +3498,18 @@ function instrumentsHTML(){
   const due = d => d == null ? 'on demand' : MONTHS[d % 12].slice(0, 3) + ' ' + Math.floor(d / 12);
   return `<h3>Funding instruments</h3><div class="lad ins"><span></span><b>Amount</b><b>Rate</b><b>Due</b>${rows.slice(0, 12).map(r => `<span>${lab[r.kind]}</span><span>${fmt(r.amt)}</span><span>${r.rate.toFixed(2)}%</span><span>${due(r.due)}</span>`).join('')}</div>${rows.length > 12 ? `<p class="dim">and ${rows.length - 12} more.</p>` : ''}`;
 }
+function opsHTML(){
+  if (!opsOwned()) return '';
+  const O = S.ops, rec = opsRecommended(), pol = S.policy.operations;
+  if (!O || !O.last.length) return `<h3>Operations</h3><p class="dim">You have taken over operations. The first month's workloads will appear here after you close the books.</p>`;
+  const lab = Object.fromEntries(OPS_TEAMS), pend = t => O.hiring.filter(h => h.team === t).reduce((a, h) => a + h.n, 0);
+  const rows = O.last.map(r => `<span>${esc(lab[r.team])}</span><span>${r.staff}${pend(r.team) ? ' (+' + pend(r.team) + ')' : ''} / ${rec[r.team]}</span><span style="color:${r.util > 1.1 ? 'var(--bad)' : r.util > 0.95 ? 'var(--warn)' : 'inherit'}">${pc(r.util, 0)}</span><span>${r.backlog > 0.5 ? Math.round(r.backlog) + ' cases' : '–'}</span>`).join('');
+  const proj = O.projects.map(p => `<span>${esc(PROJECT_DEFS[p.key].name)}</span><span>${Math.max(0, Math.ceil(p.left))} months left</span><span>load ${p.load}</span><span>${fmt(p.cost / p.months)} a month</span>`).join('');
+  const inc = O.incidents.slice(-3).reverse().map(i => `<p class="dim">${MONTHS[Math.min(i.m, 11)].slice(0, 3)} ${i.y}: ${esc(i.cause)} (${fmt(i.cost)}).</p>`).join('');
+  return `<h3>Operations</h3><div class="lad ops"><span></span><b>Staff / advised</b><b>Load</b><b>Backlog</b>${rows}</div>
+    <p class="dim">${O.otActive ? 'Overtime is on. ' : ''}Change capacity: ${O.projects.length ? pc(O.m.meter, 0) + ' of what your IT team can deliver.' : 'no projects running.'}${Object.keys(O.done).length ? ' Finished: ' + Object.keys(O.done).map(k => PROJECT_DEFS[k].name.toLowerCase()).join(', ') + '.' : ''}</p>
+    ${proj ? `<div class="lad ops"><span></span><b>Time</b><b>IT load</b><b>Spend</b>${proj}</div>` : ''}${inc}`;
+}
 function ladderHTML(){
   const L = maturityLadder(), cell = x => x > 0.5 ? fmt(x) : '–';
   return `<h3>Funding ladder</h3><div class="lad"><span></span><b>Repaying</b><b>Falling due</b><b>After a run</b>${L.rows.map(r => `<span>${esc(r.label)}</span><span>${cell(r.inflow)}</span><span>${cell(r.outflow)}</span><span style="color:${r.cover < 0 ? 'var(--bad)' : 'inherit'}">${fmt(r.cover)}</span>`).join('')}</div>
@@ -3317,7 +3522,7 @@ function teamScreen(){
   const rows = ind.map(i => `<div class="ewi ${i.status}"><span class="pill ${i.status}">${lab[i.status]}</span><div><b>${esc(i.label)}</b><span class="num">${esc(i.shown)}</span></div></div>`).join('');
   overlay(`${execTop('team')}<div class="eyebrow">Chief Executive · ${MONTHS[Math.min(S.month, 11)]} ${S.year}</div><h2>Your executive team</h2>
     <p class="dim">Each adviser reads the same numbers from their own seat, so they will not always agree. Changes you make in Settings apply to new decisions from now on.</p>
-    ${boardBlock()}${shareBlock()}${stressLine()}${by}<h3>Early warnings</h3><div class="ewis">${rows}</div>${ladderHTML()}${instrumentsHTML()}
+    ${boardBlock()}${shareBlock()}${stressLine()}${by}<h3>Early warnings</h3><div class="ewis">${rows}</div>${ladderHTML()}${instrumentsHTML()}${opsHTML()}
     <details class="more"><summary>Resign as chief executive</summary><div class="acct" style="margin-top:8px"><p class="dim">Resigning ends the game. You are rated on the year so far.</p><button type="button" class="btn no" id="exResign">Resign</button></div></details>
     <div class="stickyfoot"><button type="button" class="btn link" id="plBack">Close</button></div>`);
   tabSel('policy'); execWire();

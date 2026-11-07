@@ -151,8 +151,42 @@ of this applies to branch-manager play. All of it is in `engine/engine.js` (`ind
   issues, and the finance director comments (below book value, above book value, and the dilution a raise would cause).
   Tracked only once a Chief Executive area has been handed over.
 
-Not built: the monthly executive meeting (settings still apply at once), and indicators for staffing and alerts (they need the
-operations phase). Migration 009 adds `bank.funding_instrument` and `bank.share_price`.
+Migration 009 adds `bank.funding_instrument` and `bank.share_price`.
+
+## Operations (phase 2)
+
+A sixth area, handed over after the other five (`operations` in the unlock order and Policy screen). Until the player takes it over the
+executive team runs it well and none of this happens; once taken over, changes to staffing, overtime and projects take effect the
+following month. All in `engine/engine.js` (`opsByPolicy()`, `opsMonth()`), using the game's random stream only when the player
+owns the area, so branch play and the golden games are unchanged.
+
+- **Teams:** counter, credit referrals, fraud operations, financial crime, complaints and IT change. Each person handles a number of
+  cases a month (IT: points of change load). Demand comes from the size of the bank (with scale economies), the economy,
+  how many alerts the thresholds raise, arrears and incidents. Work beyond capacity becomes a backlog.
+- **What a backlog costs:** counter and credit queues cost customer trust; unprocessed fraud alerts are missed fraud that is refunded;
+  unreviewed money-laundering alerts come back as regulator fines three months later; complaints older than eight weeks are upheld
+  with redress. Losses are measured against what the executive team's plan misses, so the defaults cost nothing.
+- **People:** hiring takes two months to arrive and a third to train, with a one-off cost; letting people go is at once and costs more;
+  overtime adds 20% for up to three months, then people burn out; sustained load above 100% makes people leave, and the standing rule
+  rehires toward the target. The Team screen shows staff, hires on the way, and the headcount that would run each team at about 80%.
+- **Alert thresholds:** one for fraud, one for money laundering. Detection is `1 - (1 - s)^1.5`; false alarms grow with `s` squared, so
+  a very sensitive threshold swamps analysts (and blocks genuine customers), and a lax one misses crime.
+- **Change programme:** five projects (core banking migration, phased or big-bang; payments; regulatory reporting; mobile app; data
+  platform), each with a cost, a duration, an IT load and a benefit. The change meter is running load over IT capacity; above
+  100% projects slip and each month risks an outage, a data error or a missed report. A big-bang cutover can fail badly. Stopped
+  projects lose the money spent.
+- **Suppliers:** card processing, contact centre and IT hosting can be outsourced for lower costs. A supplier can fail, and the regulator
+  still holds the bank responsible; oversight spending reduces both the chance and the harm (about £2.5k a month each is the
+  sweet spot).
+- **Early warnings and advice:** utilisation, oldest case, alerts per analyst, false-alarm rate, alerts closed without review, the change
+  meter and supplier incidents, plus Head of operations, finance director and chief risk officer notes.
+- **Balance** (two years of careful play, 16 seeds): the plan scores best; a 70% staffing level is slightly worse, 50% much worse (backlogs
+  of months, trust and regulator standing falling, some failures); 40% extra staff costs more than it earns; all five projects at once
+  fail most banks, and doubling IT staff mostly fixes it; outsourcing without oversight is about break-even on profit with many
+  more incidents, and oversight at £8k a supplier costs more than it saves.
+- **Data:** migration 010 adds `bank.team_month`, `bank.change_project`, `bank.incident` and `bank.supplier`; the replay checks incidents.
+
+Not built: the monthly executive meeting (other settings still apply at once).
 
 ## Things to know
 

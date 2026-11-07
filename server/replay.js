@@ -63,6 +63,13 @@ async function verifyGame(pool, host, gameId) {
     }
   }
 
+  if (state && state.ops) {
+    const inc = (await pool.query('SELECT coalesce(max(incident_id), 0)::int AS n FROM bank.incident WHERE game_id = $1', [gameId])).rows[0].n;
+    if (inc !== state.ops.iid) problems.push(`latest stored incident is ${inc}, replay's is ${state.ops.iid}`);
+    const tm = (await pool.query('SELECT count(*)::int AS n FROM bank.team_month WHERE game_id = $1', [gameId])).rows[0].n;
+    if (state.ops.last.length && tm === 0) problems.push('no stored team months');
+  }
+
   if (state && state.households) {
     const rows = (await pool.query('SELECT household_id, credit_score, year, month FROM bank.household_month WHERE game_id = $1 ORDER BY year, month', [gameId])).rows;
     for (const h of state.households) {

@@ -4,7 +4,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), '
 const golden = JSON.parse(fs.readFileSync(path.join(__dirname, 'golden.json'), 'utf8'));
 let n = 0;
 // 1. Behaviour is unchanged against snapshots from the original engine (all bots, scenarios, tutorial).
-const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'swaps', 'collateral', 'swapId', 'fid', 'px'];
+const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'ops', 'swaps', 'collateral', 'swapId', 'fid', 'px'];
 { const Eg = loadEngine(src); Eg.dispatch({ type: 'newGame', seed: 1 });
   for (const [key, want] of Object.entries(golden)){
     const [bot, tag, seed] = key.split(':');
@@ -86,7 +86,7 @@ for (const pol of ALL()) for (const seed of [3, 17]){
 //    the verdict separates good applications from bad using only what the applicant shows.
 { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 21 });
   const sys = JSON.parse(JSON.stringify(E.S.policy));
-  assert.strictEqual(JSON.stringify(sys.owner), '{"pricing":"system","credit":"system","treasury":"system","funding":"system","capital":"system"}'); n++;
+  assert.strictEqual(JSON.stringify(sys.owner), '{"pricing":"system","credit":"system","treasury":"system","funding":"system","capital":"system","operations":"system"}'); n++;
   const refuses = (cmd, why) => { const snap = JSON.stringify(E.S.policy); assert.throws(() => E.dispatch(cmd), why); assert.strictEqual(JSON.stringify(E.S.policy), snap); n++; };
   refuses({ type: 'setPolicy', area: 'pricing', values: { cardRate: 5 } }, /not unlocked/);
   refuses({ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 99 } }, /not unlocked/);
@@ -118,8 +118,8 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   for (const seed of [4, 8, 15, 16, 23, 42]) for (const bot of ['careful', 'greedy']){
     const a = play(loadEngine(src), seed, bot, 3), S = a.S, strong = (S.career || []).filter(c => ['AAA', 'AA', 'A'].includes(c.letter)).length;
     const unlocked = S.progress.unlocked.filter(x => x !== 'branch');
-    assert.strictEqual(unlocked.length, Math.min(5, strong), 'unlock count should follow strong years: ' + bot + seed);
-    assert.strictEqual(JSON.stringify(unlocked), JSON.stringify(['pricing', 'credit', 'treasury', 'funding', 'capital'].slice(0, unlocked.length)));
+    assert.strictEqual(unlocked.length, Math.min(6, strong), 'unlock count should follow strong years: ' + bot + seed);
+    assert.strictEqual(JSON.stringify(unlocked), JSON.stringify(['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations'].slice(0, unlocked.length)));
     // the letter arrives with the unlock (the inbox only keeps the latest 60 messages, so check at the moment it happens)
     { const R = loadEngine(src); for (const cmd of a.cmds){ const k = R.S ? R.S.progress.unlocked.length : 0; R.dispatch(cmd);
         if (cmd.type === 'nextYear' && R.S.progress.unlocked.length > k) assert(R.S.inbox.some(m => m.from === 'The board' && /is yours/.test(m.subject) && !m.read), 'briefing letter on unlock'); } }
@@ -479,4 +479,54 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   // a capital raise through the standing rule dilutes holders and is on the record
   { const E = start(3, {}, { capitalTarget: 0.25, capitalAction: 0, raiseAmount: 300 }); let issued = false; for (let i = 0; i < 6 && !issued; i++){ month(E); issued = !!(E.S.px && E.S.px.issues.length); }
     assert(issued && E.S.px.shares > 1000); n++; } }
+// 16. Operations: team capacity and backlogs, hiring, alert sensitivity, the change programme and suppliers.
+{ const month = (E) => { for (let c; (c = E.current());){ const o = c.opts.filter(o => !(o.cash && E.S.cash < o.cash)); E.dispatch({ type: 'resolve', id: c.id, k: o[0].k }); } E.dispatch({ type: 'closeMonth' }); };
+  const start = (seed, vals) => { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed, opts: { chiefExecutive: true } }); if (vals) E.dispatch({ type: 'setPolicy', area: 'operations', values: vals }); return E; };
+  const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+  // until the player takes over, nothing happens; owning it at the executive team's values starts the model
+  { const E = start(3); for (let i = 0; i < 3; i++) month(E); assert(!E.S.ops); n++; }
+  { const E = start(3, {}); for (let i = 0; i < 3; i++) month(E); const O = E.S.ops;
+    assert(O && O.last.length === 5 && O.last.every(r => r.util > 0 && r.util < 1.5), 'defaults run each team below its limit'); assert.strictEqual(O.incidents.length, 0); n += 3;
+    const ids = E.indicators().map(i => i.key); for (const k of ['util', 'age', 'alerts', 'falsealarm', 'unreviewed', 'change', 'suppliers']) assert(ids.includes(k), 'indicator ' + k); n++;
+    assert(E.advisers().some(a => a.role === 'Head of operations')); assert(Object.values(E.opsRecommended()).every(v => v >= 1)); n += 2;
+    const P = JSON.stringify(E.S.ops); E.stressTest({}, 4); assert.strictEqual(JSON.stringify(E.S.ops), P, 'the stress test leaves operations alone'); n++;
+    let leaked = 0; E.setSink(() => { leaked++; }); E.stressTest({}, 3); E.setSink(null); assert.strictEqual(leaked, 0); n++; }
+  { const E = start(3); assert(!E.indicators().some(i => i.key === 'util')); n++; }
+  // hiring takes two months to arrive and a third to train; letting people go is at once
+  { const E = start(3, { staffCounter: 9 }); month(E); const O = E.S.ops; assert.strictEqual(O.staff.counter, 6); assert(O.hiring.some(h => h.team === 'counter' && h.n === 3), 'the new settings take effect the following month'); assert(E.S.inbox.some(x => x.subject === 'Operations changes')); n += 3;
+    for (let i = 0; i < 3; i++) month(E); assert(E.S.ops.staff.counter <= 6, 'not arrived yet'); month(E); assert(E.S.ops.staff.counter >= 7, 'arrived three months after they were hired: ' + E.S.ops.staff.counter); n += 2;
+    const F = start(3, { staffCounter: 4 }); month(F); assert(F.S.ops.staff.counter <= 4, 'letting people go is immediate once it takes effect'); n++; }
+  // overtime adds 20% for three months and no more
+  { const E = start(3, { overtime: 1 }); const cap = () => { const r = E.S.ops.last.find(r => r.team === 'counter'); return r.cap / (r.staff * 20); };
+    month(E); month(E); assert(Math.abs(cap() - 1.2) < 0.01 && E.S.ops.otActive, 'overtime adds 20%'); for (let i = 0; i < 3; i++) month(E); assert(Math.abs(cap() - 1) < 0.01 && !E.S.ops.otActive, 'overtime stops after three months'); n += 2; }
+  // an alert threshold trades catching crime against false alarms; with the same draws the false alarms scale with the square of it
+  { const at = (s) => { const E = start(3, { fraudSensitivity: s }); month(E); return E.S.ops.m.fraud; };
+    const lo = at(0.25), mid = at(0.5), hi = at(1); assert(Math.abs(hi.falseAlerts / mid.falseAlerts - 4) < 0.1 && lo.falseAlerts < mid.falseAlerts); n++;
+    const E0 = start(3); assert(E0.detectRate(0.25, 0) < E0.detectRate(0.5, 0) && E0.detectRate(0.5, 0) < E0.detectRate(1, 0) && E0.detectRate(0.5, 0.06) > E0.detectRate(0.5, 0)); n++; }
+  // lean staffing builds backlogs and costs trust; over two years it is worse than the plan, and so is a lot of extra staff
+  { const lean = { staffCounter: 3, staffCredit: 2, staffFraud: 2, staffFincrime: 2, staffComplaints: 1, staffIt: 2 }; const tPlan = [], tLean = [], ageLean = [], sPlan = [], sLean = [], sGen = [];
+    for (const seed of [1, 2, 3, 5]){
+      const run = (v) => { const X = loadEngine(src); const { S } = play(X, seed, 'careful', 2, { chiefExecutive: true }, (r) => r({ type: 'setPolicy', area: 'operations', values: v })); const sc = S.career.map(c => ({ AAA: 100, AA: 95, A: 85, BBB: 70, BB: 55, B: 40, CCC: 25, CC: 15, C: 10, D: 0 })[c.letter] || 0); return { S, score: sc.length ? avg(sc) : 0 }; };
+      const a = run({}), b = run(lean), c = run({ staffCounter: 8, staffCredit: 4, staffFraud: 6, staffFincrime: 4, staffComplaints: 4, staffIt: 4 });
+      tPlan.push(a.S.trust); tLean.push(b.S.trust); ageLean.push(Math.max(...Object.values(b.S.ops.m.age))); sPlan.push(a.score); sLean.push(b.score); sGen.push(c.score); }
+    assert(avg(tLean) < avg(tPlan) - 10, `lean staffing costs trust: ${avg(tLean)} vs ${avg(tPlan)}`); assert(avg(ageLean) > 3, 'backlogs build: ' + avg(ageLean)); assert(avg(sLean) < avg(sPlan), 'a lean strategy rates worse'); assert(avg(sGen) < avg(sPlan), 'over-staffing costs more than it earns'); n += 4; }
+  // the change programme: projects use IT capacity, finish with a benefit, and too many at once bring incidents
+  { const E = start(3, { regReporting: 1, staffIt: 8 }); month(E); assert.strictEqual(E.S.ops.projects.length, 1); for (let i = 0; i < 7; i++) month(E);
+    assert(E.S.ops.done.reg != null && E.S.ops.projects.length === 0 && E.S.inbox.some(x => /Regulatory reporting platform complete/.test(x.subject)), 'a project finishes'); n++; }
+  { const E = start(3, { coreMigration: 1 }); month(E); assert.strictEqual(E.S.ops.projects.length, 1); E.dispatch({ type: 'setPolicy', area: 'operations', values: { coreMigration: 0 } }); month(E); assert.strictEqual(E.S.ops.projects.length, 0); n += 2; }
+  { let incidents = 0, calm = 0; for (const seed of [1, 2, 3, 4, 5, 6]){
+      const a = start(seed, { coreMigration: 2, paymentsUpgrade: 1, regReporting: 1, mobileApp: 1, dataPlatform: 1 }), b = start(seed, { coreMigration: 1, paymentsUpgrade: 1, staffIt: 8 });
+      for (let i = 0; i < 10 && !a.S.over; i++) month(a); for (let i = 0; i < 10 && !b.S.over; i++) month(b);
+      incidents += a.S.ops.incidents.length; calm += b.S.ops.incidents.length; }
+    assert(incidents >= 3 && incidents > calm, `overloading IT brings incidents: ${incidents} against ${calm}`); n++; }
+  // suppliers: outsourcing saves money until one fails; oversight spending reduces the failures and the harm
+  { let none = 0, watched = 0, costNone = 0, costWatched = 0;
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]){
+      const a = start(seed, { outsourceCards: 1, outsourceContact: 1, outsourceHosting: 1 }), b = start(seed, { outsourceCards: 1, outsourceContact: 1, outsourceHosting: 1, oversight: 4 });
+      for (let i = 0; i < 12 && !a.S.over; i++) month(a); for (let i = 0; i < 12 && !b.S.over; i++) month(b);
+      none += a.S.ops.incidents.length; watched += b.S.ops.incidents.length; costNone += a.S.ops.incidents.reduce((x, y) => x + y.cost, 0); costWatched += b.S.ops.incidents.reduce((x, y) => x + y.cost, 0); }
+    assert(none > watched, `oversight reduces failures: ${none} vs ${watched}`); assert(costNone > costWatched); n += 2;
+    const w = start(3, { outsourceCards: 1, oversight: 0 }); assert(w.advisers().some(x => /almost no oversight/.test(x.text))); n++; }
+  // handing operations back stops the model
+  { const E = start(3, {}); month(E); E.dispatch({ type: 'setPolicy', area: 'operations', release: true }); const was = JSON.stringify(E.S.ops.last); month(E); assert.strictEqual(JSON.stringify(E.S.ops.last), was); n++; } }
 console.log('ok', n, 'checks');
