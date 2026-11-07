@@ -432,7 +432,11 @@ test('players: games played as a guest move to the account on sign-in, and survi
 
 test('web: the page is served, health check works, and form posts are refused', async () => {
   const page = await app.inject({ method: 'GET', url: '/' });
-  assert.strictEqual(page.statusCode, 200); assert(page.body.includes('Counting House'));
+  assert.strictEqual(page.statusCode, 200); assert(page.body.includes('<title>Bank Manager</title>'));
+  for (const [url, text] of [['/engine/engine.js', 'Counting House'], ['/web/scene.js', 'const Scene'], ['/web/ui.js', 'UI'], ['/web/screens.js', 'teamScreen'], ['/web/online.js', 'Remote'], ['/web/style.css', '#stage']]) {
+    const r = await app.inject({ method: 'GET', url }); assert.strictEqual(r.statusCode, 200, url); assert(r.body.includes(text), url);
+  }
+  assert.strictEqual((await app.inject({ method: 'GET', url: '/server/app.js' })).statusCode, 404, 'only the page files are served');
   assert.strictEqual((await call('GET', '/healthz')).json.ok, true);
   const form = await app.inject({ method: 'POST', url: '/api/login', payload: 'email=a&password=b', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
   assert.strictEqual(form.statusCode, 415);
