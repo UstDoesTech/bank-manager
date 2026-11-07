@@ -49,6 +49,8 @@ button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 .brand{font-weight:900;font-variation-settings:"wdth" 125;letter-spacing:.06em;text-transform:uppercase;font-size:13px;color:var(--brass);white-space:nowrap}
 .when{font-family:var(--f-mono);font-size:12px;color:var(--muted);white-space:nowrap;flex:0 0 auto}
 .hud-top .sp{flex:1}
+.menu{background:none;border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:18px;line-height:1;width:34px;height:34px;flex:0 0 auto;padding:0}
+.menu:hover,.menu:focus-visible{border-color:var(--brass);color:var(--brass)}
 .pill{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:3px 8px;border-radius:999px;border:1px solid currentColor;white-space:nowrap;background:none}
 .pill.ok{color:var(--good)} .pill.watch{color:var(--warn)} .pill.alarm{color:var(--bad)}
 .cont{background:var(--brass);color:#1c1606;border:0;border-radius:8px;padding:7px 12px 7px 14px;font-weight:900;font-variation-settings:"wdth" 112;text-transform:uppercase;letter-spacing:.05em;font-size:12.5px;white-space:nowrap;box-shadow:0 2px 0 var(--brass-dim)}
@@ -376,6 +378,7 @@ details.more > *:not(summary){margin-top:10px}
 <div id="app" data-view="counter">
   <header id="hud">
     <div class="hud-top">
+      <button class="menu" id="menuBtn" type="button" aria-label="Menu" title="Menu">☰</button>
       <div class="brand">Bank Manager</div>
       <div class="when" id="hWhen">Jan 2027</div>
       <button class="reg ok" id="hReg" type="button">Good</button>
@@ -2762,7 +2765,7 @@ const $ = s => document.querySelector(s);
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const Scene = (() => {
-  const stub = { sync(){}, setCard(){}, react(){}, monthTurn(){}, boards(){}, setView(){}, snapshot(){ return null; } };
+  const stub = { sync(){}, setCard(){}, react(){}, monthTurn(){}, boards(){}, setView(){}, setPaused(){}, isPaused: false, snapshot(){ return null; } };
   if (!window.THREE) return stub;
   const T = THREE, canvas = $('#c'), stage = $('#stage');
   let renderer;
@@ -3122,10 +3125,10 @@ const Scene = (() => {
   }
   new ResizeObserver(resize).observe(stage); resize();
 
-  let last = performance.now(), t0 = last;
+  let last = performance.now(), t0 = last, paused = false;
   function frame(now){
     const dt = Math.min(0.05, (now - last) / 1000); last = now; const t = (now - t0) / 1000;
-    if (!document.hidden){
+    if (!document.hidden && !paused){
       // people
       for (const [, p] of people) step(p, dt, t);
       for (let i = leaving.length - 1; i >= 0; i--){ const p = leaving[i]; step(p, dt, t); if (!p.userData.via && p.userData.wait <= 0 && p.position.distanceTo(p.userData.t) < 0.3){ scene.remove(p); leaving.splice(i, 1); } }
@@ -3185,6 +3188,8 @@ const Scene = (() => {
   requestAnimationFrame(frame);
 
   return {
+    setPaused(v){ paused = !!v; if (!paused) last = performance.now(); },
+    get isPaused(){ return paused; },
     sync(){
       tellers[0].visible = owned('cashier'); wallMat.color.copy(lin(owned('refurb') ? 0x1f5246 : 0x15372f));
       coins.count = Math.round(clamp(S.cash / 22, 0, COINS));
@@ -3687,8 +3692,8 @@ function tabSel(name){
   $('#tabCounter').setAttribute('aria-selected', on.counter); $('#tabInbox').setAttribute('aria-selected', on.inbox);
   $('#bankBtn').setAttribute('aria-selected', on.bank); $('#policyBtn').setAttribute('aria-selected', on.policy);
 }
-function overlay(html){ $('#pop').hidden = true; if (typeof view !== 'undefined') tabSel(); const o = $('#ov'); o.innerHTML = `<div class="panel" role="dialog" aria-modal="true">${html}</div>`; o.hidden = false; o.querySelector('.panel').scrollTop = 0; const b = $('#ovGo'); if (b) b.focus({ preventScroll:true }); }
-function closeOverlay(){ $('#pop').hidden = true; if (typeof view !== 'undefined') tabSel(); $('#ov').hidden = true; $('#ov').innerHTML = ''; }
+function overlay(html){ Scene.setPaused(false); $('#pop').hidden = true; if (typeof view !== 'undefined') tabSel(); const o = $('#ov'); o.innerHTML = `<div class="panel" role="dialog" aria-modal="true">${html}</div>`; o.hidden = false; o.querySelector('.panel').scrollTop = 0; const b = $('#ovGo'); if (b) b.focus({ preventScroll:true }); }
+function closeOverlay(){ Scene.setPaused(false); menuConfirm = false; $('#pop').hidden = true; if (typeof view !== 'undefined') tabSel(); $('#ov').hidden = true; $('#ov').innerHTML = ''; }
 
 /* recurring customers: the household behind a name, with the month's budget, the credit score over time and what has happened to them */
 function nameHTML(c){ return c.h && c.h.hh != null && S.households ? '<button type="button" class="hhlink" data-hh="' + c.h.hh + '">' + esc(c.who.name) + '</button>' : esc(c.who.name); }
@@ -3942,7 +3947,7 @@ $('#tabInbox').onclick = () => { if (!S) return; openKey = matchMedia('(min-widt
 $('#contBtn').onclick = () => S && cont();
 
 $('#hReg').onclick = () => { if (!S) return; const pop = $('#pop'); pop.innerHTML = `<b>Regulator</b>Standing ${Math.round(S.comp)}/100. Fines, missed reports and capital breaches lower it. At zero you lose your licence.`; pop.hidden = false; };
-document.addEventListener('keydown', e => { if (e.key === 'Escape'){ $('#pop').hidden = true; if (!$('#ov').hidden && $('#ovGo') && /Back/.test($('#ovGo').textContent)) closeOverlay(); } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape'){ $('#pop').hidden = true; if ($('#menuResume')){ closeOverlay(); return; } if (!$('#ov').hidden && $('#ovGo') && /Back/.test($('#ovGo').textContent)) closeOverlay(); else if ($('#ov').hidden && S) { menuConfirm = false; menuScreen(); } } });
 
 /* save / restore */
 const KEY = 'counting-house-v2';
@@ -4012,7 +4017,7 @@ const Remote = (() => {
     if (!available() || me || optedOut()) return;
     try { const r = await api('POST', '/api/guest', {}); if (!r.ok) return; me = (await api('GET', '/api/me')).json; if (!me.signedIn) me = null; } catch (e) { me = null; }
   }
-  return { optedOut, setOptedOut, guest, available, init, ready, create, drop, record, flush, api, me: () => me, setMe: (m) => { me = m && m.signedIn ? m : null; }, who, recording: () => !!rec, settled: () => chain, gameId: () => rec && rec.id };
+  return { pendingCount: () => (rec ? rec.pending.length : 0), optedOut, setOptedOut, guest, available, init, ready, create, drop, record, flush, api, me: () => me, setMe: (m) => { me = m && m.signedIn ? m : null; }, who, recording: () => !!rec, settled: () => chain, gameId: () => rec && rec.id };
 })();
 { const engineDispatch = dispatch; dispatch = function(cmd){ const out = engineDispatch(cmd); Remote.record(cmd, out); return out; }; }
 
@@ -4105,6 +4110,39 @@ function resetScreen(token){
     history.replaceState(null, '', location.pathname); if (r.ok) accountScreen('Password changed. Sign in with it.'); else $('#rsMsg').textContent = r.json.message || 'That did not work.'; };
 }
 
+/* The game menu: pause, save, sound, account, exit to the title screen and sign out. Opening it pauses the scene. */
+let menuConfirm = false;
+function menuScreen(msg, isErr){
+  if (!S) return;
+  const m = Remote.me(), guest = !!(m && m.guest), signedIn = !!(m && !m.guest), recording = Remote.recording();
+  const status = !Remote.available() ? 'Your game saves itself on this device after every move.'
+    : signedIn ? (recording ? `This game is being recorded to ${esc(m.email)}.` : `Signed in as ${esc(m.email)}. New games you start are recorded.`)
+    : guest ? (Remote.optedOut() ? 'Recording is off.' : 'Playing as a guest: this game is recorded without a name or email.')
+    : Remote.optedOut() ? 'Recording is off. Your game saves itself on this device.' : 'Your game saves itself on this device after every move.';
+  overlay(`<div class="eyebrow">Paused</div><h2>Menu</h2><p class="dim">${status}</p>
+    <div class="msg${isErr ? ' err' : ''}" role="status">${esc(msg || '')}</div>
+    <div class="acct">
+      <button type="button" class="btn primary" id="menuResume">Resume</button>
+      <button type="button" class="btn neutral" id="menuSave">Save game</button>
+      <button type="button" class="btn neutral" id="menuSound">${Snd.on ? 'Sound on' : 'Sound off'}</button>
+      ${Remote.available() ? '<button type="button" class="btn neutral" id="menuAcct">Account and recording</button>' : ''}
+      <button type="button" class="btn neutral" id="menuExit">Save and exit to the title screen</button>
+      ${signedIn ? `<button type="button" class="btn ${menuConfirm ? 'no' : 'link'}" id="menuOut">${menuConfirm ? 'Tap again to sign out' : 'Sign out'}</button>` : ''}
+    </div>`);
+  Scene.setPaused(true);
+  $('#menuResume').onclick = closeOverlay;
+  $('#menuSave').onclick = () => { save(); Remote.flush(); const q = Remote.pendingCount(); menuScreen(q ? `Saved on this device. ${q} move${q === 1 ? '' : 's'} still to send to the server, and they will go when you are online.` : 'Saved' + (recording ? ' on this device and on the server.' : ' on this device.')); };
+  $('#menuSound').onclick = () => { Snd.toggle(); menuScreen(); };
+  const ac = $('#menuAcct'); if (ac) ac.onclick = () => accountScreen();
+  $('#menuExit').onclick = () => { save(); Remote.flush(); S = null; menuConfirm = false; Scene.setView('hall', true); titleScreen(); };
+  const out = $('#menuOut'); if (out) out.onclick = async () => {
+    if (!menuConfirm){ menuConfirm = true; menuScreen(); return; }
+    menuConfirm = false; save();
+    try { await Remote.api('POST', '/api/logout', {}); } catch (e) { return menuScreen('Could not reach the server to sign out. Try again when you are online.', true); }
+    Remote.setMe(null); Remote.drop(); menuScreen('Signed out. This game is no longer being recorded, and stays saved on this device.');
+  };
+}
+$('#menuBtn').onclick = () => { if (S && $('#ov').hidden) { Snd.play('click'); menuConfirm = false; menuScreen(); } };
 function titleScreen(){
   const saved = load(), resumable = saved && (!saved.over || saved.over === 'done');
   let best = null; try { best = JSON.parse(localStorage.getItem('ch-best') || 'null'); } catch (e) {}

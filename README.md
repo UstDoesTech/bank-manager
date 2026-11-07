@@ -35,6 +35,11 @@ docker compose exec app node server/replay.js                                   
 docker compose down -v                                                          # stop and wipe the database
 ```
 
+**The game menu** (the ☰ button in the top bar, or Escape): opening it pauses the scene. Resume; Save game (the game also saves after every move, and this
+sends any moves still waiting for the server); Sound; Account and recording (when a server is there); Save and exit to the title screen, where Continue
+picks the game up again; and Sign out for accounts (two taps, and it stops the recording but keeps the game on the device). Guests have no sign out because they have no
+password; they can switch recording off from the title screen.
+
 ## Tests
 
 ```

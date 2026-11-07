@@ -135,6 +135,14 @@ test('the page: sign up, confirm, accept the notice, play online and offline, an
 
   assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.household_month WHERE game_id = $1', [gameId])).rows[0].n, 7 * 3);
   assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.literacy_check')).rows[0].n, 1);
+  // the menu says the game is being recorded, and signing out takes two taps and stops the recording
+  await page.waitForSelector('#ovGo'); await page.click('#ovGo'); await waitFor(async () => await page.evaluate(() => !!S), 'the saved game to resume');
+  await page.evaluate(() => closeOverlay()); await page.click('#menuBtn');
+  assert.match(await page.textContent('.panel'), /being recorded to pat@example.com/);
+  await page.click('#menuOut'); assert.match(await page.textContent('#menuOut'), /Tap again/);
+  await page.click('#menuOut'); await waitFor(async () => /Signed out/.test(await page.textContent('.msg')), 'signed out');
+  assert.strictEqual((await (await fetch(base + '/api/me', { headers: { cookie: (await ctx.cookies()).map((c) => c.name + '=' + c.value).join('; ') } })).json()).signedIn, false);
+  assert.strictEqual(await page.evaluate(() => Remote.recording()), false);
   assert.deepStrictEqual(errors, [], 'no script errors in the page');
   await ctx.close();
 });
@@ -228,6 +236,7 @@ test('the page without an account: the game is recorded anonymously, the player 
   await waitFor(async () => (await pool.query('SELECT count(*)::int n FROM bank.game g JOIN account.player p ON p.player_key = g.player_key WHERE p.guest')).rows[0].n === 1, 'guest game on the server');
   await page.waitForFunction(() => S && S.seed);                       // the server row exists before the page has started its own game
   await page.evaluate(() => { closeOverlay(); for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts.find((o) => !(o.cash && S.cash < o.cash)).k }); closeBooks(); });
+  await page.evaluate(() => closeOverlay()); await page.click('#menuBtn'); assert.match(await page.textContent('.panel'), /Playing as a guest/); assert.strictEqual(await page.$('#menuOut'), null, 'a guest has no password to sign out of'); await page.click('#menuResume');
   const r = await waitFor(async () => { const x = await page.evaluate(() => JSON.parse(localStorage.getItem('bm-remote') || '{}')); return x.pending && x.pending.length === 0 && x.seq > 3 && x; }, 'commands to reach the server');
   const gameId = (await pool.query('SELECT g.id FROM bank.game g JOIN account.player p ON p.player_key = g.player_key WHERE p.guest')).rows[0].id;
   assert.deepStrictEqual((await verifyGame(pool, host, gameId)).problems, []);
@@ -276,3 +285,32 @@ test('the executive meeting on the page: a new career queues settings for next m
   await ctx.close();
 });
 
+test('the game menu: pause, save, sound, exit to the title and back, with Escape to open and close it', { skip: !EDGE && 'no Edge/Chrome found' }, async () => {
+  const ctx = await browser.newContext({ viewport: { width: 420, height: 860 } }); const page = await ctx.newPage();
+  const errors = []; page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('file:///' + require('path').resolve(__dirname, '..', 'Bank Manager.html').replace(/\\/g, '/'));
+  await page.waitForSelector('#ovTrain'); await page.click('#ovTrain');
+  await page.evaluate(() => closeOverlay());
+  assert.strictEqual(await page.isVisible('#menuBtn'), true);
+  await page.click('#menuBtn');
+  const panel = await page.textContent('.panel');
+  for (const t of ['Paused', 'Resume', 'Save game', 'Sound', 'Save and exit to the title screen']) assert(panel.includes(t), t);
+  assert.strictEqual(await page.$('#menuOut'), null, 'no sign out when not signed in');
+  assert.strictEqual(await page.evaluate(() => Scene.isPaused), true, 'the scene is paused while the menu is open');
+  await page.click('#menuResume'); assert.strictEqual(await page.isHidden('#ov'), true); assert.strictEqual(await page.evaluate(() => Scene.isPaused), false, 'and running again');
+  // Escape opens and closes it
+  await page.keyboard.press('Escape'); await page.waitForSelector('#menuResume'); await page.keyboard.press('Escape'); assert.strictEqual(await page.isHidden('#ov'), true);
+  // save, and the sound switch
+  await page.click('#menuBtn'); const was = await page.textContent('#menuSound'); await page.click('#menuSound');
+  assert.notStrictEqual(await page.textContent('#menuSound'), was);
+  await page.click('#menuSave'); assert.match(await page.textContent('.msg'), /Saved on this device/);
+  assert.strictEqual(await page.evaluate(() => !!JSON.parse(localStorage.getItem(KEY) || 'null')), true, 'the game is in local storage');
+  // exit to the title, then continue where it was
+  const month = await page.evaluate(() => S.month);
+  await page.click('#menuExit'); await page.waitForSelector('#ovGo');
+  assert.strictEqual(await page.evaluate(() => S), null); assert.match(await page.textContent('.panel'), /Continue/);
+  await page.click('#ovGo'); await page.waitForFunction(() => S && S.month !== undefined);
+  assert.strictEqual(await page.evaluate(() => S.month), month); assert.strictEqual(await page.isHidden('#ov'), true);
+  assert.deepStrictEqual(errors, []);
+  await ctx.close();
+});
