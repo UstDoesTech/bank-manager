@@ -109,6 +109,18 @@ async function syncHedges(client, gid, at, state) {
     "UPDATE bank.hedge SET status = 'ended' WHERE game_id = $1 AND status = 'active' AND swap_id <> ALL ($2::int[])", [gid, swaps.map((w) => w.id)]);
 }
 
+// Keeps the funding instruments in step with the engine: new ones inserted, balances refreshed, repaid ones marked.
+async function syncFunding(client, gid, instruments) {
+  for (const r of instruments)
+    await client.query(
+      `INSERT INTO bank.funding_instrument (game_id, instrument_id, kind, amount_pence, rate_pct, start_abs, maturity_abs)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (game_id, instrument_id) DO UPDATE SET amount_pence = EXCLUDED.amount_pence, rate_pct = EXCLUDED.rate_pct, status = 'active'`,
+      [gid, r.id, r.kind, pence(r.amt), r.rate, r.start, r.due]);
+  await client.query(
+    "UPDATE bank.funding_instrument SET status = 'repaid', amount_pence = 0 WHERE game_id = $1 AND status = 'active' AND instrument_id <> ALL ($2::text[])", [gid, instruments.map((r) => r.id)]);
+}
+
 // Keeps the household cast and each closed month of their money in step with the engine.
 async function syncHouseholds(client, gid, at, households) {
   const cast = JSON.stringify(households.map((h) => ({ id: h.id, name: h.name, stage: h.stage, label: h.label, goal: h.goal })));
@@ -169,6 +181,11 @@ async function persist(client, game, seq, cmd, before, out) {
 
   await syncBook(client, gid, before || { year: state.year, month: state.month }, state.loans || []);
   if (state.households && cmd.type === 'closeMonth') await syncHouseholds(client, gid, before, state.households);
+  await syncFunding(client, gid, facts.instruments || []);
+  if (cmd.type === 'closeMonth' && state.px && state.px.hist.length) {
+    const h = state.px.hist[state.px.hist.length - 1];
+    await client.query('INSERT INTO bank.share_price (game_id, year, month, price, book_per_share, multiple) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING', [gid, h.y, h.m, h.price, h.book, h.mult]);
+  }
   if ((state.swaps && state.swaps.length) || cmd.type === 'closeMonth' || cmd.type === 'nextYear') await syncHedges(client, gid, before, state);
   if (cmd.type === 'closeMonth') {
     const notional = (state.swaps || []).reduce((a, w) => a + w.n, 0);

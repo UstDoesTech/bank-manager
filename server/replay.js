@@ -53,6 +53,16 @@ async function verifyGame(pool, host, gameId) {
     if (hs.live !== (state.swaps || []).length) problems.push(`${hs.live} active swaps stored, replay has ${(state.swaps || []).length}`);
   }
 
+  if (state) {
+    const live = (await pool.query("SELECT count(*)::int AS n FROM bank.funding_instrument WHERE game_id = $1 AND status = 'active'", [gameId])).rows[0].n;
+    const want = (state.wsTranches || []).length + (state.bondTranches || []).length + ((state.cb || 0) > 0.005 ? 1 : 0);
+    if (live !== want) problems.push(`${live} active funding instruments stored, replay has ${want}`);
+    if (state.px && state.px.hist.length && state.px.hist.length < 36) {
+      const sp = (await pool.query('SELECT count(*)::int AS n FROM bank.share_price WHERE game_id = $1', [gameId])).rows[0].n;
+      if (sp !== state.px.hist.length) problems.push(`${sp} stored share prices, replay has ${state.px.hist.length}`);
+    }
+  }
+
   if (state && state.households) {
     const rows = (await pool.query('SELECT household_id, credit_score, year, month FROM bank.household_month WHERE game_id = $1 ORDER BY year, month', [gameId])).rows;
     for (const h of state.households) {

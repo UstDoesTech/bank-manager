@@ -136,8 +136,23 @@ of this applies to branch-manager play. All of it is in `engine/engine.js` (`ind
   severe recession, so a hedge's value shows in one and its cost in the other. Migration 008 adds the `collateral` and
   `pl.swaps` accounts, `bank.hedge`, `bank.hedge_position` and `bank.liquidity_ladder`; the replay checks stored swaps.
 
-Not built: the monthly executive meeting (settings still apply at once), share price, and indicators for staffing and alerts
-(they need the operations phase).
+- **Bank of England facility** (`boeFacility()`, funding policy `boeTarget`): the central bank lends against the loan book at Bank Rate
+  plus 1% after a 30% haircut on the collateral. Owning funding, the player sets how much to keep drawn; the standing rule
+  draws up to it (within the collateral) and repays down to it, and the old automatic repayment leaves that amount alone. Using
+  it mails from the treasurer, puts a Herald story in the paper, adds an early warning, and costs board confidence for every month
+  it is out. Forced emergency borrowing when cash runs out works as before.
+- **Funding instruments** (`fundingInstruments()`, `bank.funding_instrument`): wholesale loans and bonds are now identified (id and start
+  month, filled in for older saves) and listed with amount, rate and due date on the Team screen; the Bank of England is one running
+  facility with no due date. The table keeps one row per instrument, marks repaid ones, and the replay checks the count.
+- **Share price** (`shareMonth()`, `bank.share_price`): book value per share times a multiple that starts at 1 and moves slowly: up when
+  return on equity beats the 10% cost of equity (damped over the first six months), down with volatile profits, enforcement and
+  a capital breach. Shares start at 1,000k. A share issue (the capital card or the standing rule) is priced 10% under the market, creates
+  new shares and so dilutes existing holders. The Team screen shows the price, book value, multiple, dividends per share and share
+  issues, and the finance director comments (below book value, above book value, and the dilution a raise would cause).
+  Tracked only once a Chief Executive area has been handed over.
+
+Not built: the monthly executive meeting (settings still apply at once), and indicators for staffing and alerts (they need the
+operations phase). Migration 009 adds `bank.funding_instrument` and `bank.share_price`.
 
 ## Things to know
 

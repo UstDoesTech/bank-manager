@@ -4,7 +4,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), '
 const golden = JSON.parse(fs.readFileSync(path.join(__dirname, 'golden.json'), 'utf8'));
 let n = 0;
 // 1. Behaviour is unchanged against snapshots from the original engine (all bots, scenarios, tutorial).
-const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'swaps', 'collateral', 'swapId'];
+const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'swaps', 'collateral', 'swapId', 'fid', 'px'];
 { const Eg = loadEngine(src); Eg.dispatch({ type: 'newGame', seed: 1 });
   for (const [key, want] of Object.entries(golden)){
     const [bot, tag, seed] = key.split(':');
@@ -443,4 +443,40 @@ for (const pol of ALL()) for (const seed of [3, 17]){
     Z.dispatch({ type: 'stress', scenario: 'rates' }); assert.strictEqual(Z.S.stress.scenario, 'rates');
     assert.throws(() => Z.dispatch({ type: 'stress', scenario: 'meteor' }), /unknown stress scenario/); n += 2;
     let leaked = 0; Z.setSink(() => { leaked++; }); Z.stressTest({}, 4, 'rates'); Z.setSink(null); assert.strictEqual(leaked, 0); n++; } }
+// 15. Funding instruments, the Bank of England facility and the share price.
+{ const month = (E) => { for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' }); };
+  const start = (seed, fund, cap) => { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed, opts: { chiefExecutive: true } }); E.dispatch({ type: 'setPolicy', area: 'credit', values: {} });
+    E.dispatch({ type: 'setPolicy', area: 'funding', values: Object.assign({ savingsSpread: 0 }, fund) }); if (cap) E.dispatch({ type: 'setPolicy', area: 'capital', values: cap }); return E; };
+  // the facility: off by default, drawn up to the target within the collateral, repaid down to it, and it costs the board
+  { const E = start(3, {}); for (let i = 0; i < 4; i++) month(E); assert.strictEqual(E.S.cb, 0); n++; }
+  { const E = start(3, { boeTarget: 500 }); for (let i = 0; i < 3; i++) month(E);
+    assert(E.S.cb >= 475 && E.S.cb <= 525 && E.S.cb % 25 === 0, 'drawn to the target: ' + E.S.cb); assert(E.S.cb <= E.boeCapacity() + 1); n += 2;
+    assert(E.S.inbox.some(x => x.subject === 'Bank of England borrowing')); assert(E.S.news.some(x => /borrows from the Bank of England/.test(x.head))); n += 2;
+    const ind = E.indicators().find(i => i.key === 'boe'); assert(ind.status !== 'ok'); n++;
+    const F = start(3, {}); for (let i = 0; i < 3; i++) month(F); assert(E.S.board.conf < F.S.board.conf, `borrowing costs confidence: ${E.S.board.conf} vs ${F.S.board.conf}`); n++;
+    const before = E.S.cb, G = start(3, { boeTarget: 500 }); for (let i = 0; i < 3; i++) month(G);
+    month(E); assert(Math.abs(E.S.cb - before) <= 25, 'the automatic repayment leaves the target alone'); n++;
+    G.dispatch({ type: 'setPolicy', area: 'funding', values: { boeTarget: 0 } }); month(G); assert(G.S.cb < before, 'repaid once the target is lowered'); n++; }
+  { const E = start(3, { boeTarget: 5000 }); for (let i = 0; i < 3; i++) month(E); assert(E.S.cb <= E.boeCapacity() + 1 && E.S.cb > 0); n++; }
+  // funding instruments: one row each, with the facility as a single running balance
+  { const E = start(3, { wholesaleTarget: 0.2, bondTarget: 0.1, bondTermYears: 2, boeTarget: 300 }); for (let i = 0; i < 2; i++) month(E);
+    const rows = E.fundingInstruments(), ids = rows.map(r => r.id); assert.strictEqual(new Set(ids).size, ids.length, 'instrument ids are unique'); n++;
+    const sum = k => rows.filter(r => r.kind === k).reduce((a, r) => a + r.amt, 0);
+    assert(Math.abs(sum('wholesale') - E.S.wholesale) < 1e-6 && Math.abs(sum('bond') - E.S.bonds) < 1e-6 && Math.abs(sum('boe') - E.S.cb) < 1e-6); n++;
+    assert(rows.some(r => r.kind === 'wholesale' && r.due > r.start) && rows.some(r => r.kind === 'bond' && r.due - r.start === 24) && rows.some(r => r.kind === 'boe' && r.due === null)); n += 1;
+    // a game saved before instruments had ids gets them
+    const old = JSON.parse(JSON.stringify(E.S)); for (const t of old.wsTranches.concat(old.bondTranches)){ delete t.id; delete t.start; } delete old.fid;
+    const M = loadEngine(src); const m = M.migrate(old); assert(m.wsTranches.concat(m.bondTranches).every(t => t.id != null && t.start != null)); n++; }
+  // share price: only tracked in the Chief Executive role, book value times a multiple, diluted by new shares
+  { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 3 }); for (let i = 0; i < 3; i++) month(E); assert(!E.S.px || E.S.px.hist.length === 0); n++; }
+  { const E = start(3, {}); for (let i = 0; i < 5; i++) month(E); const P = E.S.px; assert.strictEqual(P.hist.length, 5);
+    const last = P.hist[4]; assert(last.price > 0 && last.mult >= 0.4 && last.mult <= 2.5 && Math.abs(last.price - last.book * last.mult) < 0.01); n += 2;
+    const sh = P.shares, px = E.sharePrice(), ni = P.issues.length; E.issueEquity(300);
+    assert(P.shares > sh && Math.abs((P.shares - sh) - 300 / (0.9 * px)) < 0.01 && P.issues.length === ni + 1); n += 2;
+    const bj = JSON.stringify(E.S.px); E.stressTest({}, 5); assert.strictEqual(JSON.stringify(E.S.px), bj); n++;
+    const T = start(3, {}); for (let i = 0; i < 4; i++) month(T); T.S.comp = 30; month(T);
+    const U = start(3, {}); for (let i = 0; i < 5; i++) month(U); assert(T.S.px.mult < U.S.px.mult, 'trouble lowers the multiple'); n++; }
+  // a capital raise through the standing rule dilutes holders and is on the record
+  { const E = start(3, {}, { capitalTarget: 0.25, capitalAction: 0, raiseAmount: 300 }); let issued = false; for (let i = 0; i < 6 && !issued; i++){ month(E); issued = !!(E.S.px && E.S.px.issues.length); }
+    assert(issued && E.S.px.shares > 1000); n++; } }
 console.log('ok', n, 'checks');

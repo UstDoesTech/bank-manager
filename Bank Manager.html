@@ -334,6 +334,7 @@ table.ledger{width:100%;border-collapse:collapse;font-size:13.5px}
 .adv-line.warn{color:var(--warn)}.adv-line.alarm{color:var(--bad)}
 .ewis{display:grid;gap:6px}.ewi{display:flex;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line)}.ewi b{display:block;font-size:14px}.ewi .num{font-size:12.5px;color:var(--muted)}
 .ewi .pill{min-width:56px;text-align:center}
+.lad.ins{grid-template-columns:1.5fr 1fr .8fr 1fr}
 .lad{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;gap:6px 8px;font-size:13px;font-family:var(--f-mono)}.lad b{font-family:var(--f-display);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:700}.lad span:nth-child(4n+1){font-family:var(--f-display)}
 .panel .stickyfoot.cols{grid-template-columns:1fr 1fr}.panel .stickyfoot.cols .full,.panel .stickyfoot.cols .btn.link{grid-column:1/-1}
 .panel select{width:100%;max-width:100%;font:inherit;color:var(--text);background:var(--hall);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
@@ -550,6 +551,7 @@ function money(key, amt, label){ post(key, amt); chip((label ? label + ' ' : '')
 function dT(d){ d = Math.round(d); if (!d) return; S.trust = clamp(S.trust + d, 0, 100); chip('Customers ' + (d > 0 ? '+' : '−') + Math.abs(d), d > 0 ? 'good' : 'bad'); }
 function dC(d){ d = Math.round(d); if (!d) return; S.comp = clamp(S.comp + d, 0, 100); chip('Regulator ' + (d > 0 ? '+' : '−') + Math.abs(d), d > 0 ? 'good' : 'bad'); }
 function depMove(x){ je('deposit.flow', [['cash', x], ['deposits', -x]]); chip('Deposits ' + fmt(x, true), x >= 0 ? 'good' : 'bad'); }
+const fid = () => (S.fid = (S.fid || 0) + 1);
 function later(n, data){ S.pending.push(Object.assign({ due: S.month + n }, data)); }
 function person(a, b){ return { name: pick(FIRST) + ' ' + pick(LAST), age: ri(a, b), hue: Math.round(R() * 1000) / 1000 }; }
 const first = n => n.split(' ')[0];
@@ -589,7 +591,7 @@ function systemPolicy(){
     pricing: { mortgageSpread: 1.05, ltvAdd: [[90, 0.7], [85, 0.4], [75, 0.15]], mortgagePremium: 0.6, personalLow: 8.9, personalHigh: 18.9, cardRate: 24.9 },
     credit: { mortgageMaxLtv: 90, mortgageMaxLti: 5, mortgageMaxAff: 0.45, mortgageMinScore: 520, personalMinScore: 620, personalMaxDebtRatio: 0.5 },
     treasury: { liquidityTarget: 0.2, longShare: 0, hedgeTarget: 0, hedgeYears: 3 },
-    funding: { savingsSpread: 0, wholesaleTarget: 0, bondTarget: 0, bondTermYears: 1, bondPremium: 0.5, largeCap: 0, poolWhenShort: 0, poolShare: 0.25, poolMode: 0 },
+    funding: { boeTarget: 0, savingsSpread: 0, wholesaleTarget: 0, bondTarget: 0, bondTermYears: 1, bondPremium: 0.5, largeCap: 0, poolWhenShort: 0, poolShare: 0.25, poolMode: 0 },
     capital: { capitalTarget: 0.125, capitalAction: 0, raiseAmount: 300, dividendPayout: 0 },
     owner: { pricing: 'system', credit: 'system', treasury: 'system', funding: 'system', capital: 'system' } };
 }
@@ -597,7 +599,7 @@ const POLICY_LIMITS = {
   pricing: { mortgageSpread: [0, 6], mortgagePremium: [0, 3], personalLow: [0, 40], personalHigh: [0, 40], cardRate: [0, 40] },
   credit: { mortgageMaxLtv: [50, 100], mortgageMaxLti: [2, 8], mortgageMaxAff: [0.2, 0.8], mortgageMinScore: [300, 900], personalMinScore: [300, 900], personalMaxDebtRatio: [0.2, 2] },
   treasury: { liquidityTarget: [0.1, 0.5], longShare: [0, 1], hedgeTarget: [0, 1.5], hedgeYears: [1, 5] },
-  funding: { savingsSpread: [-1.5, 2], wholesaleTarget: [0, 0.35], bondTarget: [0, 0.3], bondTermYears: [1, 3], bondPremium: [0, 2], largeCap: [0, 0.5], poolWhenShort: [0, 1], poolShare: [0.05, 0.5], poolMode: [0, 2] },
+  funding: { boeTarget: [0, 5000], savingsSpread: [-1.5, 2], wholesaleTarget: [0, 0.35], bondTarget: [0, 0.3], bondTermYears: [1, 3], bondPremium: [0, 2], largeCap: [0, 0.5], poolWhenShort: [0, 1], poolShare: [0.05, 0.5], poolMode: [0, 2] },
   capital: { capitalTarget: [0.105, 0.25], capitalAction: [0, 3], raiseAmount: [100, 1000], dividendPayout: [0, 1] } };
 // Prices above the system's lose customers and attract riskier ones; at or below the system's nothing changes.
 // excess() is how many points a price is above the system price; dem() is the share of customers who still say yes;
@@ -1241,7 +1243,8 @@ gen.capital = () => {
   return card('capital', { label:'Capital', who:{ name:'Your finance director', sub:'Capital planning', age:0, hue:0 }, note:`Your capital ratio is ${pc(capRatio())}. Below ${pc(MIN_CAP)} the regulator steps in; below ${pc(FAIL_CAP, 0)} they close you.`,
     fields:[ F('Capital', full(capital())), F('Risk-weighted assets', full(rwa()), 'Capital ratio'), F('Capital ratio', pc(capRatio()), 'Capital ratio'), F('Profit so far this year', fmt(metrics().profit, true)) ], opts, h:{} });
 };
-function issueEquity(amt){ news(5, `Counting House asks shareholders for ${fmt(amt)}`, 'The bank says it needs more capital to keep lending.'); je('equity.issue', [['cash', amt], ['equity.paidin', -amt]]); S.injected = (S.injected || 0) + amt; chip('Capital +' + fmt(amt), 'good'); say('Shareholders put in more money. Your profit is now shared across more shares, so each one earns less.'); }
+function issueEquity(amt){ { const P = pxOf(), price = sharePrice() * 0.9, add = amt / price; P.shares += add; P.issues.push({ y: S.year, m: Math.min(S.month, 11), amt, price: Math.round(price * 1000) / 1000, shares: Math.round(add * 10) / 10 }); }
+  news(5, `Counting House asks shareholders for ${fmt(amt)}`, 'The bank says it needs more capital to keep lending.'); je('equity.issue', [['cash', amt], ['equity.paidin', -amt]]); S.injected = (S.injected || 0) + amt; chip('Capital +' + fmt(amt), 'good'); say('Shareholders put in more money. Your profit is now shared across more shares, so each one earns less.'); }
 function sellMortgages(){ const ms = S.loans.filter(l => l.kind === 'mortgage' && l.status === 'current').sort((a, b) => b.bal - a.bal); let sold = 0, target = ms.reduce((a, l) => a + l.bal, 0) / 2;
   for (const l of ms){ if (sold >= target) break; sold += l.bal; je('loan.sell', [['cash', l.bal * 0.97], ['pl.gilts', l.bal * 0.03], ['loans', -l.bal]]); S.loans = S.loans.filter(x => x !== l); }
   chip('Mortgages sold ' + fmt(sold), 'neutral'); chip('Loss on sale ' + fmt(-sold * 0.03), 'bad'); say(`Another bank buys ${full(sold)} of mortgages. Less risk on your books, less interest coming in.`); return sold; }
@@ -1351,7 +1354,7 @@ function nextYear(){
   grantUnlock(r);
   buildMonth();
 }
-function migrate(s){ if (s.swaps == null){ s.swaps = []; s.collateral = 0; } if (s.policy && s.policy.treasury && s.policy.treasury.hedgeTarget == null){ s.policy.treasury.hedgeTarget = 0; s.policy.treasury.hedgeYears = 3; } if (s.wholesale == null){ s.wholesale = 0; s.wsTranches = []; } if (s.bonds == null){ s.bonds = 0; s.bondTranches = []; s.retained = 0; s.pools = []; s.large = []; } if (!s.policy) s.policy = systemPolicy(); { const sp = systemPolicy(); for (const a of ['treasury', 'funding', 'capital']) if (!s.policy[a]) s.policy[a] = sp[a]; if (s.policy.capital.dividendPayout == null) s.policy.capital.dividendPayout = 0; for (const [k, v] of Object.entries(sp.funding)) if (s.policy.funding[k] == null) s.policy.funding[k] = v; for (const a of Object.keys(sp.owner)) if (!s.policy.owner[a]) s.policy.owner[a] = 'system'; } if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
+function migrate(s){ if (s.policy && s.policy.funding && s.policy.funding.boeTarget == null) s.policy.funding.boeTarget = 0; for (const t of s.wsTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 3; } for (const t of s.bondTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 12; } if (s.swaps == null){ s.swaps = []; s.collateral = 0; } if (s.policy && s.policy.treasury && s.policy.treasury.hedgeTarget == null){ s.policy.treasury.hedgeTarget = 0; s.policy.treasury.hedgeYears = 3; } if (s.wholesale == null){ s.wholesale = 0; s.wsTranches = []; } if (s.bonds == null){ s.bonds = 0; s.bondTranches = []; s.retained = 0; s.pools = []; s.large = []; } if (!s.policy) s.policy = systemPolicy(); { const sp = systemPolicy(); for (const a of ['treasury', 'funding', 'capital']) if (!s.policy[a]) s.policy[a] = sp[a]; if (s.policy.capital.dividendPayout == null) s.policy.capital.dividendPayout = 0; for (const [k, v] of Object.entries(sp.funding)) if (s.policy.funding[k] == null) s.policy.funding[k] = v; for (const a of Object.keys(sp.owner)) if (!s.policy.owner[a]) s.policy.owner[a] = 'system'; } if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
 /* ---- recurring households ----
    Seven named households (a student, a young renter, a couple buying their first home, a family, a self-employed
    tradesperson, a retiree and a single parent) stay with the bank for the whole game. Their money moves each month
@@ -1429,7 +1432,7 @@ function hhOutcome(c, k){
   if (!h || (h.loanId && S.loans.some(l => l.id === h.loanId && l.hh === h.id))) return;
   hhSay(h, k === 'no' ? `Was turned down for a ${KNAME[c.kind] || 'loan'}.` : `Did not go ahead with the ${KNAME[c.kind] || 'loan'}.`);
 }
-function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); warnMonth(); }
+function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); boeFacility(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); warnMonth(); }
 function buildMonthCards(){
   const m = S.month, lead = [], other = [];
   S.pl = blankPL();
@@ -1565,7 +1568,7 @@ function fundingByPolicy(){
   if (repay > 0) je('wholesale.repay', [['wholesale', repay], ['cash', -repay]]);
   const frozen = marketFrozen(), wHeld = wKeep.reduce((x, w) => x + w.amt, 0), wWant = own ? fp.wholesaleTarget * S.deposits - wHeld : 0;
   let borrowed = 0;
-  if (!frozen && wWant > 50){ borrowed = Math.floor(wWant / 50) * 50; je('wholesale.borrow', [['cash', borrowed], ['wholesale', -borrowed]]); wKeep.push({ amt: borrowed, rate: wholesaleRate(), due: now + WHOLESALE_MONTHS }); }
+  if (!frozen && wWant > 50){ borrowed = Math.floor(wWant / 50) * 50; je('wholesale.borrow', [['cash', borrowed], ['wholesale', -borrowed]]); wKeep.push({ id: fid(), amt: borrowed, rate: wholesaleRate(), start: now, due: now + WHOLESALE_MONTHS }); }
   S.wsTranches = wKeep;
 
   // fixed-term bonds: locked in at a fixed rate for 1 to 3 years, repaid or refinanced at maturity
@@ -1573,7 +1576,7 @@ function fundingByPolicy(){
   if (bRepay > 0) je('bond.repay', [['bonds', bRepay], ['cash', -bRepay]]);
   const bHeld = bKeep.reduce((x, y) => x + y.amt, 0), bWant = own ? fp.bondTarget * S.deposits - bHeld : 0;
   let issued = 0;
-  if (bWant > 50){ issued = Math.floor(bWant / 50) * 50; const term = Math.round(fp.bondTermYears), rate = Math.round((mkt() + 1 + fp.bondPremium + 0.2 * (term - 1)) * 100) / 100; je('bond.issue', [['cash', issued], ['bonds', -issued]]); bKeep.push({ amt: issued, rate, due: now + 12 * term }); }
+  if (bWant > 50){ issued = Math.floor(bWant / 50) * 50; const term = Math.round(fp.bondTermYears), rate = Math.round((mkt() + 1 + fp.bondPremium + 0.2 * (term - 1)) * 100) / 100; je('bond.issue', [['cash', issued], ['bonds', -issued]]); bKeep.push({ id: fid(), amt: issued, rate, start: now, due: now + 12 * term }); }
   S.bondTranches = bKeep;
 
   // large depositors: offers arrive, the cap decides whether to take them, and they can all leave at once
@@ -1719,7 +1722,7 @@ function closeMonth(){
   }
   // funding plumbing
   if (S.cash < 0){ const need = -S.cash + S.deposits * 0.05; je('boe.draw', [['cash', need], ['cb', -need]]); S.trust = clamp(S.trust - 3, 0, 100); S.stats.emergency++; news(9, 'Counting House forced into emergency borrowing', 'The bank ran out of cash and turned to the Bank of England.'); ev(`You ran out of cash. Emergency borrowing from the Bank of England: ${fmt(need)}.`, 'bad'); }
-  else if (S.cb > 0 && liqRatio() > 0.2){ const rpy = Math.min(S.cb, S.cash - 0.15 * S.deposits); if (rpy > 0){ je('boe.repay', [['cb', rpy], ['cash', -rpy]]); ev(`Repaid ${fmt(rpy)} to the Bank of England.`, 'good'); } }
+  else if (S.cb > 0 && liqRatio() > 0.2){ const keep = S.policy.owner.funding === 'player' ? Math.min(S.policy.funding.boeTarget || 0, boeCapacity()) : 0, rpy = Math.min(S.cb - keep, S.cash - 0.15 * S.deposits); if (rpy > 0){ je('boe.repay', [['cb', rpy], ['cash', -rpy]]); ev(`Repaid ${fmt(rpy)} to the Bank of England.`, 'good'); } }
   if (S.trust <= 10){ const run = S.deposits * 0.25; je('deposit.run', [['deposits', run], ['cash', -run]]); ev(`Customers have lost faith. ${fmt(run)} withdrawn in a week.`, 'bad'); if (S.cash < 0){ S.over = 'run'; } }
   // checks
   const cr = capRatio(), lq = liqRatio();
@@ -1736,7 +1739,7 @@ function closeMonth(){
   S.history.push({ m, profit: capital() - S.startCap + (S.divPaid || 0) - (S.injected || 0), cap: cr, liq: lq, trust: S.trust, comp: S.comp });
   S.month++;
   if (!S.over && S.month >= 12) S.over = 'done';
-  boardMonth(rep);
+  boardMonth(rep); shareMonth();
   if (S.over) S.debrief = makeDebrief();
   evalGoals(S.history[S.history.length - 1], !!S.over);
   if (!S.over) buildMonth();
@@ -1806,6 +1809,57 @@ function makeDebrief(){
   for (const c of pick5) seen[c.concept] = (seen[c.concept] || 0) + 1;
   return pick5.map(({ concept, area, big, what, why, ask }) => ({ concept, area, big, what, why, ask }));
 }
+/* ---- Bank of England facility ----
+   The central bank lends against the loan book at Bank Rate plus 1%, after a haircut on the collateral. It is always
+   available, which is the trap: using it shows in the Herald and costs the chief executive the board's confidence for as long
+   as the money is out. Owning funding, the player sets how much to keep drawn; the standing rule draws up to it (within
+   the collateral) and repays down to it. Forced emergency borrowing when cash runs out is separate and works as before. */
+const BOE_HAIRCUT = 0.3;
+const boeCapacity = () => (1 - BOE_HAIRCUT) * (S.legacy + loanSum());
+function boeFacility(){
+  if (S.policy.owner.funding !== 'player' || S.over || S.tutorial || S.scenario) return;
+  const want = Math.min(S.policy.funding.boeTarget || 0, boeCapacity());
+  if (S.cb < want - 24){
+    const d = Math.floor((want - S.cb) / 25) * 25;
+    je('boe.draw', [['cash', d], ['cb', -d]]); S.stats.boe++;
+    addMail('Your treasurer', 'Bank of England borrowing', `We have drawn ${full(d)} from the Bank of England, which now holds ${full(S.cb)} of our loans as collateral (after a ${pc(BOE_HAIRCUT, 0)} haircut we could borrow ${full(boeCapacity())}). It costs Bank Rate plus 1%, and the board does not like to see it.`, 'bad', S.month, S.year);
+    if (!(S.news || []).some(n => /borrows from the Bank of England/.test(n.head))) news(6, 'Counting House borrows from the Bank of England', 'The bank has turned to the central bank for funding, which some investors read as a sign of weakness.');
+  } else if (S.cb > want + 24){
+    const rp = Math.floor(Math.min(S.cb - want, S.cash - 0.15 * S.deposits) / 25) * 25;
+    if (rp >= 25){ je('boe.repay', [['cb', rp], ['cash', -rp]]); addMail('Your treasurer', 'Bank of England repaid', `We repaid ${full(rp)} to the Bank of England. ${S.cb > 0.5 ? full(S.cb) + ' is still drawn.' : 'Nothing is drawn now.'}`, 'good', S.month, S.year); }
+  }
+}
+
+/* ---- share price ----
+   Book value per share times a multiple. The multiple rises when return on equity beats the cost of equity (10%) and falls
+   with volatile profits and with trouble: enforcement and a capital breach. It is smoothed, so one month does not move it
+   far. Issuing shares at a discount to the price creates more shares, which dilutes everyone who held them before. */
+const COST_OF_EQUITY = 0.10, SHARES0 = 1000;      // thousands of shares, so capital in £k over shares is pounds per share
+const pxOf = () => S.px = S.px || { shares: SHARES0, mult: null, hist: [], issues: [] };
+const bookPerShare = () => capital() / pxOf().shares;
+const sharePrice = () => Math.max(0.01, bookPerShare() * (pxOf().mult == null ? 1 : pxOf().mult));
+function shareMonth(){
+  if (S.sim || !ceMode()) return;
+  const P = pxOf(), k = Math.max(1, S.month), r = rating(), roe = COST_OF_EQUITY + (r.roe * 12 / k - COST_OF_EQUITY) * Math.min(1, k / 6);      // a few months of profit say little about the year
+  const ps = S.history.map((h, i) => h.profit - (i ? S.history[i - 1].profit : 0)).slice(-12), mean = ps.reduce((a, b) => a + b, 0) / Math.max(1, ps.length);
+  const vol = Math.sqrt(ps.reduce((a, b) => a + (b - mean) * (b - mean), 0) / Math.max(1, ps.length)) * Math.sqrt(12) / Math.max(1, capital());
+  const trouble = (S.comp < 40 ? 0.3 : 0) + (capRatio() < MIN_CAP ? 0.2 : 0);
+  const target = clamp(1 + 4 * (roe - COST_OF_EQUITY) - 2 * vol - trouble, 0.4, 2.5);
+  P.mult = 0.75 * (P.mult == null ? 1 : P.mult) + 0.25 * target;
+  P.hist.push({ y: S.year, m: Math.max(0, S.month - 1), price: Math.round(sharePrice() * 1000) / 1000, book: Math.round(bookPerShare() * 1000) / 1000, mult: Math.round(P.mult * 1000) / 1000 });
+  if (P.hist.length > 36) P.hist.shift();
+}
+
+// Everything the bank has borrowed, one row each: wholesale loans and bonds with their terms, and the Bank of England as a
+// single running facility (on demand, so no maturity).
+function fundingInstruments(){
+  const out = [];
+  for (const w of S.wsTranches || []) out.push({ id: 'ws' + (w.id != null ? w.id : '-' + w.due + '-' + w.amt), kind: 'wholesale', amt: w.amt, rate: w.rate, start: w.start != null ? w.start : null, due: w.due });
+  for (const b of S.bondTranches || []) out.push({ id: 'bond' + (b.id != null ? b.id : '-' + b.due + '-' + b.amt), kind: 'bond', amt: b.amt, rate: b.rate, start: b.start != null ? b.start : null, due: b.due });
+  if ((S.cb || 0) > 0.005) out.push({ id: 'boe', kind: 'boe', amt: S.cb, rate: Math.round((S.base + 1) * 100) / 100, start: null, due: null });
+  return out;
+}
+
 /* ---- interest-rate hedging ----
    New mortgages are lent at a fixed rate while savers and wholesale lenders are paid something that follows Bank Rate, so a
    rise in rates squeezes the margin. A pay-fixed swap pays a fixed rate on a notional amount and receives Bank Rate, which
@@ -1904,6 +1958,8 @@ function indicators(){
     { key: 'large', role: 'Treasurer', label: 'Large depositor share', value: large, shown: pc(large, 0), status: band(large, 0.1, 0.25), text: `Large depositors hold ${pc(large, 0)} of deposits. One decision can move all of it.` },
     { key: 'arrears', role: 'Chief risk officer', label: 'Loans behind with payments', value: bad, shown: pc(bad), status: band(bad, 0.03, 0.06), text: `${pc(bad)} of the loan book is behind on payments. Losses follow arrears by a month or two.` },
     { key: 'risky', role: 'Chief risk officer', label: 'Riskiest lending', value: risky, shown: pc(risky, 0), status: band(risky, 0.15, 0.3), text: `${pc(risky, 0)} of the loan book is lent to borrowers with a high chance of default.` },
+    { key: 'boe', role: 'Treasurer', label: 'Bank of England borrowing', value: (S.cb || 0) / Math.max(1, boeCapacity()), shown: (S.cb || 0) > 0.5 ? fmt(S.cb) + ' of ' + fmt(boeCapacity()) + ' available' : 'none drawn (' + fmt(boeCapacity()) + ' available)', status: (S.cb || 0) > 0.5 ? ((S.cb || 0) > 0.5 * boeCapacity() ? 'alarm' : 'watch') : 'ok',
+      text: `${fmt(S.cb || 0)} is borrowed from the Bank of England, at Bank Rate plus 1%. It shows in the Herald and costs board confidence for as long as it is out. It is always there, which is why it is tempting.` },
     { key: 'hedge', role: 'Treasurer', label: 'Swap cover of fixed mortgages', value: hedgeRatio, shown: swapNotional() > 0 || mortBook > 0 ? pc(hedgeRatio, 0) + ' hedged (' + fmt(swapNotional()) + ' of swaps)' : 'no fixed mortgages', status: hedgeRatio > 1.1 ? 'alarm' : hedgeRatio > 1.0 ? 'watch' : 'ok',
       text: hedgeRatio > 1 ? `Swaps cover ${pc(hedgeRatio, 0)} of the fixed-rate mortgage book. Anything above 100% is a bet on rates rising: a rate cut brings payments and collateral calls on a book that is not there.` : `Swaps cover ${pc(hedgeRatio, 0)} of the ${fmt(mortBook)} fixed-rate mortgage book.` },
     { key: 'collateral', role: 'Treasurer', label: 'Collateral posted on swaps', value: coll / Math.max(1, liquid), shown: fmt(coll) + ' (' + pc(coll / Math.max(1, liquid), 0) + ' of liquid assets)', status: band(coll / Math.max(1, liquid), 0.1, 0.25),
@@ -1928,6 +1984,12 @@ function advisers(){
   if (S.month >= 2 && m.profit < 0) add('Finance director', 'warn', `We are ${fmt(-m.profit)} down for the year. Look at what we charge and what our funding costs.`);
   else if (m.profit > 0) add('Finance director', 'info', `Profit is ${fmt(m.profit)} for the year so far.${ci != null ? ` Costs take ${pc(ci, 0)} of income.` : ''}`);
   if (ci != null && ci > 0.7) add('Finance director', 'warn', `Costs take ${pc(ci, 0)} of income. Above 70% the board will ask why.`);
+  if (S.px && S.px.mult != null){
+    const px = sharePrice(), bv = bookPerShare();
+    if (S.px.mult < 0.8) add('Finance director', 'warn', `The shares trade at £${px.toFixed(2)}, ${pc(1 - S.px.mult, 0)} below book value of £${bv.toFixed(2)}. Investors doubt the returns. Raising capital now would be expensive and would dilute holders.`);
+    else if (S.px.mult > 1.3) add('Finance director', 'info', `The shares trade at £${px.toFixed(2)}, ${pc(S.px.mult - 1, 0)} above book value. If we need capital, this is the time to raise it.`);
+  }
+  if (own('capital') && P.capital.capitalAction === 0){ const dil = P.capital.raiseAmount / (capital() + P.capital.raiseAmount); add('Finance director', 'info', `If capital falls below your target we raise ${fmt(P.capital.raiseAmount)} at about £${(sharePrice() * 0.9).toFixed(2)} a share, a ${pc(dil, 0)} dilution for existing holders.`); }
   if (S.board && S.board.conf < 45) add('Finance director', 'alarm', `The board's confidence is ${Math.round(S.board.conf)}. ${S.board.low > 0 ? 'It was below 20 at the last meeting. ' : ''}Below 20 at two meetings in a row and you are out.`);
   if (own('capital')){
     const d = P.capital.dividendPayout;
@@ -1958,9 +2020,10 @@ function advisers(){
   } else add('Chief risk officer', 'info', `You have not run a stress test. Run one before changing credit or capital settings.`);
 
   // Treasurer: liquidity, funding and interest-rate risk
-  for (const k of ['horizon', 'liquidity', 'wholesale', 'wall', 'large', 'rates', 'hedge', 'collateral', 'ladder']) if (I[k].status !== 'ok') add('Treasurer', I[k].status === 'alarm' ? 'alarm' : 'warn', I[k].text);
+  for (const k of ['horizon', 'liquidity', 'wholesale', 'wall', 'large', 'rates', 'hedge', 'collateral', 'ladder', 'boe']) if (I[k].status !== 'ok') add('Treasurer', I[k].status === 'alarm' ? 'alarm' : 'warn', I[k].text);
   if (own('treasury') && P.treasury.hedgeTarget === 0 && loanSum('mortgage') > 3000 && rateSensitivity() < 0) add('Treasurer', 'warn', `The fixed-rate mortgage book is ${fmt(loanSum('mortgage'))} and nothing protects it. A rise in Bank Rate would squeeze the margin by about ${fmt(-rateSensitivity())} a year. Swaps would lock it in, at a small cost.`);
   if (own('treasury') && P.treasury.hedgeTarget >= 0.5 && P.treasury.hedgeTarget <= 1) add('Finance director', 'info', `The swaps cost about ${SWAP_SPREAD} points a year on the amount hedged and pay out only if rates rise. Is that insurance worth it?`);
+  if (own('funding') && P.funding.boeTarget > 0) add('Treasurer', 'warn', `You have asked to keep ${fmt(P.funding.boeTarget)} drawn from the Bank of England. It is cheap to reach and expensive in confidence: the board and the Herald will notice.`);
   if (own('treasury') && P.treasury.longShare > 0.5) add('Treasurer', 'warn', `Most of our gilts are long. If Bank Rate rises they lose value, and you count them at market value.`);
   if (own('funding') && P.funding.wholesaleTarget > 0.2) add('Treasurer', 'warn', `${pc(P.funding.wholesaleTarget, 0)} of funding from other banks is cheap until markets freeze and nobody renews.`);
   if (pushback) add('Treasurer', 'info', `I would keep the cash. It is what carries us through a run: ${I.horizon.shown} of survival horizon at ${pc(lq, 0)} liquidity. Run it down and the finance director's extra yield disappears the first bad month.`);
@@ -2010,6 +2073,7 @@ function boardMonth(rep){
   const breach = d(S.stats.capBreach, 'cb'), emerg = d(S.stats.emergency, 'em'), fined = d(S.stats.fines, 'fi'), paid = d(S.divPaid || 0, 'dv') > 0;
   let shock = -4 * breach - 4 * emerg - Math.min(3, fined / 50);
   if (lq < MIN_LIQ) shock -= 2;
+  if (S.cb > 0.5) shock -= 1;       // borrowing from the Bank of England, for as long as it is out
   if (S.comp < 40) shock -= 2;
   if (rep && rep.profit < -0.03 * Math.max(1, capital())) shock -= 1.5;
   B.divM.push(paid ? 1 : 0); if (B.divM.length > 3) B.divM.shift();
@@ -3178,6 +3242,7 @@ const POLICY_FIELDS = {
     ['hedgeYears', 'Swap term', 'years, 1 to 5', 1, 'Longer swaps lock the protection in for longer, and the losses.']],
     note: 'Saving these takes over treasury. Your treasurer follows these rules every month and stops asking you each time.' },
   funding: { title: 'Funding', rows: [
+    ['boeTarget', 'Bank of England borrowing to keep drawn', '£k', 250, 'Borrowed against your loans (after a 30% haircut) at Bank Rate plus 1%. Always available, but it appears in the Herald and costs board confidence for as long as it is out. 0 means none, except in an emergency.'],
     ['savingsSpread', 'Savings rate against the market', '% points', 0.1, 'Your rate is the market rate plus this. Higher draws deposits in and costs more on every pound saved.'],
     ['wholesaleTarget', 'Wholesale borrowing, as a share of deposits', 'share', 0.05, 'Borrowed from other banks for three months at a time. Dearer than savings, and in a freeze nobody renews.'],
     ['bondTarget', 'Fixed-term bonds, as a share of deposits', 'share', 0.05, 'Locked in for the term and cannot leave early. Watch for many maturing together.'],
@@ -3224,6 +3289,22 @@ function boardBlock(){
     <div class="hbar" role="img" aria-label="Board confidence ${c} out of 100"><span class="${c < 40 ? 'out' : 'kept'}" style="width:${c}%"></span></div>
     <p class="dim">Next board meeting in ${next} month${next === 1 ? '' : 's'}. Below 20 at two meetings in a row, or enforcement action by the regulator, ends your time as chief executive.</p>${hist ? `<p class="dim">${hist}</p>` : ''}</div>`;
 }
+function shareBlock(){
+  if (!S.px || !S.px.hist.length) return '';
+  const P = S.px, h = P.hist, last = h[h.length - 1], first = h[0], chg = last.price / first.price - 1;
+  const lo = Math.min(...h.map(x => x.price)), hi = Math.max(...h.map(x => x.price)), w = 220, ht = 44, span = Math.max(0.01, hi - lo);
+  const line = h.length > 1 ? `<svg class="spark" viewBox="0 0 ${w} ${ht}" role="img" aria-label="Share price from £${first.price.toFixed(2)} to £${last.price.toFixed(2)}"><polyline fill="none" stroke="currentColor" stroke-width="2" points="${h.map((x, i) => (i / (h.length - 1) * w).toFixed(1) + ',' + (ht - 4 - (x.price - lo) / span * (ht - 8)).toFixed(1)).join(' ')}"/></svg>` : '';
+  const dps = (S.divPaid || 0) / P.shares;
+  return `<div class="note"><div class="eyebrow">Shareholders</div><p><b>Share price £${last.price.toFixed(2)}</b> <span class="dim">${chg >= 0 ? '+' : '−'}${pc(Math.abs(chg), 0)} since ${MONTHS[first.m].slice(0, 3)} ${first.y}</span></p>${line}
+    <p class="dim">Book value £${last.book.toFixed(2)} a share × ${last.mult.toFixed(2)} · ${Math.round(P.shares)}k shares${dps > 0 ? ` · dividends £${dps.toFixed(3)} a share this year` : ''}${P.issues.length ? ` · ${P.issues.length} share issue${P.issues.length === 1 ? '' : 's'}, last ${fmt(P.issues[P.issues.length - 1].amt)} at £${P.issues[P.issues.length - 1].price.toFixed(2)}` : ''}</p>
+    <p class="dim">The multiple rises when return on equity beats 10% and falls with volatile profits, enforcement and a capital breach.</p></div>`;
+}
+function instrumentsHTML(){
+  const rows = fundingInstruments(); if (!rows.length) return '';
+  const lab = { wholesale: 'Wholesale', bond: 'Bond', boe: 'Bank of England' };
+  const due = d => d == null ? 'on demand' : MONTHS[d % 12].slice(0, 3) + ' ' + Math.floor(d / 12);
+  return `<h3>Funding instruments</h3><div class="lad ins"><span></span><b>Amount</b><b>Rate</b><b>Due</b>${rows.slice(0, 12).map(r => `<span>${lab[r.kind]}</span><span>${fmt(r.amt)}</span><span>${r.rate.toFixed(2)}%</span><span>${due(r.due)}</span>`).join('')}</div>${rows.length > 12 ? `<p class="dim">and ${rows.length - 12} more.</p>` : ''}`;
+}
 function ladderHTML(){
   const L = maturityLadder(), cell = x => x > 0.5 ? fmt(x) : '–';
   return `<h3>Funding ladder</h3><div class="lad"><span></span><b>Repaying</b><b>Falling due</b><b>After a run</b>${L.rows.map(r => `<span>${esc(r.label)}</span><span>${cell(r.inflow)}</span><span>${cell(r.outflow)}</span><span style="color:${r.cover < 0 ? 'var(--bad)' : 'inherit'}">${fmt(r.cover)}</span>`).join('')}</div>
@@ -3236,7 +3317,7 @@ function teamScreen(){
   const rows = ind.map(i => `<div class="ewi ${i.status}"><span class="pill ${i.status}">${lab[i.status]}</span><div><b>${esc(i.label)}</b><span class="num">${esc(i.shown)}</span></div></div>`).join('');
   overlay(`${execTop('team')}<div class="eyebrow">Chief Executive · ${MONTHS[Math.min(S.month, 11)]} ${S.year}</div><h2>Your executive team</h2>
     <p class="dim">Each adviser reads the same numbers from their own seat, so they will not always agree. Changes you make in Settings apply to new decisions from now on.</p>
-    ${boardBlock()}${stressLine()}${by}<h3>Early warnings</h3><div class="ewis">${rows}</div>${ladderHTML()}
+    ${boardBlock()}${shareBlock()}${stressLine()}${by}<h3>Early warnings</h3><div class="ewis">${rows}</div>${ladderHTML()}${instrumentsHTML()}
     <details class="more"><summary>Resign as chief executive</summary><div class="acct" style="margin-top:8px"><p class="dim">Resigning ends the game. You are rated on the year so far.</p><button type="button" class="btn no" id="exResign">Resign</button></div></details>
     <div class="stickyfoot"><button type="button" class="btn link" id="plBack">Close</button></div>`);
   tabSel('policy'); execWire();
