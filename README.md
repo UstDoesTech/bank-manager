@@ -50,6 +50,7 @@ docker compose up -d db   # the next two need Postgres
 npm run test:server       # API, accounts, ledger, replay, rollback, privacy (throwaway database per run)
 npm run test:browser      # the real page in Edge/Chrome against the real server, including going offline
 npm run test:all
+npm run a11y             # axe-core (WCAG 2.2 A/AA) over every screen at phone and desktop width; needs Edge or Chrome
 ```
 
 

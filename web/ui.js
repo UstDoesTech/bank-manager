@@ -282,12 +282,12 @@ function herald(){
   const b0 = S.history.length ? S.y0.base : S.base, h0 = S.history[0];
   const photo = Scene.snapshot();
   const rateLine = P().abs ? P().rate[0] : S.y0.base;
-  overlay(`<header class="mast"><h1>The Fiscal Herald</h1><div class="rule"><span>${day} 31 December ${S.year}</span><span>Hartley Green edition</span><span>£3.50</span></div></header>
+  overlay(`<div class="mast"><h1>The Fiscal Herald</h1><div class="rule"><span>${day} 31 December ${S.year}</span><span>Hartley Green edition</span><span>£3.50</span></div></div>
     <article class="lead"><h2>${esc(lead.head)}</h2><p class="stand">${esc(lead.body)}</p></article>
     ${photo ? `<figure class="photo-np"><img src="${photo}" alt="The banking hall at Counting House"><figcaption>The banking hall at Counting House on the high street.</figcaption></figure>` : ''}
     <div class="np-cols">
       ${subs.map(x => `<section class="np-story"><h3>${esc(x.head)}</h3>${x.body ? `<p>${esc(x.body)}</p>` : ''}</section>`).join('')}
-      <section class="np-box"><h4>Markets</h4><table>
+      <section class="np-box"><h3>Markets</h3><table>
         <tr><td>Bank Rate</td><td>${rateLine.toFixed(2)}% → ${S.base.toFixed(2)}%</td></tr>
         <tr><td>Unemployment</td><td>${unemp(11).toFixed(1)}%</td></tr>
         <tr><td>House prices</td><td>${(hpiYr(11) * 100 >= 0 ? '+' : '')}${(hpiYr(11) * 100).toFixed(1)}%</td></tr>
@@ -295,7 +295,7 @@ function herald(){
         <tr><td>Best easy-access saver</td><td>${mkt().toFixed(2)}%</td></tr>
         <tr><td>Inflation</td><td>${inflation(11).toFixed(1)}%</td></tr>
         <tr><td>Real return on savings</td><td>${(mkt() - inflation(11) >= 0 ? '+' : '')}${(mkt() - inflation(11)).toFixed(1)}%</td></tr></table></section>
-      ${brief.length ? `<section class="np-box"><h4>In brief</h4><ul class="np-brief">${brief.map(x => `<li>${esc(x.head)}</li>`).join('')}</ul></section>` : ''}
+      ${brief.length ? `<section class="np-box"><h3>In brief</h3><ul class="np-brief">${brief.map(x => `<li>${esc(x.head)}</li>`).join('')}</ul></section>` : ''}
     </div>
     <button type="button" class="btn primary" id="ovGo">${S.scenario ? 'See how you did' : 'See your year-end rating'}</button>`);
   $('#ov .panel').classList.add('paper');

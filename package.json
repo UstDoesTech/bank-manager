@@ -9,6 +9,7 @@
     "replay": "node server/replay.js",
     "test:browser": "node --test test/browser.test.js",
     "shots": "node tools/shots.js",
+    "a11y": "node tools/a11y.js",
     "test:all": "npm test && npm run test:server && npm run test:browser"
   },
   "dependencies": {
@@ -18,6 +19,7 @@
     "pg": "8.23.1"
   },
   "devDependencies": {
+    "axe-core": "4.10.2",
     "playwright-core": "1.65.0"
   }
 }

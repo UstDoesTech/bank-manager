@@ -103,7 +103,8 @@ button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 .nline b{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#6b5512;margin-bottom:2px}
 .nline p{margin:0}
 .nline .nl{font-weight:700}
-.nline.coach{background:#fbf2bf}
+.nline.coach{background:#fbf2bf;color:#2a2410}
+.nline.coach b{color:#6b5512}
 .sheet .mark{top:96px}
 .sheet .press{top:96px}
 .more-line{margin:0;font-size:13.5px;color:#e9dccb}
@@ -235,7 +236,7 @@ button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 .paper .np-story h3{margin:0;font:700 19px/1.15 var(--f-news);text-transform:none;letter-spacing:0;color:var(--newsink)}
 .np-story p,.lead p.copy{margin:4px 0 0;font:400 15px/1.5 var(--f-copy);max-width:none}
 .np-box{break-inside:avoid;border:1px solid var(--newsink);padding:8px 10px 6px;margin:0 0 14px;font:400 14px/1.4 var(--f-copy)}
-.np-box h4{margin:0 0 4px;font:700 11px/1.2 var(--f-mono);letter-spacing:.1em;text-transform:uppercase}
+.np-box h3{margin:0 0 4px;font:700 11px/1.2 var(--f-mono);letter-spacing:.1em;text-transform:uppercase}
 .np-box table{width:100%;border-collapse:collapse}
 .np-box td{padding:2px 0;border-bottom:1px dotted rgba(43,27,19,.4)}
 .np-box td:last-child{text-align:right;font-family:var(--f-mono);font-size:12.5px;white-space:nowrap}
@@ -284,7 +285,7 @@ button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 
 /* Overlays */
 #ov{position:fixed;inset:0;z-index:20;background:rgba(6,18,15,.72);backdrop-filter:blur(3px);display:flex;align-items:flex-end;justify-content:center;padding-top:calc(env(safe-area-inset-top,0px) + 24px)}
-.panel{width:100%;max-width:560px;max-height:100%;overflow-y:auto;background:var(--hall-2);border:1px solid var(--line);border-bottom:0;border-radius:16px 16px 0 0;padding-block:20px calc(16px + env(safe-area-inset-bottom,0px));padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px));display:grid;gap:14px;animation:rise .35s cubic-bezier(.2,.8,.2,1)}
+.panel{width:100%;max-width:560px;max-height:100%;overflow-y:auto;scroll-padding-bottom:84px;background:var(--hall-2);border:1px solid var(--line);border-bottom:0;border-radius:16px 16px 0 0;padding-block:20px calc(16px + env(safe-area-inset-bottom,0px));padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px));display:grid;gap:14px;animation:rise .35s cubic-bezier(.2,.8,.2,1)}
 @keyframes rise{from{transform:translateY(40px);opacity:0}}
 .panel h2{margin:0;font-weight:850;font-variation-settings:"wdth" 120;font-size:24px;line-height:1.1;text-wrap:balance}
 .panel h3{margin:0;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:700}
