@@ -2311,6 +2311,21 @@ function welcomeMail(){
 function markRead(key){ const id = +key.slice(1); const it = key[0] === 'c' ? S.queue.find(x => x.id === id) : (S.inbox || []).find(x => x.id === id); if (it) it.read = true; }
 
 /* ---- presentation data the page reads, kept here so the page only draws ---- */
+/* ---- what the 3D hall shows: weather, time of day, staff and the branch network. Pure functions of the state; they never touch the random stream. ---- */
+function sceneFacts(){
+  const k = S.year * 12 + Math.min(S.month, 11), h = (Math.imul(k, 2654435761) >>> 0) % 100, m = Math.min(S.month, 11);
+  const cold = m === 11 || m === 0 || m === 1, wet = [9, 10, 2, 3].includes(m), hot = [5, 6, 7].includes(m);
+  const weather = cold ? (h < 22 ? 'snow' : h < 50 ? 'rain' : h < 78 ? 'cloud' : 'clear')
+    : wet ? (h < 38 ? 'rain' : h < 68 ? 'cloud' : 'clear')
+    : hot ? (h < 12 ? 'rain' : h < 35 ? 'cloud' : 'clear')
+    : (h < 25 ? 'rain' : h < 55 ? 'cloud' : 'clear');
+  const cards = S.queue.length, day = cards ? S.queue.filter(c => c.done).length / cards : 0;
+  const G = S.growth && growthOwned() ? S.growth : null;
+  const towns = G ? GROWTH_TOWNS.map(t => ({ name: t.name, state: ['closed', 'hub', 'branch'][G.townState[t.key]] || 'closed' })) : [];
+  return { weather, day, analyst: owned('analyst'), refurb: owned('refurb'), app: owned('app'), cashier: owned('cashier'),
+    branches: towns.filter(t => t.state === 'branch').length, hubs: towns.filter(t => t.state === 'hub').length, network: !!G };
+}
+
 /* ---- dashboard and month-end facts: what the page draws as gauges, charts and "what moved" ---- */
 function plRows(L){
   return [['Interest from loans', L.intLoans], ['Interest on gilts', L.intGilts], ['Interest on reserves', L.intRes], ['Interest paid to savers', L.intDep], ['Bank of England and wholesale borrowing', L.intCB],

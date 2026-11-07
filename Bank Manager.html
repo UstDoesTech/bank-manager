@@ -2779,6 +2779,21 @@ function welcomeMail(){
 function markRead(key){ const id = +key.slice(1); const it = key[0] === 'c' ? S.queue.find(x => x.id === id) : (S.inbox || []).find(x => x.id === id); if (it) it.read = true; }
 
 /* ---- presentation data the page reads, kept here so the page only draws ---- */
+/* ---- what the 3D hall shows: weather, time of day, staff and the branch network. Pure functions of the state; they never touch the random stream. ---- */
+function sceneFacts(){
+  const k = S.year * 12 + Math.min(S.month, 11), h = (Math.imul(k, 2654435761) >>> 0) % 100, m = Math.min(S.month, 11);
+  const cold = m === 11 || m === 0 || m === 1, wet = [9, 10, 2, 3].includes(m), hot = [5, 6, 7].includes(m);
+  const weather = cold ? (h < 22 ? 'snow' : h < 50 ? 'rain' : h < 78 ? 'cloud' : 'clear')
+    : wet ? (h < 38 ? 'rain' : h < 68 ? 'cloud' : 'clear')
+    : hot ? (h < 12 ? 'rain' : h < 35 ? 'cloud' : 'clear')
+    : (h < 25 ? 'rain' : h < 55 ? 'cloud' : 'clear');
+  const cards = S.queue.length, day = cards ? S.queue.filter(c => c.done).length / cards : 0;
+  const G = S.growth && growthOwned() ? S.growth : null;
+  const towns = G ? GROWTH_TOWNS.map(t => ({ name: t.name, state: ['closed', 'hub', 'branch'][G.townState[t.key]] || 'closed' })) : [];
+  return { weather, day, analyst: owned('analyst'), refurb: owned('refurb'), app: owned('app'), cashier: owned('cashier'),
+    branches: towns.filter(t => t.state === 'branch').length, hubs: towns.filter(t => t.state === 'hub').length, network: !!G };
+}
+
 /* ---- dashboard and month-end facts: what the page draws as gauges, charts and "what moved" ---- */
 function plRows(L){
   return [['Interest from loans', L.intLoans], ['Interest on gilts', L.intGilts], ['Interest on reserves', L.intRes], ['Interest paid to savers', L.intDep], ['Bank of England and wholesale borrowing', L.intCB],
@@ -2956,7 +2971,7 @@ const Scene = (() => {
     ctx.fillStyle = '#94aea5'; ctx.font = '500 36px "IBM Plex Mono", monospace'; ctx.fillText(foot, c.width / 2, c.height * 0.87);
     b.t.needsUpdate = true;
   }
-  function drawSign(){ const { ctx, c } = bSign; ctx.fillStyle = '#0d1f1b'; ctx.fillRect(0, 0, c.width, c.height); ctx.fillStyle = '#d9ab4f'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '800 38px Archivo, Arial Narrow, sans-serif'; ctx.fillText('C O U N T I N G   H O U S E', c.width / 2, c.height / 2 + 2); bSign.t.needsUpdate = true; }
+  function drawSign(){ const { ctx, c } = bSign; ctx.fillStyle = '#0d1f1b'; ctx.fillRect(0, 0, c.width, c.height); ctx.fillStyle = '#d9ab4f'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '800 38px Archivo, Arial Narrow, sans-serif'; const f = S ? sceneFacts() : null, net = f && f.network ? `${f.branches} BRANCH${f.branches === 1 ? '' : 'ES'} · ${f.hubs} HUB${f.hubs === 1 ? '' : 'S'}` : ''; ctx.fillText('C O U N T I N G   H O U S E', c.width / 2, c.height / 2 + (net ? -10 : 2)); if (net){ ctx.fillStyle = '#9fc7b6'; ctx.font = '600 20px Archivo, Arial Narrow, sans-serif'; ctx.fillText(net, c.width / 2, c.height / 2 + 28); } bSign.t.needsUpdate = true; }
 
   // counter
   mesh(new T.BoxGeometry(11, 1.05, 0.9), walnut, 0, 0.525, -1.75);
@@ -2992,7 +3007,7 @@ const Scene = (() => {
   mesh(new T.BoxGeometry(3.7, 0.05, 3.5), M(0x2f6b4a, { roughness:1 }), -6.1, 0.875, -2.1, false);
 
   // lights
-  scene.add(new T.HemisphereLight(0xd8f0e6, 0x0a1714, 0.85));
+  const hemi = new T.HemisphereLight(0xd8f0e6, 0x0a1714, 0.85); scene.add(hemi);
   const sun = new T.DirectionalLight(0xffe4bd, 1.15); sun.position.set(4, 11, 7); sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left:-11, right:11, top:11, bottom:-11, near:1, far:30 }); scene.add(sun);
   const warm = new T.PointLight(0xffc27a, 0.6, 16); warm.position.set(0, 4, -0.8); scene.add(warm);
@@ -3013,9 +3028,10 @@ const Scene = (() => {
   const WINS = [-3.6, 3.8, -6.9, 6.9];
   for (const x of WINS){ const w = fmesh(new T.PlaneGeometry(1.8, 3.6), winMat, x, 2.95, 7.69); w.rotation.y = Math.PI; fmesh(new T.BoxGeometry(2.0, 0.08, 0.22), brass, x, 1.13, 7.6); }
   const outside = new T.PointLight(0xdfeeff, 0.45, 9); outside.position.set(0, 2.8, 6.8); front.add(outside);
-  function drawWindow(){
-    const c = wx, W = 256, H = 512, m = S ? S.month : 0;
-    const SK = [['#9fb4c6','#dfe6ea'],['#a7bccc','#e4eaec'],['#8ec5e8','#e6f2e0'],['#86c2ec','#eef4dc'],['#7dbcef','#f3f0d0'],['#6fb6ee','#fbe9c0'],['#6db3ee','#fde6b8'],['#78b6ea','#f9e2b6'],['#97b9d2','#f4dcb0'],['#a3b6c6','#f0d2a8'],['#9db0c0','#e2d9cc'],['#93a9bc','#dbe2e7']][m];
+  function drawWindow(tick){
+    const c = wx, W = 256, H = 512, m = S ? S.month : 0, wthr = S ? sceneFacts().weather : 'clear';
+    const SK0 = [['#9fb4c6','#dfe6ea'],['#a7bccc','#e4eaec'],['#8ec5e8','#e6f2e0'],['#86c2ec','#eef4dc'],['#7dbcef','#f3f0d0'],['#6fb6ee','#fbe9c0'],['#6db3ee','#fde6b8'],['#78b6ea','#f9e2b6'],['#97b9d2','#f4dcb0'],['#a3b6c6','#f0d2a8'],['#9db0c0','#e2d9cc'],['#93a9bc','#dbe2e7']][m];
+    const SK = wthr === 'rain' ? ['#6c7a86','#aab4ba'] : wthr === 'snow' ? ['#a9b6c2','#e6ebef'] : wthr === 'cloud' ? [SK0[0].replace(/^#(..)(..)(..)$/, (_, a, b, d) => '#' + [a, b, d].map(x => Math.round(parseInt(x, 16) * 0.82 + 20).toString(16).padStart(2, '0')).join('')), SK0[1]] : SK0;
     c.clearRect(0, 0, W, H);
     c.save(); c.beginPath(); c.moveTo(12, H - 8); c.lineTo(12, 128); c.arc(W / 2, 128, W / 2 - 12, Math.PI, 0); c.lineTo(W - 12, H - 8); c.closePath(); c.clip();
     const gr = c.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, SK[0]); gr.addColorStop(1, SK[1]); c.fillStyle = gr; c.fillRect(0, 0, W, H);
@@ -3025,6 +3041,9 @@ const Scene = (() => {
     c.strokeStyle = '#3a2a1e'; c.lineWidth = 9; c.beginPath(); c.moveTo(150, H); c.lineTo(150, 300); c.moveTo(150, 340); c.lineTo(110, 270); c.moveTo(150, 320); c.lineTo(195, 255); c.stroke();
     if (leaf){ c.fillStyle = leaf; [[150,250,70],[105,265,45],[198,255,50],[150,205,48]].forEach(([x, y, r]) => { c.beginPath(); c.arc(x, y, r, 0, 7); c.fill(); }); }
     c.fillStyle = 'rgba(40,46,44,.85)'; c.fillRect(0, H - 50, W, 50);
+    if (wthr !== 'clear'){ c.fillStyle = wthr === 'rain' ? 'rgba(88,98,108,.9)' : 'rgba(245,247,250,.88)'; [[40,70,46],[110,52,58],[176,78,44],[220,60,36]].forEach(([x, y, r]) => { c.beginPath(); c.ellipse(x, y, r * 1.5, r * 0.62, 0, 0, 7); c.fill(); }); }
+    if (wthr === 'rain'){ c.strokeStyle = 'rgba(205,225,240,.75)'; c.lineWidth = 2; const o = (tick || 0) * 0.45; c.beginPath(); for (let i = 0; i < 46; i++){ const x = (i * 29) % W, y = ((i * 71) + o) % H; c.moveTo(x, y); c.lineTo(x - 5, y + 24); } c.stroke(); }
+    if (wthr === 'snow'){ c.fillStyle = 'rgba(255,255,255,.95)'; const o = (tick || 0) * 0.05; for (let i = 0; i < 40; i++){ const x = ((i * 47) + Math.sin(o * 0.05 + i) * 10 + W) % W, y = ((i * 83) + o * (1 + (i % 3) * 0.4)) % H; c.beginPath(); c.arc(x, y, 2 + (i % 3), 0, 7); c.fill(); } }
     c.restore();
     c.strokeStyle = '#c99a3e'; c.lineWidth = 12; c.beginPath(); c.moveTo(12, H - 8); c.lineTo(12, 128); c.arc(W / 2, 128, W / 2 - 12, Math.PI, 0); c.lineTo(W - 12, H - 8); c.closePath(); c.stroke();
     c.lineWidth = 6; c.beginPath(); c.moveTo(W / 2, 20); c.lineTo(W / 2, H - 8); c.moveTo(12, 300); c.lineTo(W - 12, 300); c.moveTo(12, 128); c.lineTo(W - 12, 128); c.stroke();
@@ -3188,6 +3207,14 @@ const Scene = (() => {
     u.brows[0].position.y = u.brows[1].position.y = 0.068 + (f === 'smile' ? 0.01 : f === 'worried' ? 0.01 : f === 'frown' ? -0.006 : 0);
   }
   const tellers = []; for (const x of [-3.6, 0, 3.6]){ const p = makePerson({ hue: (x + 9) / 10 + 0.013, staff:true, age:40 }); p.position.set(x, 0, -2.55); p.rotation.y = 0; tellers.push(p); }
+  // staff that come with upgrades: a credit analyst at a side desk, and a greeter inside the door once the branch is refurbished
+  const analystP = makePerson({ hue:0.37, staff:true, age:34 }); analystP.position.set(-6.1, 0, 1.1); analystP.rotation.y = 0.35; analystP.visible = false;
+  const greeterP = makePerson({ hue:0.71, staff:true, age:29 }); greeterP.position.set(-2.1, 0, 5.4); greeterP.rotation.y = -0.45; greeterP.visible = false;
+  const anDesk = mesh(new T.BoxGeometry(1.5, 0.78, 0.7), walnut, -6.1, 0.39, 1.75); anDesk.visible = false;
+  const anScreen = mesh(new T.BoxGeometry(0.5, 0.34, 0.04), screenMat, -6.1, 1.0, 1.9); anScreen.visible = false;
+  // app: a phone stand on the counter and a QR sign
+  const appStand = mesh(new T.BoxGeometry(0.34, 0.5, 0.05), M(0x111a18), 5.2, 1.4, -1.6); appStand.visible = false;
+  const appFace = mesh(new T.PlaneGeometry(0.28, 0.42), M(0xffffff, { emissive:0x2a8a6a, emissiveIntensity:0.9 }), 5.2, 1.4, -1.57); appFace.visible = false;
   // Card ids restart at 1 in every game, so a person is identified by the card and who it describes, not the id alone.
   const pkey = c => c.id + ':' + c.who.hue + ':' + c.who.age + ':' + c.who.name;
   const QUEUE = [[0, -0.98], [0.34, 0.62], [-0.3, 1.78], [0.3, 2.9], [-0.24, 4.0], [0.2, 5.1]];
@@ -3233,7 +3260,15 @@ const Scene = (() => {
   function rain(n){ if (reduce) return; for (let i = 0; i < n; i++){ const c = new T.Mesh(coinG, coins.material); c.position.set(4.9 + Math.random() * 2, 3 + Math.random() * 1.5, -3.4 + Math.random() * 1.3); c.userData = { vy: 0, life: 1.4 + Math.random() * 0.4 }; c.rotation.set(Math.random() * 3, 0, Math.random() * 3); scene.add(c); fallers.push(c); } }
 
   // state
-  let alarmOn = false, vaultSpin = 0, flashT = 0;
+  let alarmOn = false, vaultSpin = 0, flashT = 0, sceneNow = {}, clockMin = 540, lastWin = 0;
+  // weather and the hour of the day: the sun dims in rain and warms through the afternoon as the day's customers are served
+  function atmosphere(){
+    if (!S) return; sceneNow = sceneFacts();
+    sun.intensity = { clear:1.15, cloud:0.85, rain:0.55, snow:0.8 }[sceneNow.weather]; sun.color.setHex(sceneNow.day > 0.65 ? 0xffc890 : sceneNow.day > 0.3 ? 0xffe4bd : 0xfff0d8);
+    hemi.intensity = sceneNow.weather === 'rain' ? 0.7 : 0.85;
+    analystP.visible = mode !== 'booth' && sceneNow.analyst; anDesk.visible = anScreen.visible = sceneNow.analyst; greeterP.visible = mode !== 'booth' && sceneNow.refurb;
+    appStand.visible = appFace.visible = sceneNow.app; tellers[0].visible = sceneNow.cashier;
+  }
 
   let mode = 'hall', snap = true;
   const want = { pos: new T.Vector3(), tgt: new T.Vector3(), fov: 50 };
@@ -3242,7 +3277,7 @@ const Scene = (() => {
     const vf = hdeg => clamp(T.MathUtils.radToDeg(2 * Math.atan(Math.tan(T.MathUtils.degToRad(hdeg) / 2) / Math.max(a, 0.5))), 34, 76);
     if (mode === 'booth'){ want.pos.set(0, 1.8, -2.62); want.tgt.set(0, 1.54, 2.2); want.fov = vf(a < 1.2 ? 52 : 58); }
     else { const tall = a < 1.15; want.pos.set(0, tall ? 6.4 : 6.2, tall ? 10.4 : 10.2); want.tgt.set(0, tall ? 1.7 : 1.2, -1.8); want.fov = vf(64); }
-    tellers[1].visible = mode !== 'booth'; front.visible = mode === 'booth'; faceLight.intensity = mode === 'booth' ? 1.6 : 0.6;
+    tellers[1].visible = mode !== 'booth'; greeterP.visible = mode !== 'booth' && !!sceneNow.refurb; analystP.visible = mode !== 'booth' && !!sceneNow.analyst; front.visible = mode === 'booth'; faceLight.intensity = mode === 'booth' ? 1.6 : 0.6;
     const ab = $('#app'); if (ab) ab.dataset.booth = mode === 'booth' ? '1' : '';
   }
   function resize(){
@@ -3258,7 +3293,8 @@ const Scene = (() => {
       // people
       for (const [, p] of people) step(p, dt, t);
       for (let i = leaving.length - 1; i >= 0; i--){ const p = leaving[i]; step(p, dt, t); if (!p.userData.via && p.userData.wait <= 0 && p.position.distanceTo(p.userData.t) < 0.3){ scene.remove(p); leaving.splice(i, 1); } }
-      minute.rotation.z = -t * 0.5; hour.rotation.z = -t * 0.042;
+      { const goal = 540 + (sceneNow.day || 0) * 480; clockMin += (goal - clockMin) * Math.min(1, dt * 1.6); const mn = clockMin % 60, hr = Math.floor(clockMin / 60) % 12; minute.rotation.z = -mn / 60 * Math.PI * 2; hour.rotation.z = -(hr + mn / 60) / 12 * Math.PI * 2; }
+      if (front.visible && (sceneNow.weather === 'rain' || sceneNow.weather === 'snow') && now - lastWin > 120 && !reduce){ lastWin = now; drawWindow(now); }
       tellers.forEach((p, i) => { p.userData.blink -= dt; p.userData.eyes.scale.y = p.userData.blink < 0 ? 0.12 : 1; if (p.userData.blink < -0.13) p.userData.blink = 2.5 + i + Math.random() * 3; });
       // alarm
       const a = alarmOn ? (0.5 + 0.5 * Math.sin(t * 7)) : 0; alarm.intensity = a * 2.2; beaconMat.emissiveIntensity = a * 2.5;
@@ -3333,12 +3369,13 @@ const Scene = (() => {
       }
     },
     boards(){
-      lounge.visible = !!S.wm; drawMarket(); drawWindow(); drawPosters();
+      atmosphere(); lounge.visible = !!S.wm; drawMarket(); drawWindow(); drawPosters();
       drawBoard(bCal, String(S.year), MONTHS[Math.min(S.month, 11)].slice(0, 3).toUpperCase(), `MONTH ${Math.min(S.month + 1, 12)} OF 12`);
       drawBoard(bRate, 'BANK RATE', S.base.toFixed(2) + '%', `SAVERS ${S.savRate.toFixed(2)}%`);
       drawSign();
     },
     setCard(instant){
+      atmosphere();
       // who should be in the hall: upcoming physical cards from qi
       const upcoming = counterQueue().slice(0, QUEUE.length);
       const ids = new Set(upcoming.map(pkey));

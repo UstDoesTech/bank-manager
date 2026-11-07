@@ -626,4 +626,15 @@ for (const pol of ALL()) for (const seed of [3, 17]){
     go({ type: 'newGame', seed: 11, opts: { chiefExecutive: true } }); go({ type: 'setPolicy', area: 'growth', values: { launchBtl: 1, marketing: 3, bonusSales: 0.8 } });
     for (let i = 0; i < 6; i++){ for (let c; (c = A.current());){ const o = c.opts.filter(o => !(o.cash && A.S.cash < o.cash)); go({ type: 'resolve', id: c.id, k: o[0].k }); } go({ type: 'closeMonth' }); }
     const B = loadEngine(src); for (const c of cmds) B.dispatch(c); assert.strictEqual(JSON.stringify(B.S), JSON.stringify(A.S)); n++; } }
+// 19. What the page draws: scene facts, dashboard and month movements are pure and never touch the game
+{ const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 21, opts: { chiefExecutive: true } });
+  for (let i = 0; i < 3; i++){ for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' }); }
+  const before = hashState(E.S) + JSON.stringify(E.S.rngState || ''); const sf = E.sceneFacts(), d = E.dashboardFacts();
+  assert(['clear', 'cloud', 'rain', 'snow'].includes(sf.weather) && sf.day >= 0 && sf.day <= 1); assert.deepStrictEqual(E.sceneFacts(), sf, 'the weather is a pure function of the date');
+  assert(d.gauges.length >= 3 && d.series.length === 3 && d.series.every(s => s.pts.length === E.S.history.length));
+  assert(d.gauges.every(g => ['ok', 'watch', 'alarm'].includes(g.status)));
+  const mm = E.monthMoves({ pl: { intLoans: 50, intGilts: 5, intRes: 1, intDep: -20, intCB: 0, fees: 10, losses: -30, redress: -2, costs: -60, gilts: 0 } });
+  assert.strictEqual(mm.drivers.length, 3); assert(Math.abs(mm.drivers[0].amt) >= Math.abs(mm.drivers[1].amt));
+  assert.strictEqual(hashState(E.S) + JSON.stringify(E.S.rngState || ''), before, 'drawing facts never changes the game');
+  const seen = new Set(); for (let y = 2027; y < 2040; y++) for (let m = 0; m < 12; m++){ E.S.year = y; E.S.month = m; seen.add(E.sceneFacts().weather); } assert(seen.size === 4, 'all four kinds of weather occur'); n += 7; }
 console.log('ok', n, 'checks');
