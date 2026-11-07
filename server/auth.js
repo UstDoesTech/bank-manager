@@ -57,8 +57,8 @@ function register(app, { pool, mailer, config }) {
     if (hits.length >= (config.guestsPerHour || 30)) throw new HttpError(429, 'too_many_guests', 'Too many new players from this address. Try again later.');
     hits.push(now); guestHits.set(req.ip, hits);
     if (guestHits.size > 5000) for (const [k, v] of guestHits) if (!v.some((t) => now - t < 3600e3)) guestHits.delete(k);
-    const optOut = !!(req.body && req.body.optOut);
-    const { rows } = await pool.query('INSERT INTO account.player (guest, consent_at, analysis_opt_out) VALUES (true, now(), $1) RETURNING id', [optOut]);
+    // Recording cannot be switched off, so a guest is always recorded and always in analysis.
+    const { rows } = await pool.query('INSERT INTO account.player (guest, consent_at, analysis_opt_out) VALUES (true, now(), false) RETURNING id');
     await startSession(reply, rows[0].id, guestDays);
     reply.code(201);
     return { ok: true, guest: true };
@@ -174,9 +174,10 @@ function register(app, { pool, mailer, config }) {
 
   // The recording notice: the player must have seen it before the first recorded game.
   app.post('/api/consent', { preHandler: app.requireAuth }, async (req) => {
-    const optOut = !!(req.body && req.body.optOut);
-    await pool.query('UPDATE account.player SET consent_at = COALESCE(consent_at, now()), analysis_opt_out = $2 WHERE id = $1', [req.player.id, optOut]);
-    return { ok: true, analysisOptOut: optOut };
+    // Accepting the notice is all there is: there is no opt-out, and a request that asks for one is ignored. (A flag set before this was
+    // removed is left as it was.)
+    await pool.query('UPDATE account.player SET consent_at = COALESCE(consent_at, now()) WHERE id = $1', [req.player.id]);
+    return { ok: true, analysisOptOut: !!req.player.analysis_opt_out };
   });
 
   // Deleting a player removes the account and every game, command and ledger line.

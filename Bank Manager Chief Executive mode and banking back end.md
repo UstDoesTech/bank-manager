@@ -404,7 +404,7 @@ The metrics are defined once as SQL views in Lakebase, so every game screen uses
 The customers in the game are invented, but each player's decisions are still data about that player, so they are treated as personal data.
 
 - **Pseudonymous players:** the `game` table stores an opaque player key that points to the player's account, never a name or email address. Email addresses and password hashes sit only in the separate account schema.
-- **Consent:** a short notice before a player's first recorded game says what is recorded and why, with an opt-out that keeps the game playable but leaves that player's games out of analysis.
+- **Notice:** every player is told that game sessions are recorded, before they start (signed-in players also see what is recorded and why). There is no opt-out: recording is part of playing the online game. Playing the file offline records nothing.
 - **Synthetic flag:** every party and agreement is marked synthetic, so game data cannot be mistaken for real customer data anywhere downstream.
 - **Deletion:** deleting a player removes their account, games and commands from Postgres.
 - **Access:** the game server's Databricks service principal owns the game schema and its secret stays in Azure Key Vault; analysis uses a separate read-only role on the read replica.

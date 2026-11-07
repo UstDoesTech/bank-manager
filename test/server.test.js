@@ -326,7 +326,8 @@ test('literacy: five questions before the first game and one more after each yea
 
   // a player who keeps games out of analysis is left out of the views, and deleting the player removes the checks
   const quiet = await newPlayer('nat@example.com', { consent: false });
-  await call('POST', '/api/consent', { optOut: true }, quiet);
+  await call('POST', '/api/consent', {}, quiet);
+  await pool.query("UPDATE account.player SET analysis_opt_out = true WHERE lower(email) = 'nat@example.com'");      // set before the opt-out was removed
   assert.strictEqual((await call('POST', '/api/literacy', { answers: right }, quiet)).status, 201);
   assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.literacy_check')).rows[0].n, 3);
   assert.strictEqual((await pool.query("SELECT count(*)::int n FROM bank.literacy_by_concept WHERE phase = 'before'")).rows[0].n, 5, 'only the first player appears');
@@ -388,14 +389,19 @@ test('games: scenarios and the tutorial start, and a failed transaction leaves n
   assert.strictEqual((await verifyGame(pool, host, id)).ok, true);
 });
 
-test('players: opting out of analysis is recorded on the game; deleting a player removes everything', async () => {
+test('players: there is no opt-out of recording, and a request for one is ignored; deleting a player removes everything', async () => {
   const email = 'ivy@example.com';
   assert.strictEqual((await call('POST', '/api/register', { email, password: PW })).status, 202);
   await call('GET', '/api/confirm?token=' + (await lastMail(email)).match(/token=([\w-]+)/)[1]);
   const cookie = (await call('POST', '/api/login', { email, password: PW })).cookie;
-  await call('POST', '/api/consent', { optOut: true }, cookie);
+  const consent = await call('POST', '/api/consent', { optOut: true }, cookie);
+  assert.strictEqual(consent.status, 200); assert.strictEqual(consent.json.analysisOptOut, false, 'asking to opt out does nothing');
   const g = (await call('POST', '/api/games', {}, cookie)).json;
-  assert.strictEqual((await pool.query('SELECT in_analysis, synthetic FROM bank.game WHERE id = $1', [g.id])).rows[0].in_analysis, false);
+  assert.strictEqual((await pool.query('SELECT in_analysis, synthetic FROM bank.game WHERE id = $1', [g.id])).rows[0].in_analysis, true);
+  assert.strictEqual((await pool.query("SELECT analysis_opt_out FROM account.player WHERE lower(email) = 'ivy@example.com'")).rows[0].analysis_opt_out, false);
+  // nor can a guest
+  const guest = await call('POST', '/api/guest', { optOut: true });
+  assert.strictEqual((await call('GET', '/api/me', null, guest.cookie)).json.analysisOptOut, false);
   const col = (await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'bank' AND table_name NOT IN ('gl_account', 'party', 'household') AND column_name IN ('email', 'name', 'password_hash')")).rows;
   assert.deepStrictEqual(col, [], 'the bank schema never holds an email, name or password');
   assert.strictEqual((await call('DELETE', '/api/me', { password: 'wrong wrong wrong' }, cookie)).status, 401);
@@ -645,9 +651,10 @@ test('analysis: the metric views agree with the game, leave out opted-out player
   const pm = await q('SELECT * FROM bank.metric_product_month WHERE game_id = $1 ORDER BY year, month', [b.id]); assert(pm.length >= 2 && Number(pm[pm.length - 1].cumulative_margin_pence) !== 0);
   assert((await q('SELECT count(*)::int n FROM bank.metric_conduct_month WHERE game_id = $1', [b.id]))[0].n >= 2);
 
-  // a player who keeps games out of analysis never appears in any view
+  // a player whose flag was set before the opt-out was removed still never appears in any view
   const coy = await newPlayer('coy@example.com', { consent: false });
-  assert.strictEqual((await call('POST', '/api/consent', { optOut: true }, coy)).status, 200);
+  assert.strictEqual((await call('POST', '/api/consent', {}, coy)).status, 200);
+  await pool.query("UPDATE account.player SET analysis_opt_out = true WHERE lower(email) = 'coy@example.com'");
   const c = (await call('POST', '/api/games', {}, coy)).json; await play(coy, c.id, c.state, 1, 2);
   assert.strictEqual((await q('SELECT count(*)::int n FROM bank.decision WHERE game_id = $1', [c.id]))[0].n > 0, true);
   for (const v of ['metric_month', 'metric_fraud_month', 'v_month_pl', 'v_position', 'v_decision_truth', '"case"', 'document'])

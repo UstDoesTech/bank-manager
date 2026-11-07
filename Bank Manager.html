@@ -3982,7 +3982,7 @@ const Remote = (() => {
     try { rec = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { rec = null; }
     flush();
   }
-  const ready = () => !!(me && me.signedIn && me.consented && !(me.guest && optedOut()));      // a guest who said no is not recorded
+  const ready = () => !!(me && me.signedIn && me.consented);
   async function create(opts){
     try { const r = await api('POST', '/api/games', opts); if (!r.ok) return null; rec = { id: r.json.id, seq: 1, pending: [] }; store(); return r.json; }
     catch (e) { return null; }
@@ -4009,15 +4009,12 @@ const Remote = (() => {
     });
   }
   const who = () => me && (me.email || 'a guest');
-  // Anonymous recording: a game started without an account is recorded under a random key (no email), unless the player said no.
-  const NO = 'bm-norecord';
-  const optedOut = () => { try { return localStorage.getItem(NO) === '1'; } catch (e) { return false; } };
-  const setOptedOut = (v) => { try { v ? localStorage.setItem(NO, '1') : localStorage.removeItem(NO); } catch (e) {} };
+  // Anonymous recording: a game started without an account is recorded under a random key (no email). There is no way to switch recording off.
   async function guest(){
-    if (!available() || me || optedOut()) return;
+    if (!available() || me) return;
     try { const r = await api('POST', '/api/guest', {}); if (!r.ok) return; me = (await api('GET', '/api/me')).json; if (!me.signedIn) me = null; } catch (e) { me = null; }
   }
-  return { pendingCount: () => (rec ? rec.pending.length : 0), optedOut, setOptedOut, guest, available, init, ready, create, drop, record, flush, api, me: () => me, setMe: (m) => { me = m && m.signedIn ? m : null; }, who, recording: () => !!rec, settled: () => chain, gameId: () => rec && rec.id };
+  return { pendingCount: () => (rec ? rec.pending.length : 0), guest, available, init, ready, create, drop, record, flush, api, me: () => me, setMe: (m) => { me = m && m.signedIn ? m : null; }, who, recording: () => !!rec, settled: () => chain, gameId: () => rec && rec.id };
 })();
 { const engineDispatch = dispatch; dispatch = function(cmd){ const out = engineDispatch(cmd); Remote.record(cmd, out); return out; }; }
 
@@ -4067,15 +4064,15 @@ function accountScreen(msg, isErr){
   if (m && !m.consented){
     overlay(`<div class="eyebrow">Before your first recorded game</div><h2>What gets recorded</h2>
       <p>While you are signed in, each decision you make and what happened as a result is saved on the game server, along with the bank's ledger. Everything in the game is invented. Your email address and password are kept apart from the game data.</p>
-      <p>You can keep your games out of any analysis, and you can delete your account and every game at any time.</p>
-      <div class="acct"><label class="chk"><input type="checkbox" id="acOpt"> Keep my games out of analysis</label>${note(msg, isErr)}
-      <button type="button" class="btn primary" id="acOk">Start recording my games</button>${back}</div>`);
-    $('#acOk').onclick = async () => { const r = await Remote.api('POST', '/api/consent', { optOut: $('#acOpt').checked }); if (r.ok){ Remote.setMe({ ...m, consented: true, signedIn: true }); accountScreen('Recording is on. Games you start from now on are saved.'); } else accountScreen(r.json.message, true); };
+      <p>You can delete your account and every game at any time.</p>
+      <div class="acct">${note(msg, isErr)}
+      <button type="button" class="btn primary" id="acOk">Continue</button>${back}</div>`);
+    $('#acOk').onclick = async () => { const r = await Remote.api('POST', '/api/consent', {}); if (r.ok){ Remote.setMe({ ...m, consented: true, signedIn: true }); accountScreen('Recording is on. Games you start from now on are saved.'); } else accountScreen(r.json.message, true); };
     $('#acBack').onclick = titleScreen; return;
   }
   if (m && !m.guest){
     overlay(`<div class="eyebrow">Signed in</div><h2>${esc(Remote.who())}</h2>
-      <p>${Remote.recording() ? 'The game you are playing is being recorded.' : 'New games you start are recorded.'}${m.analysisOptOut ? ' They are kept out of analysis.' : ''}</p>
+      <p>${Remote.recording() ? 'The game you are playing is being recorded.' : 'New games you start are recorded.'}</p>
       <div class="acct">${note(msg, isErr)}
       <button type="button" class="btn neutral" id="acOut">Sign out</button>
       <details class="more"><summary>Delete my account</summary><div class="acct" style="margin-top:8px"><label>Password<input type="password" id="acDelPw" autocomplete="current-password"></label>
@@ -4117,8 +4114,8 @@ function menuScreen(msg, isErr){
   const m = Remote.me(), guest = !!(m && m.guest), signedIn = !!(m && !m.guest), recording = Remote.recording();
   const status = !Remote.available() ? 'Your game saves itself on this device after every move.'
     : signedIn ? (recording ? `This game is being recorded to ${esc(m.email)}.` : `Signed in as ${esc(m.email)}. New games you start are recorded.`)
-    : guest ? (Remote.optedOut() ? 'Recording is off.' : 'Playing as a guest: this game is recorded without a name or email.')
-    : Remote.optedOut() ? 'Recording is off. Your game saves itself on this device.' : 'Your game saves itself on this device after every move.';
+    : guest ? 'Playing as a guest: this game is recorded without a name or email.'
+    : 'Your game saves itself on this device after every move.';
   overlay(`<div class="eyebrow">Paused</div><h2>Menu</h2><p class="dim">${status}</p>
     <div class="msg${isErr ? ' err' : ''}" role="status">${esc(msg || '')}</div>
     <div class="acct">
@@ -4157,14 +4154,12 @@ function titleScreen(){
       ${Remote.available() ? `<button type="button" class="btn link" id="ovAcct">${Remote.ready() ? (Remote.me().guest ? 'Playing as a guest · sign in to keep your games' : 'Recording as ' + esc(Remote.who())) : 'Sign in to save your games'}</button>` : ''}
     </div>
     ${resumable ? '<p style="color:var(--muted);font-size:12.5px;margin:0">Starting something new replaces your saved game.</p>' : ''}
-    ${Remote.available() && !(Remote.me() && !Remote.me().guest) ? (Remote.optedOut() ? '<p style="color:var(--muted);font-size:12.5px;margin:0">Recording is off. <button type="button" class="btn link" id="ovRecOn">Turn it on</button></p>' : '<p style="color:var(--muted);font-size:12.5px;margin:0">Game sessions are recorded. <button type="button" class="btn link" id="ovRecOff">Don’t record my games</button></p>') : ''}`);
+    ${Remote.available() ? '<p style="color:var(--muted);font-size:12.5px;margin:0">Game sessions are recorded.</p>' : ''}`);
   const g = $('#ovGo'); if (g) g.onclick = () => { S = saved; save(); play(); };
   $('#ovTrain').onclick = () => startGame({ tutorial:true });
   $('#ovNew').onclick = () => startGame();
   $('#ovScen').onclick = scenarioPicker;
   const ac = $('#ovAcct'); if (ac) ac.onclick = () => accountScreen();
-  const ro = $('#ovRecOff'); if (ro) ro.onclick = () => { Remote.setOptedOut(true); titleScreen(); };
-  const rn = $('#ovRecOn'); if (rn) rn.onclick = () => { Remote.setOptedOut(false); titleScreen(); };
 }
 
 function start(data){
