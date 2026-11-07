@@ -131,6 +131,18 @@ function register(app, { pool, mailer, config }) {
     await pool.query('DELETE FROM account.login_attempt WHERE lower(email) = lower($1)', [email]);
     // The only notice is the cookie, and a session cookie is what records the games, so signing in is all the agreement there is.
     await pool.query('UPDATE account.player SET consent_at = COALESCE(consent_at, now()) WHERE id = $1', [p.id]);
+    // Games played as a guest on this device move to the account being signed in to, so the history sits with the account
+    // and none is left under a guest nobody can sign in as.
+    if (req.player && req.player.guest && req.player.id !== p.id) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('UPDATE bank.game SET player_key = (SELECT player_key FROM account.player WHERE id = $1) WHERE player_key = $2', [p.id, req.player.player_key]);
+        await client.query('UPDATE bank.literacy_check SET player_key = (SELECT player_key FROM account.player WHERE id = $1) WHERE player_key = $2', [p.id, req.player.player_key]);
+        await client.query('DELETE FROM account.player WHERE id = $1 AND guest', [req.player.id]);
+        await client.query('COMMIT');
+      } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+    }
     await startSession(reply, p.id);
     return { ok: true };
   });
@@ -182,7 +194,8 @@ function register(app, { pool, mailer, config }) {
     return { ok: true, analysisOptOut: !!req.player.analysis_opt_out };
   });
 
-  // Deleting a player removes the account and every game, command and ledger line.
+  // Deleting a player removes the account only. Games are never deleted: they carry an opaque player_key and nothing else,
+  // so once the account row is gone nothing can tie them back to a person.
   app.delete('/api/me', { preHandler: app.requireAuth }, async (req, reply) => {
     const password = String((req.body && req.body.password) || '');
     const { rows } = await pool.query('SELECT password_hash FROM account.player WHERE id = $1', [req.player.id]);
@@ -191,8 +204,6 @@ function register(app, { pool, mailer, config }) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('DELETE FROM bank.game WHERE player_key = $1', [req.player.player_key]);
-      await client.query('DELETE FROM bank.literacy_check WHERE player_key = $1', [req.player.player_key]);
       await client.query('DELETE FROM account.player WHERE id = $1', [req.player.id]);
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }

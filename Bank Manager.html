@@ -36,7 +36,7 @@ button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 /* HUD */
 #hud{flex:0 0 auto;padding-block:10px 10px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));background:linear-gradient(var(--hall),var(--hall-2));display:grid;gap:7px}
 .hud-top{display:flex;align-items:center;flex-wrap:wrap;row-gap:2px;gap:10px;min-width:0}
-.brand{font-weight:900;font-variation-settings:"wdth" 125;letter-spacing:.06em;text-transform:uppercase;font-size:13px;color:var(--brass);white-space:nowrap}
+.brand{margin:0;font-weight:900;font-variation-settings:"wdth" 125;letter-spacing:.06em;text-transform:uppercase;font-size:13px;color:var(--brass);white-space:nowrap}
 .when{font-family:var(--f-mono);font-size:12px;color:var(--muted);white-space:nowrap;flex:0 0 auto}
 .hud-top .sp{flex:1}
 .menu{background:none;border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:18px;line-height:1;width:34px;height:34px;flex:0 0 auto;padding:0}
@@ -57,12 +57,12 @@ button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 .up{animation:up .9s} .down{animation:down .9s}
 @keyframes up{0%,40%{color:var(--good)}}
 @keyframes down{0%,40%{color:var(--bad)}}
-@media (max-width:440px){.brand,.rl{display:none}.kpis{gap:8px}}
+@media (max-width:440px){.rl{display:none}.brand{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.kpis{gap:8px}}
 
 /* Tabs */
 #tabs{flex:0 0 auto;display:flex;padding-left:max(10px,env(safe-area-inset-left,0px));padding-right:max(10px,env(safe-area-inset-right,0px));background:var(--hall-2);border-bottom:1px solid var(--line)}
 #tabs button{flex:1;background:none;border:0;border-bottom:3px solid transparent;padding:9px 6px 7px;font-weight:800;font-variation-settings:"wdth" 110;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
-#tabs button[aria-selected="true"]{color:var(--text);border-bottom-color:var(--brass)}
+#tabs button[aria-current="true"]{color:var(--text);border-bottom-color:var(--brass)}
 #tabs b{display:inline-block;min-width:19px;padding:0 6px;border-radius:999px;background:var(--no);color:#fff;font-size:11px;line-height:18px;margin-left:5px;letter-spacing:0;vertical-align:1px}
 #tabs b:empty{display:none}
 
@@ -105,7 +105,7 @@ button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 .sheet .db{padding:0;gap:9px 14px}
 .sheet .f{border-bottom:0;padding-bottom:0}
 .sec{display:grid;gap:6px;border-top:1px solid var(--paper-rule);padding-top:10px}
-.sec h4{margin:0;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);font-weight:700}
+.sec h2{margin:0;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);font-weight:700}
 .idstrip{display:grid;grid-template-columns:70px minmax(0,1fr);gap:12px;align-items:start;background:linear-gradient(135deg,var(--idcard-1),var(--idcard-2));border-radius:10px;padding:10px}
 .idstrip .db{grid-template-columns:repeat(2,minmax(0,1fr))}
 .idstrip .photo{grid-row:auto}
@@ -280,7 +280,7 @@ button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 /* Shared controls */
 .btn{min-height:46px;border-radius:10px;padding:8px 12px;font-weight:800;font-variation-settings:"wdth" 108;letter-spacing:.03em;font-size:14px;line-height:1.15;border:2px solid transparent;transition:transform .08s;text-align:center}
 .btn:active{transform:scale(.97)}
-.btn.go{background:var(--go);color:#fff}
+.btn.go{background:var(--go-ink);color:#fff}
 .btn.no{background:none;border-color:var(--no);color:#ff9d92}
 .btn.alt{background:none;border-color:#6f93d6;color:#b4cbf5}
 .btn.neutral{background:none;border-color:var(--line);color:var(--text)}
@@ -318,7 +318,7 @@ table.ledger{width:100%;border-collapse:collapse;font-size:13.5px}
 .rowbtn.two{grid-template-columns:1fr 1fr}
 .seg{display:grid;grid-template-columns:1fr 1fr;background:var(--hall);border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px}
 .seg button{background:none;border:0;border-radius:8px;padding:8px;font-weight:700;font-size:13.5px;color:var(--muted)}
-.seg button[aria-selected="true"]{background:var(--hall-3);color:var(--text)}
+.seg button[aria-pressed="true"]{background:var(--hall-3);color:var(--text)}
 .seg.three{grid-template-columns:repeat(3,1fr)}
 .advs{display:grid;gap:6px}
 .adv{border-left:3px solid var(--line);background:rgba(0,0,0,.22);border-radius:6px;padding:8px 10px}.adv p{margin:0;font-size:14px}
@@ -390,7 +390,7 @@ html{scroll-padding-top:env(safe-area-inset-top,0px)}
   <header id="hud">
     <div class="hud-top">
       <button class="menu" id="menuBtn" type="button" aria-label="Menu" title="Menu">☰</button>
-      <div class="brand">Bank Manager</div>
+      <h1 class="brand">Bank Manager</h1>
       <div class="when" id="hWhen">Jan 2027</div>
       <button class="reg ok" id="hReg" type="button">Good</button>
       <button class="reg goals" id="goalsBtn" type="button" hidden>Goals</button>
@@ -405,11 +405,11 @@ html{scroll-padding-top:env(safe-area-inset-top,0px)}
       <button class="kpi" type="button" data-term="Customer trust"><span>Customers</span><b id="mTrust">60</b></button>
     </div>
   </header>
-  <nav id="tabs" role="tablist">
-    <button type="button" role="tab" id="tabCounter" data-tab="counter" aria-selected="true">Counter<b id="nCounter"></b></button>
-    <button type="button" role="tab" id="tabInbox" data-tab="inbox" aria-selected="false">Inbox<b id="nInbox"></b></button>
-    <button type="button" role="tab" id="bankBtn" aria-selected="false">Bank</button>
-    <button type="button" role="tab" id="policyBtn" aria-selected="false" hidden>Policy</button>
+  <nav id="tabs" aria-label="Sections">
+    <button type="button" id="tabCounter" data-tab="counter" aria-current="true">Counter<b id="nCounter"></b></button>
+    <button type="button" id="tabInbox" data-tab="inbox" aria-current="false">Inbox<b id="nInbox"></b></button>
+    <button type="button" id="bankBtn" aria-current="false">Bank</button>
+    <button type="button" id="policyBtn" aria-current="false" hidden>Policy</button>
   </nav>
   <main id="main">
     <div id="stage">
@@ -3402,7 +3402,7 @@ function ticker(){
 
 function setView(v){
   view = v; $('#app').dataset.view = v;
-  $('#tabCounter').setAttribute('aria-selected', v === 'counter'); $('#tabInbox').setAttribute('aria-selected', v === 'inbox');
+  $('#tabCounter').setAttribute('aria-current', v === 'counter'); $('#tabInbox').setAttribute('aria-current', v === 'inbox');
   $('#pop').hidden = true;
   if (v === 'counter') renderCounter(); else renderInbox();
   hud(false);
@@ -3435,7 +3435,7 @@ function layDocs(c, mark){
     <header class="sh-head"><span>${esc(c.label)}</span><span class="sh-ref">No. ${c.ref}</span></header>
     <div class="sh-who"><strong>${nameHTML(c)}${c.who.age ? ', ' + c.who.age : ''}</strong><span>${esc(c.who.sub)}</span></div>
     ${idd ? idStrip(c, idd) : ''}
-    ${secs.map((d, i) => d.rows.length ? `<section class="sec">${i ? `<h4>${esc(d.t)}</h4>` : ''}<dl class="db">${d.rows.map(fieldHTML).join('')}</dl></section>` : '').join('')}
+    ${secs.map((d, i) => d.rows.length ? `<section class="sec">${i ? `<h2>${esc(d.t)}</h2>` : ''}<dl class="db">${d.rows.map(fieldHTML).join('')}</dl></section>` : '').join('')}
     ${notes.map(note).join('')}
     ${mark ? `<div class="mark still st-${mark.s}">${esc(mark.st)}</div>` : ''}
   </article>${(() => { const w = counterQueue().filter(x => x.id !== c.id).length, m = inboxActions().filter(x => !x.done).length; return w || m ? `<p class="qline">${w ? w + ' more waiting at the counter' : ''}${w && m ? ' · ' : ''}${m ? m + ' in your inbox need a reply' : ''}</p>` : ''; })()}`;
@@ -3509,7 +3509,7 @@ function renderInbox(){
   if (openKey && items.some(x => x.key === openKey)) renderMsg(items.find(x => x.key === openKey)); else { openKey = null; $('#app').dataset.msg = ''; $('#mview').innerHTML = ''; }
 }
 function openMsg(k){
-  openKey = k; if (view !== 'inbox'){ view = 'inbox'; $('#app').dataset.view = 'inbox'; $('#tabCounter').setAttribute('aria-selected', false); $('#tabInbox').setAttribute('aria-selected', true); }
+  openKey = k; if (view !== 'inbox'){ view = 'inbox'; $('#app').dataset.view = 'inbox'; $('#tabCounter').setAttribute('aria-current', false); $('#tabInbox').setAttribute('aria-current', true); }
   const it = mailList().find(x => x.key === k); if (!it) return;
   dispatch({ type:'read', key:it.key }); Snd.play('paper');
   renderInbox(); $('#app').dataset.msg = '1'; $('#mview').scrollTop = 0; hud(false); save();
@@ -3610,7 +3610,7 @@ function herald(){
 }
 
 /* ---------- Branch ---------- */
-function bankTop(which){ return `<div class="seg" role="tablist"><button type="button" data-seg="books" aria-selected="${which === 'books'}">Books</button><button type="button" data-seg="branch" aria-selected="${which === 'branch'}">Branch</button></div>`; }
+function bankTop(which){ return `<div class="seg" role="group" aria-label="Section"><button type="button" data-seg="books" aria-pressed="${which === 'books'}">Books</button><button type="button" data-seg="branch" aria-pressed="${which === 'branch'}">Branch</button></div>`; }
 function bankWire(){ const sg = $('#ov .seg'); if (sg) sg.onclick = e => { const b = e.target.closest('[data-seg]'); if (!b) return; b.dataset.seg === 'branch' ? branchPanel() : booksPanel(); }; const sr = $('#sndRow'); if (sr){ sr.onclick = () => { Snd.toggle(); sndBtn(); if (Snd.on) Snd.play('click'); }; sndBtn(); } }
 const bankFoot = () => `<div class="rowbtn two stickyfoot"><button type="button" class="btn neutral" id="sndRow">Sound</button><button type="button" class="btn primary" id="ovGo">Back</button></div>`;
 function branchPanel(msg){
@@ -3713,11 +3713,12 @@ function booksPanel(){
 
 function tabSel(name){
   const on = { counter: view === 'counter' && !name, inbox: view === 'inbox' && !name, bank: name === 'bank', policy: name === 'policy' };
-  $('#tabCounter').setAttribute('aria-selected', on.counter); $('#tabInbox').setAttribute('aria-selected', on.inbox);
-  $('#bankBtn').setAttribute('aria-selected', on.bank); $('#policyBtn').setAttribute('aria-selected', on.policy);
+  $('#tabCounter').setAttribute('aria-current', on.counter); $('#tabInbox').setAttribute('aria-current', on.inbox);
+  $('#bankBtn').setAttribute('aria-current', on.bank); $('#policyBtn').setAttribute('aria-current', on.policy);
 }
-function overlay(html){ Scene.setPaused(false); $('#pop').hidden = true; if (typeof view !== 'undefined') tabSel(); const o = $('#ov'); o.innerHTML = `<div class="panel" role="dialog" aria-modal="true">${html}</div>`; o.hidden = false; o.querySelector('.panel').scrollTop = 0; const b = $('#ovGo'); if (b) b.focus({ preventScroll:true }); }
-function closeOverlay(){ Scene.setPaused(false); menuConfirm = false; $('#pop').hidden = true; if (typeof view !== 'undefined') tabSel(); $('#ov').hidden = true; $('#ov').innerHTML = ''; }
+let ovReturn = null;
+function overlay(html){ Scene.setPaused(false); $('#pop').hidden = true; if (typeof view !== 'undefined') tabSel(); const o = $('#ov'); if (o.hidden) ovReturn = document.activeElement; o.innerHTML = `<div class="panel" role="dialog" aria-modal="true" tabindex="-1">${html}</div>`; o.hidden = false; const pn = o.querySelector('.panel'), hd = pn.querySelector('h2'); pn.scrollTop = 0; if (hd){ hd.id = 'ovTitle'; pn.setAttribute('aria-labelledby', 'ovTitle'); } else pn.setAttribute('aria-label', 'Bank Manager'); const b = $('#ovGo'); (b || pn).focus({ preventScroll:true }); }
+function closeOverlay(){ Scene.setPaused(false); menuConfirm = false; $('#pop').hidden = true; if (typeof view !== 'undefined') tabSel(); $('#ov').hidden = true; $('#ov').innerHTML = ''; if (ovReturn && ovReturn.isConnected){ try { ovReturn.focus({ preventScroll:true }); } catch (e) {} } ovReturn = null; }
 
 /* recurring customers: the household behind a name, with the month's budget, the credit score over time and what has happened to them */
 function nameHTML(c){ return c.h && c.h.hh != null && S.households ? '<button type="button" class="hhlink" data-hh="' + c.h.hh + '">' + esc(c.who.name) + '</button>' : esc(c.who.name); }
@@ -3819,8 +3820,8 @@ const POLICY_FIELDS = {
 const ROLES = ['Finance director', 'Chief risk officer', 'Treasurer', 'Head of operations'];
 /* Executive team, early warnings and the stress test: three screens inside the Policy tab, one control area per screen. */
 function execTop(which){
-  const b = (k, t) => `<button type="button" data-seg="${k}" aria-selected="${which === k}">${t}</button>`;
-  return `<div class="seg three" role="tablist">${b('team', 'Team')}${b('settings', 'Settings')}${b('stress', 'Stress test')}</div>`;
+  const b = (k, t) => `<button type="button" data-seg="${k}" aria-pressed="${which === k}">${t}</button>`;
+  return `<div class="seg three" role="group" aria-label="Section">${b('team', 'Team')}${b('settings', 'Settings')}${b('stress', 'Stress test')}</div>`;
 }
 function execWire(){
   const sg = $('#ov .seg'); if (sg) sg.onclick = e => { const b = e.target.closest('[data-seg]'); if (b) execScreen(b.dataset.seg); };
@@ -4084,9 +4085,9 @@ function accountScreen(msg, isErr){
       <div class="acct">${note(msg, isErr)}
       <button type="button" class="btn neutral" id="acOut">Sign out</button>
       <details class="more"><summary>Delete my account</summary><div class="acct" style="margin-top:8px"><label>Password<input type="password" id="acDelPw" autocomplete="current-password"></label>
-      <button type="button" class="btn no" id="acDel">Delete my account and every recorded game</button></div></details>${back}</div>`);
+      <button type="button" class="btn no" id="acDel">Delete my account</button></div></details>${back}</div>`);
     $('#acOut').onclick = async () => { await Remote.api('POST', '/api/logout', {}); Remote.setMe(null); accountScreen('Signed out.'); };
-    $('#acDel').onclick = async () => { const r = await Remote.api('DELETE', '/api/me', { password: $('#acDelPw').value }); if (r.ok){ Remote.setMe(null); Remote.drop(); accountScreen('Your account and games are deleted.'); } else accountScreen(r.json.message, true); };
+    $('#acDel').onclick = async () => { const r = await Remote.api('DELETE', '/api/me', { password: $('#acDelPw').value }); if (r.ok){ Remote.setMe(null); Remote.drop(); accountScreen('Your account is deleted.'); } else accountScreen(r.json.message, true); };
     $('#acBack').onclick = titleScreen; return;
   }
   overlay(`<div class="eyebrow">Account</div><h2>Save your games</h2>

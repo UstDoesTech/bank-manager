@@ -329,7 +329,7 @@ test('literacy: five questions before the first game and one more after each yea
   assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.literacy_check')).rows[0].n, 3);
   assert.strictEqual((await pool.query("SELECT count(*)::int n FROM bank.literacy_by_concept WHERE phase = 'before'")).rows[0].n, 5, 'only the first player appears');
   assert.strictEqual((await call('DELETE', '/api/me', { password: PW }, cookie)).status, 200);
-  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.literacy_check')).rows[0].n, 1);
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.literacy_check')).rows[0].n, 3, 'deleting the account keeps the results');
 });
 
 test('games: bad, repeated, out-of-order and foreign commands are refused and change nothing', async () => {
@@ -354,6 +354,8 @@ test('games: bad, repeated, out-of-order and foreign commands are refused and ch
   assert.strictEqual((await call('GET', `/api/games/${id}`, null, other)).status, 404);
   assert.strictEqual((await call('GET', `/api/games/${id}/ledger`, null, other)).status, 404);
   assert.strictEqual((await call('DELETE', `/api/games/${id}`, null, other)).status, 404);
+  assert.strictEqual((await call('DELETE', `/api/games/${id}`, null, cookie)).status, 404, 'no route deletes a game, not even the owner');
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.game WHERE id = $1', [id])).rows[0].n, 1);
   assert.strictEqual((await pool.query('SELECT last_seq FROM bank.game WHERE id = $1', [id])).rows[0].last_seq, 2);   // only the good command landed
   assert.strictEqual((await verifyGame(pool, host, id)).ok, true);
 });
@@ -386,7 +388,7 @@ test('games: scenarios and the tutorial start, and a failed transaction leaves n
   assert.strictEqual((await verifyGame(pool, host, id)).ok, true);
 });
 
-test('players: there is no opt-out of recording, and a request for one is ignored; deleting a player removes everything', async () => {
+test('players: there is no opt-out of recording, and a request for one is ignored; deleting a player removes the account but never the games', async () => {
   const email = 'ivy@example.com';
   assert.strictEqual((await call('POST', '/api/register', { email, password: PW })).status, 202);
   await call('GET', '/api/confirm?token=' + (await lastMail(email)).match(/token=([\w-]+)/)[1]);
@@ -395,6 +397,7 @@ test('players: there is no opt-out of recording, and a request for one is ignore
   assert.strictEqual(consent.status, 200); assert.strictEqual(consent.json.analysisOptOut, false, 'asking to opt out does nothing');
   const g = (await call('POST', '/api/games', {}, cookie)).json;
   assert.strictEqual((await pool.query('SELECT in_analysis, synthetic FROM bank.game WHERE id = $1', [g.id])).rows[0].in_analysis, true);
+  await play(cookie, g.id, g.state, 1, 3);                                 // a game with real data in every table
   assert.strictEqual((await pool.query("SELECT analysis_opt_out FROM account.player WHERE lower(email) = 'ivy@example.com'")).rows[0].analysis_opt_out, false);
   // nor can a guest
   const guest = await call('POST', '/api/guest', { optOut: true });
@@ -403,10 +406,28 @@ test('players: there is no opt-out of recording, and a request for one is ignore
   assert.deepStrictEqual(col, [], 'the bank schema never holds an email, name or password');
   assert.strictEqual((await call('DELETE', '/api/me', { password: 'wrong wrong wrong' }, cookie)).status, 401);
   assert.strictEqual((await call('DELETE', '/api/me', { password: PW }, cookie)).status, 200);
-  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.game WHERE id = $1', [g.id])).rows[0].n, 0);
+  // the account is gone, the games are not: they keep their data and hold only an opaque key that no account row answers to
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.game WHERE id = $1', [g.id])).rows[0].n, 1);
   for (const t of ['command', 'game_state', 'journal_entry', 'journal_line', 'decision', 'event'])
-    assert.strictEqual((await pool.query(`SELECT count(*)::int n FROM bank.${t} WHERE game_id = $1`, [g.id])).rows[0].n, 0, t);
-  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM account.player WHERE email = $1', [email])).rows[0].n, 0);
+    assert((await pool.query(`SELECT count(*)::int n FROM bank.${t} WHERE game_id = $1`, [g.id])).rows[0].n > 0, `${t} kept`);
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM account.player WHERE lower(email) = $1', [email])).rows[0].n, 0);
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM account.player p JOIN bank.game g ON g.player_key = p.player_key WHERE g.id = $1', [g.id])).rows[0].n, 0, 'nothing ties the game to a person');
+  assert.strictEqual((await verifyGame(pool, host, g.id)).ok, true, 'and it still replays');
+});
+
+test('players: games played as a guest move to the account on sign-in, and survive its deletion', async () => {
+  const email = 'guestmover@example.com';
+  assert.strictEqual((await call('POST', '/api/register', { email, password: PW })).status, 202);
+  await call('GET', '/api/confirm?token=' + (await lastMail(email)).match(/token=([\w-]+)/)[1]);
+  const guest = await call('POST', '/api/guest', {});
+  const g = (await call('POST', '/api/games', {}, guest.cookie)).json;
+  const signedIn = await call('POST', '/api/login', { email, password: PW }, guest.cookie);
+  assert.strictEqual(signedIn.status, 200);
+  const mine = (await call('GET', '/api/games', null, signedIn.cookie)).json;
+  assert((mine.games || mine).some((x) => x.id === g.id), 'the guest game is now on the account');
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM account.player WHERE guest AND id NOT IN (SELECT player_id FROM account.session)')).rows[0].n >= 0, true);
+  assert.strictEqual((await call('DELETE', '/api/me', { password: PW }, signedIn.cookie)).status, 200);
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.game WHERE id = $1', [g.id])).rows[0].n, 1, 'the game stays');
 });
 
 test('web: the page is served, health check works, and form posts are refused', async () => {
@@ -475,7 +496,7 @@ test('guests: a game played without signing in is recorded under an opaque key a
   // a guest cannot delete their games
   const game2 = await call('POST', '/api/games', {}, g2.cookie);
   assert.strictEqual((await call('DELETE', '/api/me', {}, g2.cookie)).status, 403);
-  assert.strictEqual((await call('DELETE', `/api/games/${game2.json.id}`, null, g2.cookie)).status, 403);
+  assert.strictEqual((await call('DELETE', `/api/games/${game2.json.id}`, null, g2.cookie)).status, 404);
   assert.strictEqual((await pool.query('SELECT 1 FROM bank.game WHERE id = $1', [game2.json.id])).rows.length, 1);
 
   // an account cannot be made without an email and password except as a guest

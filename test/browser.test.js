@@ -170,9 +170,9 @@ test('the page works with no server: opened from a file there is no account butt
   // the glossary popover goes away when an overlay opens, and the Bank tab shows as selected while the books are open
   await page.evaluate(() => { const pop = document.querySelector('#pop'); pop.hidden = false; booksPanel(); });
   assert.strictEqual(await page.isHidden('#pop'), true);
-  assert.strictEqual(await page.getAttribute('#bankBtn', 'aria-selected'), 'true');
+  assert.strictEqual(await page.getAttribute('#bankBtn', 'aria-current'), 'true');
   await page.evaluate(() => closeOverlay());
-  assert.strictEqual(await page.getAttribute('#bankBtn', 'aria-selected'), 'false');
+  assert.strictEqual(await page.getAttribute('#bankBtn', 'aria-current'), 'false');
   assert.strictEqual(await page.isVisible('#policyBtn'), false);
   await page.evaluate(() => { S.progress.unlocked.push('pricing'); closeOverlay(); hud(); });
   assert.strictEqual(await page.isVisible('#policyBtn'), true);

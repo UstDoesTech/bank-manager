@@ -26,7 +26,7 @@ uses a cookie to record your game sessions", with an OK button, and goes for goo
 notice, no consent step after signing in (signing in is all the agreement there is) and no opt-out: nobody can switch recording off, and
 the server ignores a request for it. Opening the page records nothing; the
 guest is created when a game starts. (Playing the file offline, with no server, records nothing because there is nowhere to send it.) A guest can sign in or create an account to keep their games (registering claims the same player row). A guest
-cannot delete their games (the server refuses it); only an account can. Guests do not get the literacy check, which is for signed-in players.
+cannot delete their account. No route deletes a game, for anyone. Deleting an account removes the email, password and sessions only: games are kept, tied to nothing but an opaque key. Guests do not get the literacy check, which is for signed-in players.
 To sign in to an account, choose "Sign in to save your games", create one, and confirm the address. There is no email
 service locally: the confirmation link is written to a table and to the server log.
 
