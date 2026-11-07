@@ -533,3 +533,22 @@ test('chief executive: policy and stress commands are recorded with their detail
   assert.throws(() => validate({ over: null, progress: { unlocked: ['branch'] } }, { type: 'stress' }), /Chief Executive/);
   assert.throws(() => validate({ over: 'done', progress: { unlocked: ['branch', 'pricing'] } }, { type: 'stress' }), /year is over/);
 });
+
+test('executive meeting: settings are tabled and take effect at the start of next month, and the replay agrees', async () => {
+  const cookie = await newPlayer('meet@example.com');
+  const g = (await call('POST', '/api/games', { chiefExecutive: true, meetings: true }, cookie)).json;
+  assert.strictEqual(g.state.meet, true);
+  const url = `/api/games/${g.id}/commands`;
+  const r = await call('POST', url, { seq: 2, command: { type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 80 } } }, cookie);
+  assert.strictEqual(r.status, 200); assert.strictEqual(r.json.state.policy.credit.mortgageMaxLtv, 90, 'not yet'); assert.strictEqual(r.json.state.pq.length, 1);
+  const bad = await call('POST', url, { seq: 3, command: { type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 500 } } }, cookie);
+  assert(bad.status >= 400 && bad.status < 500, 'a bad value is refused when tabled');
+  const played = await play(cookie, g.id, r.json.state, 2, 1);
+  assert.strictEqual(played.state.policy.credit.mortgageMaxLtv, 80); assert.strictEqual(played.state.policy.owner.credit, 'player'); assert.strictEqual(played.state.pq.length, 0);
+  assert(played.state.inbox.some((x) => /^Executive meeting:/.test(x.subject) && /Decided last month and now in force/.test(x.body)));
+  assert.strictEqual((await call('GET', `/api/games/${g.id}`, null, cookie)).json.state.policy.credit.mortgageMaxLtv, 80);
+  const v = await verifyGame(pool, host, g.id); assert.deepStrictEqual(v.problems, []);
+  // the plain games the server makes without the option are unchanged
+  const plain = (await call('POST', '/api/games', { chiefExecutive: true }, cookie)).json; assert(!plain.state.meet);
+});
+

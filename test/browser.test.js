@@ -248,3 +248,30 @@ test('the page without an account: the game is recorded anonymously, the player 
   assert.deepStrictEqual(errors, []);
   await ctx.close();
 });
+
+test('the executive meeting on the page: a new career queues settings for next month, and they can be withdrawn', { skip: !EDGE && 'no Edge/Chrome found' }, async () => {
+  const ctx = await browser.newContext({ viewport: { width: 420, height: 860 } }); const page = await ctx.newPage();
+  const errors = []; page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('file:///' + require('path').resolve(__dirname, '..', 'Bank Manager.html').replace(/\\/g, '/'));
+  await page.waitForSelector('#ovTrain'); await page.click('#ovTrain');
+  await page.evaluate(() => { closeOverlay(); localStorage.setItem('ch-best', JSON.stringify({ score: 1, letter: 'C' })); });
+  await page.evaluate(() => startGame());
+  await waitFor(async () => await page.evaluate(() => !!(S && S.meet)), 'a new career with the meeting');
+  await page.evaluate(() => { S.progress.unlocked.push('pricing'); closeOverlay(); hud(); });
+  await page.click('#policyBtn'); await page.click('[data-seg=settings]');
+  assert.match(await page.textContent('.panel'), /Executive meeting: changes you save here take effect at the start of next month/);
+  await page.fill('input[data-key=mortgageSpread]', '1.4'); await page.click('#plSave');
+  await waitFor(async () => /Saved for the meeting/.test(await page.textContent('.acct .msg')), 'queued');
+  assert.strictEqual(await page.evaluate(() => S.policy.pricing.mortgageSpread), 1.05, 'not changed yet');
+  assert.strictEqual(await page.evaluate(() => S.pq.length), 1);
+  assert.match(await page.textContent('.panel'), /Waiting for next month/); assert.strictEqual(await page.inputValue('input[data-key=mortgageSpread]'), '1.4', 'the form shows what it will become');
+  await page.click('#plCancel'); await waitFor(async () => /Nothing is waiting/.test(await page.textContent('.acct .msg')), 'withdrawn');
+  assert.strictEqual(await page.evaluate(() => S.pq.length), 0);
+  await page.fill('input[data-key=mortgageSpread]', '1.3'); await page.click('#plSave');
+  await waitFor(async () => (await page.evaluate(() => S.pq.length)) === 1, 'queued again');
+  await page.evaluate(() => { closeOverlay(); for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); dispatch({ type: 'closeMonth' }); });
+  assert.strictEqual(await page.evaluate(() => S.policy.pricing.mortgageSpread), 1.3, 'in force at the start of next month');
+  assert.deepStrictEqual(errors, []);
+  await ctx.close();
+});
+

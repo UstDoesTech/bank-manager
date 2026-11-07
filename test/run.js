@@ -4,7 +4,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), '
 const golden = JSON.parse(fs.readFileSync(path.join(__dirname, 'golden.json'), 'utf8'));
 let n = 0;
 // 1. Behaviour is unchanged against snapshots from the original engine (all bots, scenarios, tutorial).
-const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'ops', 'swaps', 'collateral', 'swapId', 'fid', 'px'];
+const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'ops', 'meet', 'pq', 'applied', 'swaps', 'collateral', 'swapId', 'fid', 'px'];
 { const Eg = loadEngine(src); Eg.dispatch({ type: 'newGame', seed: 1 });
   for (const [key, want] of Object.entries(golden)){
     const [bot, tag, seed] = key.split(':');
@@ -529,4 +529,43 @@ for (const pol of ALL()) for (const seed of [3, 17]){
     const w = start(3, { outsourceCards: 1, oversight: 0 }); assert(w.advisers().some(x => /almost no oversight/.test(x.text))); n++; }
   // handing operations back stops the model
   { const E = start(3, {}); month(E); E.dispatch({ type: 'setPolicy', area: 'operations', release: true }); const was = JSON.stringify(E.S.ops.last); month(E); assert.strictEqual(JSON.stringify(E.S.ops.last), was); n++; } }
+// 17. The monthly executive meeting: settings are tabled, and take effect at the start of the next month.
+{ const month = (E) => { for (let c; (c = E.current());){ const o = c.opts.filter(o => !(o.cash && E.S.cash < o.cash)); E.dispatch({ type: 'resolve', id: c.id, k: o[0].k }); } E.dispatch({ type: 'closeMonth' }); };
+  const start = (seed, meet) => { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed, opts: { chiefExecutive: true, meetings: meet } }); return E; };
+  // without the option nothing changes: settings apply at once
+  { const E = start(3, false); E.dispatch({ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 80 } }); assert.strictEqual(E.S.policy.credit.mortgageMaxLtv, 80); assert(!E.S.meet && !E.S.pq); n += 2; }
+  // with it, a change is queued, can be seen as what it will become, and takes effect when the month turns
+  const E = start(3, true); assert.strictEqual(E.S.meet, true); n++;
+  E.dispatch({ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 80, mortgageMinScore: 600 } });
+  assert.strictEqual(E.S.policy.credit.mortgageMaxLtv, 90); assert.strictEqual(E.S.policy.owner.credit, 'system'); assert.strictEqual(E.S.pq.length, 1); n += 3;
+  assert.strictEqual(E.policyAfterMeeting('credit').mortgageMaxLtv, 80); assert.strictEqual(E.policyAfterMeeting('credit').mortgageMinScore, 600); n++;
+  // a bad value or a locked area is refused when it is tabled, not a month later
+  assert.throws(() => E.dispatch({ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 500 } }), /must be between/); n++;
+  { const L = loadEngine(src); L.dispatch({ type: 'newGame', seed: 3, opts: { meetings: true } }); assert.throws(() => L.dispatch({ type: 'setPolicy', area: 'credit', values: {} }), /not unlocked/); n++; }
+  // withdrawing a takeover that has not happened yet
+  { const F = start(3, true); F.dispatch({ type: 'setPolicy', area: 'treasury', values: { liquidityTarget: 0.3 } }); assert.strictEqual(F.S.pq.length, 1); F.dispatch({ type: 'setPolicy', area: 'treasury', release: true }); assert.strictEqual(F.S.pq.length, 0); n += 2; }
+  month(E);
+  assert.strictEqual(E.S.policy.credit.mortgageMaxLtv, 80); assert.strictEqual(E.S.policy.owner.credit, 'player'); assert.strictEqual(E.S.pq.length, 0); n += 3;
+  assert(E.S.progress.quiet && E.S.progress.quiet.area === 'credit', 'quiet months start when the change takes effect'); n++;
+  const mail = E.S.inbox.filter(x => /^Executive meeting:/.test(x.subject)); assert(mail.length >= 1); const body = mail[mail.length - 1].body;
+  assert(/Profit .* for the year/.test(body) && /Decided last month and now in force: credit: mortgageMaxLtv 80/.test(body) && /Open Policy to table changes/.test(body)); n += 2;
+  for (const r of ['Finance director', 'Chief risk officer', 'Treasurer', 'Head of operations']) assert(body.includes(r + ':'), 'the meeting mail has the ' + r); n += 4;
+  // once an area is owned, setting a value back to what it is withdraws the change; a release is queued and taken at the turn
+  E.dispatch({ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 70 } }); assert.strictEqual(E.S.pq.length, 1);
+  E.dispatch({ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 80 } }); assert.strictEqual(E.S.pq.length, 0, 'setting it back withdraws it'); n += 2;
+  E.dispatch({ type: 'setPolicy', area: 'credit', release: true }); assert.strictEqual(E.S.policy.owner.credit, 'player'); assert.strictEqual(E.S.pq[0].release, true); n += 2;
+  month(E); assert.strictEqual(E.S.policy.owner.credit, 'system'); assert.strictEqual(E.S.policy.credit.mortgageMaxLtv, 90); n += 2;
+  // the stress test's copy changes settings at once, and the real queue is left alone
+  E.dispatch({ type: 'setPolicy', area: 'capital', values: { dividendPayout: 0.2 } }); const q = JSON.stringify(E.S.pq); E.stressTest({ capital: { dividendPayout: 0.5 } }, 3); assert.strictEqual(JSON.stringify(E.S.pq), q); n++;
+  // at the year end the queue is taken when the new year begins
+  { const Y = start(3, true); Y.dispatch({ type: 'setPolicy', area: 'pricing', values: { mortgageSpread: 1.5 } }); for (let i = 0; i < 12 && Y.S.over !== 'done'; i++){ if (i === 0) month(Y); else month(Y); }
+    if (Y.S.over === 'done'){ assert.strictEqual(Y.S.policy.pricing.mortgageSpread, 1.5); n++; } }
+  { const Y = start(3, true); for (let i = 0; i < 11; i++) month(Y); Y.dispatch({ type: 'setPolicy', area: 'pricing', values: { mortgageSpread: 1.6 } }); month(Y);
+    if (Y.S.over === 'done'){ assert.strictEqual(Y.S.pq.length, 1); Y.dispatch({ type: 'nextYear' }); assert.strictEqual(Y.S.policy.pricing.mortgageSpread, 1.6); assert.strictEqual(Y.S.pq.length, 0); n += 2; } }
+  // a replay of the same commands gives the same game
+  { const cmds = [{ type: 'newGame', seed: 6, opts: { chiefExecutive: true, meetings: true } }]; const A = loadEngine(src); A.dispatch(cmds[0]);
+    const go = (c) => { cmds.push(c); return A.dispatch(c); };
+    go({ type: 'setPolicy', area: 'treasury', values: { liquidityTarget: 0.25 } }); for (let i = 0; i < 2; i++){ for (let c; (c = A.current());) go({ type: 'resolve', id: c.id, k: c.opts[0].k }); go({ type: 'closeMonth' }); }
+    go({ type: 'setPolicy', area: 'treasury', values: { liquidityTarget: 0.3 } });
+    const B = loadEngine(src); for (const c of cmds) B.dispatch(c); assert.strictEqual(JSON.stringify(B.S), JSON.stringify(A.S)); n++; } }
 console.log('ok', n, 'checks');

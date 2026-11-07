@@ -650,21 +650,77 @@ function startQuiet(area){
   applyQuiet();
   addMail('The board', 'Three quiet months', `You have taken over ${area}. For the next three months nothing outside the bank will go wrong: no run on deposits, no market crash, no outage. Use the time to see what your new rules do.`, 'good', mo, S.year);
 }
-function setPolicy(area, values, release){
+/* ---- the monthly executive meeting ----
+   In a game started with the meeting option (what the page's New game does) settings are not changed on the spot. The player
+   reads the dashboard and the advisers' notes, then tables changes; they are queued (S.pq) and take effect at the start of the
+   next month, when the executive team mails what was decided and what the numbers say. Setting a value back to what it already is
+   withdraws it. Games without the option, and the stress test's copy, change settings at once. */
+function checkPolicy(area, values, release){
   const lim = POLICY_LIMITS[area];
   if (!lim) throw new Error('unknown policy area ' + area);
   if (!S.progress.unlocked.includes(area)) throw new Error(area + ' policy is not unlocked');
-  if (release){ S.policy[area] = systemPolicy()[area]; S.policy.owner[area] = 'system'; if (area === 'treasury') syncGilts(); return S.policy[area]; }   // hand the area back to the executive team
+  if (release) return lim;
   if (!values || typeof values !== 'object') throw new Error('no values');
   for (const [k, v] of Object.entries(values)){
     if (!lim[k]) throw new Error('unknown setting ' + k);
     if (typeof v !== 'number' || !isFinite(v) || v < lim[k][0] || v > lim[k][1]) throw new Error(k + ' must be between ' + lim[k][0] + ' and ' + lim[k][1]);
   }
+  return lim;
+}
+function setPolicy(area, values, release){
+  checkPolicy(area, values, release);
+  if (S.meet && !S.sim) return queuePolicy(area, values, release);
+  return applyPolicy(area, values, release);
+}
+function applyPolicy(area, values, release){
+  if (release){ S.policy[area] = systemPolicy()[area]; S.policy.owner[area] = 'system'; if (area === 'treasury') syncGilts(); return S.policy[area]; }   // hand the area back to the executive team
   const first = S.policy.owner[area] !== 'player';
   Object.assign(S.policy[area], values); S.policy.owner[area] = 'player';
   if (area === 'treasury') syncGilts();
   if (first) startQuiet(area);
   return S.policy[area];
+}
+function queuePolicy(area, values, release){
+  const q = S.pq = S.pq || [];
+  if (release){
+    S.pq = q.filter(e => e.area !== area);
+    if (S.policy.owner[area] === 'player') S.pq.push({ area, release: true });
+    return { queued: true, area };
+  }
+  const owned = S.policy.owner[area] === 'player', keep = {};
+  for (const [k, v] of Object.entries(values)) if (!owned || S.policy[area][k] !== v) keep[k] = v;       // the value it already has is no change
+  let qq = q.filter(e => !(e.area === area && e.release));
+  const at = qq.findIndex(e => e.area === area);
+  if (at >= 0){ const merged = Object.assign({}, qq[at].values, values); for (const k of Object.keys(merged)) if (owned && S.policy[area][k] === merged[k]) delete merged[k]; if (Object.keys(merged).length || !owned) qq[at].values = merged; else qq.splice(at, 1); }
+  else if (Object.keys(keep).length || !owned) qq.push({ area, values: keep });
+  S.pq = qq;
+  return { queued: true, area };
+}
+// What the settings will be once the queued changes take effect, for the Settings screen.
+function policyAfterMeeting(area){
+  const p = Object.assign({}, S.policy[area]);
+  for (const e of S.pq || []) if (e.area === area && e.values) Object.assign(p, e.values);
+  return p;
+}
+function applyQueuedPolicy(){
+  const q = S.pq || []; S.pq = []; S.applied = [];
+  for (const e of q){
+    try { applyPolicy(e.area, e.values, e.release); S.applied.push(e.release ? e.area + ': handed back to the executive team' : e.area + ': ' + Object.entries(e.values).map(([k, v]) => `${k} ${v}`).join(', ')); } catch (err) { /* a change that no longer applies is dropped */ }
+  }
+}
+// At the start of the month: the dashboard and the advisers' notes, and what was decided at last month's meeting.
+function meetingMail(){
+  if (!S.meet || S.sim || !ceMode()) return;
+  const m = metrics(), worse = indicators().filter(i => i.status !== 'ok').sort((a, b) => LEVEL[b.status] - LEVEL[a.status]).slice(0, 3), adv = advisers(), lines = [];
+  lines.push(`Profit ${fmt(m.profit, true)} for the year so far, capital ${pc(m.cap)}, liquidity ${pc(m.liq, 0)}.`);
+  if (S.applied && S.applied.length) lines.push('Decided last month and now in force: ' + S.applied.join('; ') + '.');
+  if (worse.length) lines.push('Watch: ' + worse.map(i => `${i.label} ${i.shown}`).join('; ') + '.');
+  for (const role of ['Finance director', 'Chief risk officer', 'Treasurer', 'Head of operations']){
+    const n = adv.find(a => a.role === role && a.tone !== 'info') || adv.find(a => a.role === role); if (n) lines.push(`${role}: ${n.text}`);
+  }
+  lines.push('Open Policy to table changes. Anything you decide now takes effect at the start of next month.');
+  addMail('The executive team', `Executive meeting: ${MONTHS[Math.min(S.month, 11)]}`, lines.join('\n\n'), '', S.month, S.year);
+  S.applied = [];
 }
 // What the credit policy says about an application: 'approve', 'refer' (a person should look) or 'decline'. It uses only
 // what the applicant shows (their stated figures and credit score), never the hidden truth behind the case.
@@ -1324,6 +1380,7 @@ function newGame(seed, opts = {}){
     engine:ENGINE_VERSION, progress:{ unlocked:['branch'] }, policy:systemPolicy(), ledger:{ bal:{}, n:0 } };
   S.path = pick(['soft', 'sticky', 'downturn']);
   if (opts.households && !opts.tutorial && !opts.scenario) S.households = makeCast();
+  if (opts.meetings && !opts.tutorial && !opts.scenario) S.meet = true;
   if (opts.chiefExecutive && !opts.tutorial && !opts.scenario) S.progress.unlocked = ['branch'].concat(CE_AREAS);      // start straight in the Chief Executive role
   S.prodOrder = shuffle(['fraudModel','ob','od','branch','cyber','campaign']).concat(shuffle(['broker','ggs']));
   if (S.scenario){ const sc = SCENARIOS[S.scenario]; S.path = 'sc'; S.year = sc.year; S.tutorial = false; S.sched = makeSched(); sc.setup(); S.goals = sc.goals.map(g => ({ id:g.id, label:g.label, ok:null })); }
@@ -1358,6 +1415,7 @@ function nextYear(){
   S.sched = S.sim ? simSched() : makeSched();
   applyQuiet();
   grantUnlock(r);
+  applyQueuedPolicy();
   buildMonth();
 }
 function migrate(s){ if (s.policy && !s.policy.operations){ s.policy.operations = systemPolicy().operations; s.policy.owner.operations = 'system'; } if (s.policy && s.policy.funding && s.policy.funding.boeTarget == null) s.policy.funding.boeTarget = 0; for (const t of s.wsTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 3; } for (const t of s.bondTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 12; } if (s.swaps == null){ s.swaps = []; s.collateral = 0; } if (s.policy && s.policy.treasury && s.policy.treasury.hedgeTarget == null){ s.policy.treasury.hedgeTarget = 0; s.policy.treasury.hedgeYears = 3; } if (s.wholesale == null){ s.wholesale = 0; s.wsTranches = []; } if (s.bonds == null){ s.bonds = 0; s.bondTranches = []; s.retained = 0; s.pools = []; s.large = []; } if (!s.policy) s.policy = systemPolicy(); { const sp = systemPolicy(); for (const a of ['treasury', 'funding', 'capital']) if (!s.policy[a]) s.policy[a] = sp[a]; if (s.policy.capital.dividendPayout == null) s.policy.capital.dividendPayout = 0; for (const [k, v] of Object.entries(sp.funding)) if (s.policy.funding[k] == null) s.policy.funding[k] = v; for (const a of Object.keys(sp.owner)) if (!s.policy.owner[a]) s.policy.owner[a] = 'system'; } if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
@@ -1438,7 +1496,7 @@ function hhOutcome(c, k){
   if (!h || (h.loanId && S.loans.some(l => l.id === h.loanId && l.hh === h.id))) return;
   hhSay(h, k === 'no' ? `Was turned down for a ${KNAME[c.kind] || 'loan'}.` : `Did not go ahead with the ${KNAME[c.kind] || 'loan'}.`);
 }
-function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); boeFacility(); opsByPolicy(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); warnMonth(); }
+function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); boeFacility(); opsByPolicy(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); warnMonth(); meetingMail(); }
 function buildMonthCards(){
   const m = S.month, lead = [], other = [];
   S.pl = blankPL();
@@ -1749,7 +1807,7 @@ function closeMonth(){
   boardMonth(rep); shareMonth();
   if (S.over) S.debrief = makeDebrief();
   evalGoals(S.history[S.history.length - 1], !!S.over);
-  if (!S.over) buildMonth();
+  if (!S.over){ applyQueuedPolicy(); buildMonth(); }
   rep.next = S.over ? null : { unemp: unemp(), hpi: hpiYr(), base: S.base };
   return rep;
 }
@@ -3521,7 +3579,7 @@ function teamScreen(){
   const lab = { ok: 'OK', watch: 'Watch', alarm: 'Alarm' };
   const rows = ind.map(i => `<div class="ewi ${i.status}"><span class="pill ${i.status}">${lab[i.status]}</span><div><b>${esc(i.label)}</b><span class="num">${esc(i.shown)}</span></div></div>`).join('');
   overlay(`${execTop('team')}<div class="eyebrow">Chief Executive · ${MONTHS[Math.min(S.month, 11)]} ${S.year}</div><h2>Your executive team</h2>
-    <p class="dim">Each adviser reads the same numbers from their own seat, so they will not always agree. Changes you make in Settings apply to new decisions from now on.</p>
+    <p class="dim">Each adviser reads the same numbers from their own seat, so they will not always agree. ${S.meet ? 'Changes you table in Settings take effect at the start of next month, after this meeting.' : 'Changes you make in Settings apply to new decisions from now on.'}</p>
     ${boardBlock()}${shareBlock()}${stressLine()}${by}<h3>Early warnings</h3><div class="ewis">${rows}</div>${ladderHTML()}${instrumentsHTML()}${opsHTML()}
     <details class="more"><summary>Resign as chief executive</summary><div class="acct" style="margin-top:8px"><p class="dim">Resigning ends the game. You are rated on the year so far.</p><button type="button" class="btn no" id="exResign">Resign</button></div></details>
     <div class="stickyfoot"><button type="button" class="btn link" id="plBack">Close</button></div>`);
@@ -3546,15 +3604,22 @@ function stressScreen(msg, isErr){
   const showDesc = () => { $('#stDesc').textContent = desc[$('#stScn').value]; }; $('#stScn').onchange = showDesc; showDesc();
   $('#stRun').onclick = () => { try { dispatch({ type: 'stress', scenario: $('#stScn').value }); save(); stressScreen('Done.'); } catch (e) { stressScreen(e.message, true); } };
 }
+function pendingBlock(){
+  if (!S.meet) return '';
+  const q = S.pq || [], titles = { pricing: 'Pricing', credit: 'Credit', treasury: 'Treasury', funding: 'Funding', capital: 'Capital', operations: 'Operations' };
+  if (!q.length) return '<p class="dim">Executive meeting: changes you save here take effect at the start of next month.</p>';
+  const lines = q.map(e => `<p class="dim"><b>${esc(titles[e.area])}:</b> ${e.release ? 'back to the executive team' : esc(Object.entries(e.values).map(([k, v]) => k + ' ' + v).join(', '))}</p>`).join('');
+  return `<div class="note"><div class="eyebrow">Waiting for next month</div>${lines}<button type="button" class="btn link" id="plCancel">Withdraw these changes</button></div>`;
+}
 function policyScreen(msg, isErr){
   const sys = systemPolicy(), note = '<div class="msg' + (isErr ? ' err' : '') + '" role="status">' + esc(msg || '') + '</div>';
   const blocks = Object.keys(POLICY_FIELDS).map(area => {
     const f = POLICY_FIELDS[area];
     if (!S.progress.unlocked.includes(area)) return '<h3>' + f.title + '</h3><p class="dim">Not yet yours. The executive team sets it. The board hands over one area at a time after a strong year.</p>';
     return '<h3>' + f.title + '</h3><p class="dim">' + (S.policy.owner[area] === 'player' ? 'Set by you.' : "Still the executive team's values.") + '</p>' + (f.note ? '<p class="dim">' + f.note + '</p>' : '') + f.rows.map(r =>
-      '<label>' + r[1] + ' <span class="dim">(' + r[2] + '; executive team: ' + sys[area][r[0]] + ')</span><input type="number" step="' + r[3] + '" data-area="' + area + '" data-key="' + r[0] + '" value="' + S.policy[area][r[0]] + '">' + (r[4] ? '<span class="dim">' + r[4] + '</span>' : '') + '</label>').join('');
+      '<label>' + r[1] + ' <span class="dim">(' + r[2] + '; executive team: ' + sys[area][r[0]] + ')</span><input type="number" step="' + r[3] + '" data-area="' + area + '" data-key="' + r[0] + '" value="' + policyAfterMeeting(area)[r[0]] + '">' + (r[4] ? '<span class="dim">' + r[4] + '</span>' : '') + '</label>').join('');
   }).join('');
-  overlay(execTop('settings') + '<div class="eyebrow">Chief Executive</div><h2>Policy</h2><div class="acct">' + stressLine() + (quietLeft() > 0 ? '<p class="dim">Quiet months: nothing outside the bank will go wrong for ' + (quietLeft() - 1) + ' more month' + (quietLeft() === 2 ? '' : 's') + ' after this one.</p>' : '') + blocks + note +
+  overlay(execTop('settings') + '<div class="eyebrow">Chief Executive</div><h2>Policy</h2><div class="acct">' + stressLine() + pendingBlock() + (quietLeft() > 0 ? '<p class="dim">Quiet months: nothing outside the bank will go wrong for ' + (quietLeft() - 1) + ' more month' + (quietLeft() === 2 ? '' : 's') + ' after this one.</p>' : '') + blocks + note +
     '<div class="stickyfoot cols"><button type="button" class="btn primary full" id="plSave">Save changes</button><select id="plScn" aria-label="Stress test scenario"><option value="recession">Recession</option><option value="rates">Rate shock</option></select><button type="button" class="btn neutral" id="plTest">Stress test these settings first</button><button type="button" class="btn neutral full" id="plReset">Go back to the executive team values</button><button type="button" class="btn link" id="plBack">Close</button></div></div>');
   tabSel('policy'); execWire();
   $('#plTest').onclick = () => {
@@ -3564,11 +3629,12 @@ function policyScreen(msg, isErr){
   const send = (area, values) => { try { dispatch({ type: 'setPolicy', area, values }); return null; } catch (e) { return e.message; } };
   $('#plSave').onclick = () => {
     const by = {}; document.querySelectorAll('#ov input[data-key]').forEach(i => { (by[i.dataset.area] = by[i.dataset.area] || {})[i.dataset.key] = parseFloat(i.value); });
-    for (const area of Object.keys(by)){ const changed = {}; for (const k of Object.keys(by[area])) if (by[area][k] !== S.policy[area][k]) changed[k] = by[area][k];
+    for (const area of Object.keys(by)){ const changed = {}; for (const k of Object.keys(by[area])) if (by[area][k] !== policyAfterMeeting(area)[k]) changed[k] = by[area][k];
       if (Object.keys(changed).length){ const err = send(area, changed); if (err) return policyScreen(err, true); } }
-    save(); policyScreen('Saved. New applications use these values.');
+    save(); policyScreen(S.meet ? 'Saved for the meeting. These take effect at the start of next month.' : 'Saved. New applications use these values.');
   };
-  $('#plReset').onclick = () => { for (const area of Object.keys(POLICY_FIELDS)) if (S.progress.unlocked.includes(area)){ try { dispatch({ type: 'setPolicy', area, release: true }); } catch (e) { return policyScreen(e.message, true); } } save(); policyScreen("Back on the executive team's values."); };
+  $('#plReset').onclick = () => { for (const area of Object.keys(POLICY_FIELDS)) if (S.progress.unlocked.includes(area)){ try { dispatch({ type: 'setPolicy', area, release: true }); } catch (e) { return policyScreen(e.message, true); } } save(); policyScreen(S.meet ? "The executive team's values will take effect at the start of next month." : "Back on the executive team's values."); };
+  const pc2 = $('#plCancel'); if (pc2) pc2.onclick = () => { for (const e of S.pq || []){ try { dispatch(S.policy.owner[e.area] === 'player' ? { type: 'setPolicy', area: e.area, values: Object.fromEntries(Object.keys(e.values || S.policy[e.area]).map(k => [k, S.policy[e.area][k]])) } : { type: 'setPolicy', area: e.area, release: true }); } catch (err) { /* nothing to withdraw */ } } save(); policyScreen('Withdrawn. Nothing is waiting for next month.'); };
   $('#plBack').onclick = closeOverlay;
 }
 $('#policyBtn').onclick = () => teamScreen();
@@ -3693,7 +3759,7 @@ async function offerLiteracy(){
 }
 
 async function startGame(opts = {}){
-  if (!opts.tutorial && !opts.scenario && opts.households === undefined) opts = Object.assign({}, opts, { households: true });
+  if (!opts.tutorial && !opts.scenario && opts.households === undefined) opts = Object.assign({}, opts, { households: true, meetings: true });
   clearSave(); Remote.drop();
   let seed = null;
   await Remote.guest();

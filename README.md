@@ -186,7 +186,20 @@ owns the area, so branch play and the golden games are unchanged.
   more incidents, and oversight at £8k a supplier costs more than it saves.
 - **Data:** migration 010 adds `bank.team_month`, `bank.change_project`, `bank.incident` and `bank.supplier`; the replay checks incidents.
 
-Not built: the monthly executive meeting (other settings still apply at once).
+## The monthly executive meeting
+
+In a game started with the meeting option (the page's New game turns it on; tutorials, scenarios and plain engine games do not have it)
+settings are not changed on the spot. The player reads the dashboard and the advisers' notes on the Team screen, then tables changes
+in Settings. Changes are queued (`S.pq`) and take effect when the month turns, or when the next year begins if it is the year end
+(`applyQueuedPolicy()`). A bad value or a locked area is refused when it is tabled, setting a value back to what it already is withdraws the
+change, and a handing-back is queued too. The form shows what the settings will become, the queue is listed with a button to
+withdraw it, and quiet months and the board's watch start when a takeover takes effect, not when it is tabled. At the start of each
+month the executive team mails an "Executive meeting" note (`meetingMail()`): the year's profit, capital and liquidity, what was
+decided last month and is now in force, the indicators in trouble, and a line from each of the four advisers. The stress test's
+copy still changes settings at once. The server accepts `meetings: true` when a game is created, and the replay is unchanged
+because the queue is part of the state.
+
+Not built: phase 3 (growth: new products, acquisitions, incentives and conduct, and the branch network).
 
 ## Things to know
 

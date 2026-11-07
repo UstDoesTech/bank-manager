@@ -261,6 +261,7 @@ function register(app, { pool, host }) {
     if (body.tutorial) opts.tutorial = true;
     if (body.scenario) opts.scenario = String(body.scenario);
     if (body.households && !opts.tutorial && !opts.scenario) opts.households = true;
+    if (body.meetings && !opts.tutorial && !opts.scenario) opts.meetings = true;
     if (body.chiefExecutive && !opts.tutorial && !opts.scenario) opts.chiefExecutive = true;
     const seed = crypto.randomInt(1, 0x7fffffff);
     const cmd = { type: 'newGame', seed, opts };

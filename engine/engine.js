@@ -227,21 +227,77 @@ function startQuiet(area){
   applyQuiet();
   addMail('The board', 'Three quiet months', `You have taken over ${area}. For the next three months nothing outside the bank will go wrong: no run on deposits, no market crash, no outage. Use the time to see what your new rules do.`, 'good', mo, S.year);
 }
-function setPolicy(area, values, release){
+/* ---- the monthly executive meeting ----
+   In a game started with the meeting option (what the page's New game does) settings are not changed on the spot. The player
+   reads the dashboard and the advisers' notes, then tables changes; they are queued (S.pq) and take effect at the start of the
+   next month, when the executive team mails what was decided and what the numbers say. Setting a value back to what it already is
+   withdraws it. Games without the option, and the stress test's copy, change settings at once. */
+function checkPolicy(area, values, release){
   const lim = POLICY_LIMITS[area];
   if (!lim) throw new Error('unknown policy area ' + area);
   if (!S.progress.unlocked.includes(area)) throw new Error(area + ' policy is not unlocked');
-  if (release){ S.policy[area] = systemPolicy()[area]; S.policy.owner[area] = 'system'; if (area === 'treasury') syncGilts(); return S.policy[area]; }   // hand the area back to the executive team
+  if (release) return lim;
   if (!values || typeof values !== 'object') throw new Error('no values');
   for (const [k, v] of Object.entries(values)){
     if (!lim[k]) throw new Error('unknown setting ' + k);
     if (typeof v !== 'number' || !isFinite(v) || v < lim[k][0] || v > lim[k][1]) throw new Error(k + ' must be between ' + lim[k][0] + ' and ' + lim[k][1]);
   }
+  return lim;
+}
+function setPolicy(area, values, release){
+  checkPolicy(area, values, release);
+  if (S.meet && !S.sim) return queuePolicy(area, values, release);
+  return applyPolicy(area, values, release);
+}
+function applyPolicy(area, values, release){
+  if (release){ S.policy[area] = systemPolicy()[area]; S.policy.owner[area] = 'system'; if (area === 'treasury') syncGilts(); return S.policy[area]; }   // hand the area back to the executive team
   const first = S.policy.owner[area] !== 'player';
   Object.assign(S.policy[area], values); S.policy.owner[area] = 'player';
   if (area === 'treasury') syncGilts();
   if (first) startQuiet(area);
   return S.policy[area];
+}
+function queuePolicy(area, values, release){
+  const q = S.pq = S.pq || [];
+  if (release){
+    S.pq = q.filter(e => e.area !== area);
+    if (S.policy.owner[area] === 'player') S.pq.push({ area, release: true });
+    return { queued: true, area };
+  }
+  const owned = S.policy.owner[area] === 'player', keep = {};
+  for (const [k, v] of Object.entries(values)) if (!owned || S.policy[area][k] !== v) keep[k] = v;       // the value it already has is no change
+  let qq = q.filter(e => !(e.area === area && e.release));
+  const at = qq.findIndex(e => e.area === area);
+  if (at >= 0){ const merged = Object.assign({}, qq[at].values, values); for (const k of Object.keys(merged)) if (owned && S.policy[area][k] === merged[k]) delete merged[k]; if (Object.keys(merged).length || !owned) qq[at].values = merged; else qq.splice(at, 1); }
+  else if (Object.keys(keep).length || !owned) qq.push({ area, values: keep });
+  S.pq = qq;
+  return { queued: true, area };
+}
+// What the settings will be once the queued changes take effect, for the Settings screen.
+function policyAfterMeeting(area){
+  const p = Object.assign({}, S.policy[area]);
+  for (const e of S.pq || []) if (e.area === area && e.values) Object.assign(p, e.values);
+  return p;
+}
+function applyQueuedPolicy(){
+  const q = S.pq || []; S.pq = []; S.applied = [];
+  for (const e of q){
+    try { applyPolicy(e.area, e.values, e.release); S.applied.push(e.release ? e.area + ': handed back to the executive team' : e.area + ': ' + Object.entries(e.values).map(([k, v]) => `${k} ${v}`).join(', ')); } catch (err) { /* a change that no longer applies is dropped */ }
+  }
+}
+// At the start of the month: the dashboard and the advisers' notes, and what was decided at last month's meeting.
+function meetingMail(){
+  if (!S.meet || S.sim || !ceMode()) return;
+  const m = metrics(), worse = indicators().filter(i => i.status !== 'ok').sort((a, b) => LEVEL[b.status] - LEVEL[a.status]).slice(0, 3), adv = advisers(), lines = [];
+  lines.push(`Profit ${fmt(m.profit, true)} for the year so far, capital ${pc(m.cap)}, liquidity ${pc(m.liq, 0)}.`);
+  if (S.applied && S.applied.length) lines.push('Decided last month and now in force: ' + S.applied.join('; ') + '.');
+  if (worse.length) lines.push('Watch: ' + worse.map(i => `${i.label} ${i.shown}`).join('; ') + '.');
+  for (const role of ['Finance director', 'Chief risk officer', 'Treasurer', 'Head of operations']){
+    const n = adv.find(a => a.role === role && a.tone !== 'info') || adv.find(a => a.role === role); if (n) lines.push(`${role}: ${n.text}`);
+  }
+  lines.push('Open Policy to table changes. Anything you decide now takes effect at the start of next month.');
+  addMail('The executive team', `Executive meeting: ${MONTHS[Math.min(S.month, 11)]}`, lines.join('\n\n'), '', S.month, S.year);
+  S.applied = [];
 }
 // What the credit policy says about an application: 'approve', 'refer' (a person should look) or 'decline'. It uses only
 // what the applicant shows (their stated figures and credit score), never the hidden truth behind the case.
@@ -901,6 +957,7 @@ function newGame(seed, opts = {}){
     engine:ENGINE_VERSION, progress:{ unlocked:['branch'] }, policy:systemPolicy(), ledger:{ bal:{}, n:0 } };
   S.path = pick(['soft', 'sticky', 'downturn']);
   if (opts.households && !opts.tutorial && !opts.scenario) S.households = makeCast();
+  if (opts.meetings && !opts.tutorial && !opts.scenario) S.meet = true;
   if (opts.chiefExecutive && !opts.tutorial && !opts.scenario) S.progress.unlocked = ['branch'].concat(CE_AREAS);      // start straight in the Chief Executive role
   S.prodOrder = shuffle(['fraudModel','ob','od','branch','cyber','campaign']).concat(shuffle(['broker','ggs']));
   if (S.scenario){ const sc = SCENARIOS[S.scenario]; S.path = 'sc'; S.year = sc.year; S.tutorial = false; S.sched = makeSched(); sc.setup(); S.goals = sc.goals.map(g => ({ id:g.id, label:g.label, ok:null })); }
@@ -935,6 +992,7 @@ function nextYear(){
   S.sched = S.sim ? simSched() : makeSched();
   applyQuiet();
   grantUnlock(r);
+  applyQueuedPolicy();
   buildMonth();
 }
 function migrate(s){ if (s.policy && !s.policy.operations){ s.policy.operations = systemPolicy().operations; s.policy.owner.operations = 'system'; } if (s.policy && s.policy.funding && s.policy.funding.boeTarget == null) s.policy.funding.boeTarget = 0; for (const t of s.wsTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 3; } for (const t of s.bondTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 12; } if (s.swaps == null){ s.swaps = []; s.collateral = 0; } if (s.policy && s.policy.treasury && s.policy.treasury.hedgeTarget == null){ s.policy.treasury.hedgeTarget = 0; s.policy.treasury.hedgeYears = 3; } if (s.wholesale == null){ s.wholesale = 0; s.wsTranches = []; } if (s.bonds == null){ s.bonds = 0; s.bondTranches = []; s.retained = 0; s.pools = []; s.large = []; } if (!s.policy) s.policy = systemPolicy(); { const sp = systemPolicy(); for (const a of ['treasury', 'funding', 'capital']) if (!s.policy[a]) s.policy[a] = sp[a]; if (s.policy.capital.dividendPayout == null) s.policy.capital.dividendPayout = 0; for (const [k, v] of Object.entries(sp.funding)) if (s.policy.funding[k] == null) s.policy.funding[k] = v; for (const a of Object.keys(sp.owner)) if (!s.policy.owner[a]) s.policy.owner[a] = 'system'; } if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
@@ -1015,7 +1073,7 @@ function hhOutcome(c, k){
   if (!h || (h.loanId && S.loans.some(l => l.id === h.loanId && l.hh === h.id))) return;
   hhSay(h, k === 'no' ? `Was turned down for a ${KNAME[c.kind] || 'loan'}.` : `Did not go ahead with the ${KNAME[c.kind] || 'loan'}.`);
 }
-function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); boeFacility(); opsByPolicy(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); warnMonth(); }
+function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); boeFacility(); opsByPolicy(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); warnMonth(); meetingMail(); }
 function buildMonthCards(){
   const m = S.month, lead = [], other = [];
   S.pl = blankPL();
@@ -1326,7 +1384,7 @@ function closeMonth(){
   boardMonth(rep); shareMonth();
   if (S.over) S.debrief = makeDebrief();
   evalGoals(S.history[S.history.length - 1], !!S.over);
-  if (!S.over) buildMonth();
+  if (!S.over){ applyQueuedPolicy(); buildMonth(); }
   rep.next = S.over ? null : { unemp: unemp(), hpi: hpiYr(), base: S.base };
   return rep;
 }
