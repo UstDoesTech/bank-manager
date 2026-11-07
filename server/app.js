@@ -8,7 +8,10 @@ const { createMailer } = require('./mailer');
 const auth = require('./auth');
 const games = require('./games');
 
-const PAGE = path.join(__dirname, '..', 'Bank Manager.html');
+const ROOT = path.join(__dirname, '..'), PAGE = path.join(ROOT, 'Bank Manager.html');
+// The page is a thin shell: the engine, the stylesheet and the page scripts are separate files. Only these are served.
+const ASSETS = { '/engine/engine.js': 'engine/engine.js' };
+for (const f of fs.readdirSync(path.join(ROOT, 'web'))) if (/^[\w-]+\.(js|css)$/.test(f)) ASSETS['/web/' + f] = 'web/' + f;
 
 // Builds the server. Tests pass their own pool and config; index.js passes the real ones.
 async function build({ pool, cfg = config, logger = true, mailer } = {}) {
@@ -42,6 +45,7 @@ async function build({ pool, cfg = config, logger = true, mailer } = {}) {
 
   app.get('/healthz', async () => { await db.query('SELECT 1'); return { ok: true, engine: host.version }; });
   app.get('/', async (req, reply) => reply.type('text/html; charset=utf-8').send(fs.readFileSync(PAGE)));
+  for (const [url, rel] of Object.entries(ASSETS)) app.get(url, async (req, reply) => reply.type(rel.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8').header('cache-control', 'no-cache').send(fs.readFileSync(path.join(ROOT, rel))));
 
   app.addHook('onClose', async () => { if (!pool) await db.end(); });
   return { app, pool: db, host };

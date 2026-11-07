@@ -2,9 +2,7 @@
   "name": "bank-manager",
   "private": true,
   "scripts": {
-    "build": "node tools/build.js",
-    "check": "node tools/build.js --check",
-    "test": "node tools/build.js --check && node test/run.js",
+    "test": "node test/run.js",
     "golden": "node tools/golden.js",
     "test:server": "node --test test/server.test.js test/lakebase.test.js test/mailer.test.js",
     "start": "node server/index.js",

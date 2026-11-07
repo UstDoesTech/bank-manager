@@ -1,6 +1,6 @@
 # Bank Manager
 
-A banking game. `Bank Manager.html` is the whole game in one file and still runs offline in a browser. The game
+A banking game. `Bank Manager.html` (with the `web/` and `engine/` folders beside it) is the whole game and still runs offline in a browser. The game
 server records games to Postgres as a working banking system. The design is in
 `Bank Manager Chief Executive mode and banking back end.md`.
 
@@ -9,7 +9,7 @@ server records games to Postgres as a working banking system. The design is in
 | Path | What it is |
 | --- | --- |
 | `engine/engine.js` | The game engine: no DOM, deterministic, double-entry ledger. The single source of truth. |
-| `Bank Manager.html` | The playable page. `npm run build` copies the engine into it, so edit `engine/engine.js`, not the copy. |
+| `Bank Manager.html`, `web/` | The playable page: a small HTML shell, one stylesheet and the page scripts (`scene.js` the 3D hall, `ui.js` and `screens.js` the screens, `online.js` the optional server link). It loads `engine/engine.js` directly, so there is nothing to build. To play offline, keep the `web/` and `engine/` folders next to the HTML file. |
 | `server/` | Fastify game server: accounts, the command API, the replay checker. |
 | `db/migrations/` | Postgres schema, applied automatically on server start. |
 | `tools/`, `test/` | Headless bots and harness, golden snapshots, server and browser tests. |
@@ -52,7 +52,6 @@ npm run test:browser      # the real page in Edge/Chrome against the real server
 npm run test:all
 ```
 
-After changing `engine/engine.js`, run `npm run build` so the page picks it up. `npm test` fails if it is out of date.
 
 ## How a game is recorded
 

@@ -5,6 +5,7 @@ RUN npm ci --omit=dev
 COPY engine ./engine
 COPY db ./db
 COPY server ./server
+COPY web ./web
 COPY ["Bank Manager.html", "./"]
 ENV NODE_ENV=production PORT=8080
 EXPOSE 8080
