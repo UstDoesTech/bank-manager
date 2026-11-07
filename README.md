@@ -199,7 +199,47 @@ decided last month and is now in force, the indicators in trouble, and a line fr
 copy still changes settings at once. The server accepts `meetings: true` when a game is created, and the replay is unchanged
 because the queue is part of the state.
 
-Not built: phase 3 (growth: new products, acquisitions, incentives and conduct, and the branch network).
+## Growth (phase 3)
+
+A seventh area, handed over after operations (`growth`). Until the player takes it over none of this happens; once taken over the
+random stream is used only for its events, so branch play and the golden games are unchanged. All in `engine/engine.js`
+(`growthByPolicy()`, `growthMonth()`, `acquisitionOffer()`). Products and the branch network are modelled as contributions to
+profit and to deposits, not as loans and accounts; acquisitions are on the balance sheet, through the ledger.
+
+- **Products** (seven: buy-to-let, business overdrafts and asset finance, ISAs, credit builder card, buy now pay later, packaged accounts,
+  green home loans): a launch costs to build, volume grows over a year then settles, and each has its own risk (rates and
+  unemployment, sector downturns, the April ISA flight, high early losses, thin margins and big downturn losses, mis-selling, installer
+  fraud). One marketing budget is shared across the live products (about £3k each brings in the full volume). Withdrawing a product stops new
+  business and its income runs off over a year. The fee level (low, standard, high) earns more and raises the chance of failing the
+  regulator's quarterly fair value review, which forces refunds and cuts the price.
+- **Incentives and conduct:** the share of bonus tied to sales and to quality, the sales target, a quality gate, retraining spend and a
+  one-off clawback. Volume-heavy schemes lift sales within a quarter; sales under pressure may be mis-sold, and the complaints
+  are stored up to arrive 12 to 36 months later with redress. Eight upheld complaints in a year bring an independent review at the bank's
+  cost (not again within two years). A hidden culture score falls under pressure and recovers with remedies; below 45 whistleblowers
+  write to the inbox, and ignoring them makes mis-selling worse. The plan's normal mis-selling is already in the bank's results.
+- **Acquisitions:** an offer arrives in the inbox every eight months or so (a car finance lender, a building society's mortgage book, a
+  fintech). Light, standard or deep diligence costs £10k, £35k or £90k and tells you progressively more about the hidden loss
+  rate, systems and undisclosed commission; then buy or walk away. Paying above book creates goodwill (`goodwill` on the
+  ledger), which is deducted from capital in full but is a deal, not a result, so it does not count as a loss. The regulator will not
+  allow a bid that would take capital below the minimum. After the purchase 8% of the book leaves, hidden losses arrive over 24
+  months, redress surfaces at month six, integration takes a year (and uses change capacity if you run operations; it can slip),
+  savings arrive from month 12 if it did not, and an underperforming deal has half its goodwill written down at month 24.
+- **Branch network:** seven towns with a population, an age profile and a reliance on cash, set to none, hub or branch. Closing saves running
+  costs and loses deposits, local business and trust, most in older cash-reliant towns; closing the last bank in a town makes the Herald and
+  costs regulator standing. New towns build deposits and local business over a year.
+- **Early warnings:** products still launching, the weakest product's margin, upheld complaints per 1,000 sales, unanswered whistleblower
+  reports, goodwill as a share of capital, diligence coverage, integration progress and vulnerable customers hit by closures, plus advisers'
+  notes.
+- **Balance** (20 seeds, two years of careful play; profit against the plan's 242 in a random economy, 15 in a downturn, 216 in a soft landing and
+  345 with sticky inflation): buy-to-let 181, -5, 252, 353; business overdrafts 227, -16, 224, 352; ISAs 178, 11, 178, 305; credit builder 124,
+  -144, 149, 223; buy now pay later 55, -207, 184, 207; packaged accounts 184, -32, 206, 248; green loans 118, 31, 155, 263; all seven at
+  once fail most banks. No product beats the plan in every economy. Volume-heavy bonuses earn 95, -165 and 95 in a random, downturn and soft
+  economy, and a quality gate makes up about half the loss. Closing towns 1 to 3 earns 49, hubs 118, closing the two older towns 159, opening two new
+  towns 115 and hubs in them 229 (76 against 15 in a downturn).
+- **Data:** migration 011 adds `goodwill` and `equity.writedown` accounts and `bank.product`, `bank.product_review`, `bank.acquisition` (with
+  the hidden loss rate the engine knew), `bank.incentive_month` and `bank.branch_site`; the replay checks products and acquisitions.
+
+Every control area in the design is now built. Still to do: metric views over the data, the remaining analysis tables and the Azure email service.
 
 ## Things to know
 

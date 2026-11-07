@@ -39,15 +39,15 @@ function validate(state, cmd) {
     if (typeof cmd.key !== 'string') throw new HttpError(400, 'bad_command', 'Missing upgrade key.');
   } else if (cmd.type === 'setPolicy') {
     if (state.over) throw new HttpError(409, 'game_over', 'The year is over.');
-    if (!['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations'].includes(cmd.area)) throw new HttpError(400, 'bad_command', 'Unknown policy area.');
+    if (!['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations', 'growth'].includes(cmd.area)) throw new HttpError(400, 'bad_command', 'Unknown policy area.');
     if (!state.progress.unlocked.includes(cmd.area)) throw new HttpError(403, 'not_unlocked', 'You do not control that policy yet.');
     if (!cmd.release && (!cmd.values || typeof cmd.values !== 'object' || Array.isArray(cmd.values))) throw new HttpError(400, 'bad_command', 'Missing values.');
   } else if (cmd.type === 'resign') {
     if (state.over) throw new HttpError(409, 'game_over', 'The game is already over.');
-    if (!state.progress.unlocked.some((a) => ['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations'].includes(a))) throw new HttpError(403, 'not_unlocked', 'Only a chief executive can resign.');
+    if (!state.progress.unlocked.some((a) => ['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations', 'growth'].includes(a))) throw new HttpError(403, 'not_unlocked', 'Only a chief executive can resign.');
   } else if (cmd.type === 'stress') {
     if (state.over) throw new HttpError(409, 'game_over', 'The year is over.');
-    if (!state.progress.unlocked.some((a) => ['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations'].includes(a))) throw new HttpError(403, 'not_unlocked', 'The stress test comes with the Chief Executive role.');
+    if (!state.progress.unlocked.some((a) => ['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations', 'growth'].includes(a))) throw new HttpError(403, 'not_unlocked', 'The stress test comes with the Chief Executive role.');
     if (cmd.overrides != null && (typeof cmd.overrides !== 'object' || Array.isArray(cmd.overrides))) throw new HttpError(400, 'bad_command', 'Bad overrides.');
   } else if (cmd.type === 'read') {
     if (typeof cmd.key !== 'string' || !/^[cm]\d+$/.test(cmd.key)) throw new HttpError(400, 'bad_command', 'Bad message key.');
@@ -145,6 +145,31 @@ async function syncOperations(client, gid, at, state, closing) {
       [gid, key, pol[field] > 0, pence(pol.oversight), (O.sup && O.sup[key]) || 0]);
 }
 
+// Keeps growth in step with the engine: products and their reviews, acquisitions, incentives and the branch network.
+async function syncGrowth(client, gid, at, state, closing) {
+  const G = state.growth; if (!G) return;
+  for (const [key, p] of Object.entries(G.products || {}))
+    await client.query(
+      `INSERT INTO bank.product (game_id, product, start_abs, status, repriced, revenue_pence) VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (game_id, product) DO UPDATE SET status = EXCLUDED.status, repriced = EXCLUDED.repriced, revenue_pence = EXCLUDED.revenue_pence`,
+      [gid, key, p.start, p.ended == null ? 'live' : 'withdrawn', !!p.repriced, pence(p.cum || 0)]);
+  for (const r of G.fvLog || [])
+    await client.query('INSERT INTO bank.product_review (game_id, year, month, product, failed) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING', [gid, r.y, r.m, r.key, r.failed]);
+  for (const a of G.acq || [])
+    await client.query(
+      `INSERT INTO bank.acquisition (game_id, acquisition_id, target, price_pence, book_pence, goodwill_pence, diligence, start_abs, hidden_loss_pct, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (game_id, acquisition_id) DO UPDATE SET status = EXCLUDED.status`,
+      [gid, a.id, a.name, pence(a.price), pence(a.L), pence(a.goodwill), a.depth, a.start, a.hidden * 100, a.written ? 'written down' : (state.year * 12 + Math.min(state.month, 11)) - a.start < 24 ? 'integrating' : 'settled']);
+  if (closing && G.last)
+    await client.query('INSERT INTO bank.incentive_month (game_id, year, month, sales_index, mis_sold, culture, upheld_12m) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
+      [gid, at.year, at.month, G.last.salesIdx, G.last.mis, G.last.culture, G.last.upheld]);
+  const names = ['none', 'hub', 'branch'];
+  for (const [town, st] of Object.entries(G.townState || {})) {
+    const since = (G.townSince && G.townSince[town]) != null ? G.townSince[town] : 0;
+    await client.query('INSERT INTO bank.branch_site (game_id, town, state, since_abs) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING', [gid, town, names[st], since]);
+  }
+}
+
 // Keeps the household cast and each closed month of their money in step with the engine.
 async function syncHouseholds(client, gid, at, households) {
   const cast = JSON.stringify(households.map((h) => ({ id: h.id, name: h.name, stage: h.stage, label: h.label, goal: h.goal })));
@@ -206,6 +231,7 @@ async function persist(client, game, seq, cmd, before, out) {
   await syncBook(client, gid, before || { year: state.year, month: state.month }, state.loans || []);
   if (state.households && cmd.type === 'closeMonth') await syncHouseholds(client, gid, before, state.households);
   await syncFunding(client, gid, facts.instruments || []);
+  if (state.growth && (cmd.type === 'closeMonth' || cmd.type === 'nextYear')) await syncGrowth(client, gid, before || { year: state.year, month: state.month }, state, cmd.type === 'closeMonth');
   if (state.ops && (cmd.type === 'closeMonth' || cmd.type === 'nextYear')) await syncOperations(client, gid, before || { year: state.year, month: state.month }, state, cmd.type === 'closeMonth');
   if (cmd.type === 'closeMonth' && state.px && state.px.hist.length) {
     const h = state.px.hist[state.px.hist.length - 1];

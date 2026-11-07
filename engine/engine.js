@@ -92,7 +92,7 @@ function chip(t, c){ if (OUT) OUT.chips.push({ t, c }); }
    equity.opening, equity.paidin; income and expense pl.<key> (one per profit-and-loss line).
    S.ledger holds running balances only; entries are streamed to LEDGER_SINK (the game server stores them). */
 var LEDGER_SINK = null, LEDGER_STRICT = false;
-const LEDGER_DIR = { cash:1, legacy:1, deposits:-1, cb:-1, wholesale:-1, bonds:-1, retained:1, collateral:1 };   // accounts mirrored by a plain state field
+const LEDGER_DIR = { cash:1, legacy:1, deposits:-1, cb:-1, wholesale:-1, bonds:-1, retained:1, collateral:1, goodwill:1 };   // accounts mirrored by a plain state field
 function je(memo, lines, opts){
   let sum = 0; for (const l of lines) sum += l[1];
   if (!(Math.abs(sum) < 1e-6)){ if (LEDGER_STRICT) throw new Error('unbalanced journal entry ' + memo + ': ' + sum); }
@@ -117,11 +117,11 @@ function ledgerCheck(){
   const L = S.ledger, bad = [], near = (x, y) => Math.abs(x - y) <= 1e-6 + 1e-9 * Math.abs(y);
   const chk = (n, ledger, live) => { if (!near(ledger, live)) bad.push(`${n}: ledger ${ledger} vs state ${live}`); };
   chk('cash', L.bal.cash || 0, S.cash); chk('legacy', L.bal.legacy || 0, S.legacy); chk('deposits', -(L.bal.deposits || 0), S.deposits); chk('cb', -(L.bal.cb || 0), S.cb); chk('wholesale', -(L.bal.wholesale || 0), S.wholesale || 0); chk('bonds', -(L.bal.bonds || 0), S.bonds || 0); chk('retained', L.bal.retained || 0, S.retained || 0);
-  chk('gilts', L.bal.gilts || 0, giltCarry()); chk('loans', L.bal.loans || 0, loanSum()); chk('collateral', L.bal.collateral || 0, S.collateral || 0);
+  chk('gilts', L.bal.gilts || 0, giltCarry()); chk('loans', L.bal.loans || 0, loanSum()); chk('collateral', L.bal.collateral || 0, S.collateral || 0); chk('goodwill', L.bal.goodwill || 0, S.goodwill || 0);
   const total = Object.values(L.bal).reduce((t, x) => t + x, 0);
   if (!near(total, 0)) bad.push('ledger does not sum to zero: ' + total);
   const eq = -Object.keys(L.bal).filter(a => a.startsWith('equity.') || a.startsWith('pl.')).reduce((t, a) => t + L.bal[a], 0);
-  chk('equity', eq, capital());
+  chk('equity', eq, capital() + (S.goodwill || 0));      // book equity is regulatory capital plus the goodwill that is deducted from it
   return bad;
 }
 function post(key, amt){ je('pl.' + key, [['cash', amt], ['pl.' + key, -amt]]); }
@@ -173,7 +173,9 @@ function systemPolicy(){
     capital: { capitalTarget: 0.125, capitalAction: 0, raiseAmount: 300, dividendPayout: 0 },
     operations: { staffCounter: 6, staffCredit: 3, staffFraud: 4, staffFincrime: 3, staffComplaints: 3, staffIt: 3, overtime: 0, fraudSensitivity: 0.5, amlSensitivity: 0.5,
       coreMigration: 0, paymentsUpgrade: 0, regReporting: 0, mobileApp: 0, dataPlatform: 0, outsourceCards: 0, outsourceContact: 0, outsourceHosting: 0, oversight: 0 },
-    owner: { pricing: 'system', credit: 'system', treasury: 'system', funding: 'system', capital: 'system', operations: 'system' } };
+    growth: { launchBtl: 0, launchOverdraft: 0, launchIsa: 0, launchBuilder: 0, launchBnpl: 0, launchPackaged: 0, launchGreen: 0, marketing: 0, feeLevel: 1, bonusSales: 0.3, bonusQuality: 0.3, salesTarget: 1,
+      qualityGate: 0, retraining: 0, clawback: 0, town1: 2, town2: 2, town3: 2, town4: 2, town5: 2, town6: 0, town7: 0 },
+    owner: { pricing: 'system', credit: 'system', treasury: 'system', funding: 'system', capital: 'system', operations: 'system', growth: 'system' } };
 }
 const POLICY_LIMITS = {
   pricing: { mortgageSpread: [0, 6], mortgagePremium: [0, 3], personalLow: [0, 40], personalHigh: [0, 40], cardRate: [0, 40] },
@@ -182,7 +184,9 @@ const POLICY_LIMITS = {
   funding: { boeTarget: [0, 5000], savingsSpread: [-1.5, 2], wholesaleTarget: [0, 0.35], bondTarget: [0, 0.3], bondTermYears: [1, 3], bondPremium: [0, 2], largeCap: [0, 0.5], poolWhenShort: [0, 1], poolShare: [0.05, 0.5], poolMode: [0, 2] },
   capital: { capitalTarget: [0.105, 0.25], capitalAction: [0, 3], raiseAmount: [100, 1000], dividendPayout: [0, 1] },
   operations: { staffCounter: [1, 40], staffCredit: [1, 40], staffFraud: [1, 40], staffFincrime: [1, 40], staffComplaints: [1, 40], staffIt: [1, 40], overtime: [0, 1], fraudSensitivity: [0, 1], amlSensitivity: [0, 1],
-    coreMigration: [0, 2], paymentsUpgrade: [0, 1], regReporting: [0, 1], mobileApp: [0, 1], dataPlatform: [0, 1], outsourceCards: [0, 1], outsourceContact: [0, 1], outsourceHosting: [0, 1], oversight: [0, 15] } };
+    coreMigration: [0, 2], paymentsUpgrade: [0, 1], regReporting: [0, 1], mobileApp: [0, 1], dataPlatform: [0, 1], outsourceCards: [0, 1], outsourceContact: [0, 1], outsourceHosting: [0, 1], oversight: [0, 15] },
+  growth: { launchBtl: [0, 1], launchOverdraft: [0, 1], launchIsa: [0, 1], launchBuilder: [0, 1], launchBnpl: [0, 1], launchPackaged: [0, 1], launchGreen: [0, 1], marketing: [0, 30], feeLevel: [0, 2], bonusSales: [0, 1], bonusQuality: [0, 1], salesTarget: [0.5, 1.5],
+    qualityGate: [0, 1], retraining: [0, 10], clawback: [0, 1], town1: [0, 2], town2: [0, 2], town3: [0, 2], town4: [0, 2], town5: [0, 2], town6: [0, 2], town7: [0, 2] } };
 // Prices above the system's lose customers and attract riskier ones; at or below the system's nothing changes.
 // excess() is how many points a price is above the system price; dem() is the share of customers who still say yes;
 // adv() scales default risk for the customers who do. No random draw happens at the system prices.
@@ -192,12 +196,13 @@ const adv = ex => 1 + 0.08 * ex;
 const takeUp = (ex, slope) => ex <= 0 || chance(dem(ex, slope));
 const MORTGAGE_SLOPE = 1.2;   // mortgage customers shop around hard: 0.5 points dearer loses about 40% of them
 /* ---- unlocks: a strong year (rating A or better) hands over the next area, with a briefing letter from the board ---- */
-const UNLOCK_ORDER = ['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations'];
+const UNLOCK_ORDER = ['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations', 'growth'];
 const STRONG = ['AAA', 'AA', 'A'];
 const BRIEFING = {
   pricing: ['Pricing is yours', 'The board was impressed by your year. From now on you set the prices: the mortgage spread over Bank Rate, the personal loan rates and the card rate. Until today the executive team set them. Price too high and customers go elsewhere, and the ones who stay are riskier. Price too low and you give away margin. Open Policy from the menu to change them, or return to the executive team\'s prices at any time.'],
   treasury: ['Treasury is yours', 'A third strong year. You now set the treasury rules: how much cash the bank keeps as a share of deposits, and how much of any surplus goes into long gilts rather than short ones. Your treasurer follows the rules every month and will sell gilts to restore the cash target. From the day you take it over, gilts are counted at market value, so a fall in their value shows in your capital straight away instead of only when they are sold. Long gilts pay more but lose value when rates rise. A low cash target earns more and leaves less to meet a run.'],
   funding: ['Funding is yours', 'You now decide where the money comes from. Your savings rate is set as a gap to the market rate, and your funding team can also borrow from other banks (wholesale) up to a share of your deposits, in three-month loans that must be renewed. Wholesale money is dearer than savings and it can disappear: when markets freeze, nobody renews, and the money you were counting on has to be repaid. You can also issue fixed-term bonds for one to three years, which cannot leave early but must be repaid or refinanced when they mature, so watch for many falling due together. Large depositors such as housing associations and councils will offer big sums at a good rate, and one of them can take it all away at once, so set a cap on how much of your deposits they may hold. If liquidity runs short you can sell a pool of mortgages to investors: you get cash and free up capital, but you keep a slice of the risk and the first losses, and the price falls in a stressed market. Watch how much of your funding is wholesale and how much falls due soon.'],
+  growth: ['Growth is yours', 'The board now lets you grow the bank. You can launch products from a catalogue, each with its own risks: buy-to-let loses when rents fall or rates rise, buy now pay later loses a lot in a downturn, packaged accounts can be mis-sold. Higher fees earn more but are more likely to fail the regulator\'s fair value review. You can pay staff to sell: bonuses tied to sales lift volume within a quarter, but sales made under pressure are sometimes mis-sold, and the complaints arrive a year or two later, with redress and sometimes an independent review. Watch for whistleblowers, and use quality gates, clawback and retraining before it is too late. Offers to buy smaller lenders will arrive in your inbox: the deeper you check, the more of their hidden losses you will find, and anything above book value is goodwill that comes straight off your capital. You can also open, shrink or close branches town by town. Closing saves money and loses deposits and trust, most of all in older, cash-reliant towns.'],
   operations: ['Operations is yours', 'The board now hands you the running of the bank: how many people work in each team, how sensitive the fraud and money-laundering alerts are, which IT projects go ahead, and what to outsource. Until today the executive team ran it well. From now on every team has a capacity, and work beyond it becomes a backlog that ages into unhappy customers, upheld complaints, missed fraud and regulator fines. Hiring takes two months to arrive and a month to train. A very sensitive alert setting catches more crime but swamps your analysts with false alarms and blocks genuine customers. Too many projects at once overload your IT staff and bring outages. Outsourcing saves money but the regulator still holds you responsible when a supplier fails, unless you pay to oversee them. Watch utilisation and the age of your oldest cases: they show trouble months before the losses.'],
   capital: ['Capital is yours', 'You now set the capital rules: the ratio you want to stay above, what to do when you fall below it, how much to raise, and what share of each month\'s profit to pay out as dividends. Dividends please shareholders and the board, and they leave the bank with less capital. Paying them while thin on capital annoys the regulator. Raising shares dilutes the owners and lowers the return the board sees. Selling mortgages shrinks the bank. Carrying on risks the regulator.'],
   credit: ['Credit policy is yours', 'Another strong year. You now set the credit policy: how much of a home\'s price we lend, how many times income, how much of take-home pay a mortgage may take, and the lowest credit scores we accept. Loosening it wins customers and brings losses a year or two later.'] };
@@ -949,7 +954,7 @@ function evalGoals(h, final){
 /* ============ GAME FLOW ============ */
 function newGame(seed, opts = {}){
   seed = (seed == null ? (Date.now() & 0x7fffffff) : seed) | 0;
-  S = { v:2, rs:seed, seed, month:0, year:2027, path:'soft', cash:5000, gilts:[{ kind:'short', amt:1800, coupon:4.1, dur:1.9, y0:4.15 }], deposits:15650, wholesale:0, wsTranches:[], collateral:0, swaps:[], bonds:0, bondTranches:[], retained:0, pools:[], large:[],
+  S = { v:2, rs:seed, seed, month:0, year:2027, path:'soft', cash:5000, gilts:[{ kind:'short', amt:1800, coupon:4.1, dur:1.9, y0:4.15 }], deposits:15650, wholesale:0, wsTranches:[], collateral:0, goodwill:0, swaps:[], bonds:0, bondTranches:[], retained:0, pools:[], large:[],
     legacy:10000, legacyRate:6.0, loans:[], savRate:2.5, cb:0, base:4.0, startCap:0,
     trust:60, comp:80, flags:{}, queue:[], qi:0, pending:[], pl:blankPL(), last:null, history:[], over:null, nextId:1,
     lastTreasury:-9, prodOrder:[], prodUsed:[], sched:{}, y0:{ base:4, u:4.3, h:1 }, career:[], divPaid:0, wm:null, wmOffer:2, mkt:100, mktY0:100, mktHist:[100], lastMkt:0,
@@ -995,7 +1000,7 @@ function nextYear(){
   applyQueuedPolicy();
   buildMonth();
 }
-function migrate(s){ if (s.policy && !s.policy.operations){ s.policy.operations = systemPolicy().operations; s.policy.owner.operations = 'system'; } if (s.policy && s.policy.funding && s.policy.funding.boeTarget == null) s.policy.funding.boeTarget = 0; for (const t of s.wsTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 3; } for (const t of s.bondTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 12; } if (s.swaps == null){ s.swaps = []; s.collateral = 0; } if (s.policy && s.policy.treasury && s.policy.treasury.hedgeTarget == null){ s.policy.treasury.hedgeTarget = 0; s.policy.treasury.hedgeYears = 3; } if (s.wholesale == null){ s.wholesale = 0; s.wsTranches = []; } if (s.bonds == null){ s.bonds = 0; s.bondTranches = []; s.retained = 0; s.pools = []; s.large = []; } if (!s.policy) s.policy = systemPolicy(); { const sp = systemPolicy(); for (const a of ['treasury', 'funding', 'capital']) if (!s.policy[a]) s.policy[a] = sp[a]; if (s.policy.capital.dividendPayout == null) s.policy.capital.dividendPayout = 0; for (const [k, v] of Object.entries(sp.funding)) if (s.policy.funding[k] == null) s.policy.funding[k] = v; for (const a of Object.keys(sp.owner)) if (!s.policy.owner[a]) s.policy.owner[a] = 'system'; } if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
+function migrate(s){ if (s.goodwill == null) s.goodwill = 0; if (s.policy && !s.policy.growth){ s.policy.growth = systemPolicy().growth; s.policy.owner.growth = 'system'; } if (s.policy && !s.policy.operations){ s.policy.operations = systemPolicy().operations; s.policy.owner.operations = 'system'; } if (s.policy && s.policy.funding && s.policy.funding.boeTarget == null) s.policy.funding.boeTarget = 0; for (const t of s.wsTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 3; } for (const t of s.bondTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 12; } if (s.swaps == null){ s.swaps = []; s.collateral = 0; } if (s.policy && s.policy.treasury && s.policy.treasury.hedgeTarget == null){ s.policy.treasury.hedgeTarget = 0; s.policy.treasury.hedgeYears = 3; } if (s.wholesale == null){ s.wholesale = 0; s.wsTranches = []; } if (s.bonds == null){ s.bonds = 0; s.bondTranches = []; s.retained = 0; s.pools = []; s.large = []; } if (!s.policy) s.policy = systemPolicy(); { const sp = systemPolicy(); for (const a of ['treasury', 'funding', 'capital']) if (!s.policy[a]) s.policy[a] = sp[a]; if (s.policy.capital.dividendPayout == null) s.policy.capital.dividendPayout = 0; for (const [k, v] of Object.entries(sp.funding)) if (s.policy.funding[k] == null) s.policy.funding[k] = v; for (const a of Object.keys(sp.owner)) if (!s.policy.owner[a]) s.policy.owner[a] = 'system'; } if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
 /* ---- recurring households ----
    Seven named households (a student, a young renter, a couple buying their first home, a family, a self-employed
    tradesperson, a retiree and a single parent) stay with the bank for the whole game. Their money moves each month
@@ -1073,7 +1078,7 @@ function hhOutcome(c, k){
   if (!h || (h.loanId && S.loans.some(l => l.id === h.loanId && l.hh === h.id))) return;
   hhSay(h, k === 'no' ? `Was turned down for a ${KNAME[c.kind] || 'loan'}.` : `Did not go ahead with the ${KNAME[c.kind] || 'loan'}.`);
 }
-function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); boeFacility(); opsByPolicy(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); warnMonth(); meetingMail(); }
+function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); boeFacility(); opsByPolicy(); growthByPolicy(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); warnMonth(); meetingMail(); }
 function buildMonthCards(){
   const m = S.month, lead = [], other = [];
   S.pl = blankPL();
@@ -1083,6 +1088,7 @@ function buildMonthCards(){
   if (S.sched.prod.includes(m)) { const c = gen.product(); if (c) other.push(c); }
   if (S.sched.liq.includes(m)) other.push(gen.liqshock());
   if (!S.wm && S.wmOffer === m) other.push(gen.wmLaunch());
+  { const aq = acquisitionOffer(); if (aq) other.push(aq); }
   if (S.wm){ if (S.lastMkt < -0.05) lead.push(gen.wmMarket()); if (S.wm.houseAt === m) other.push(gen.wmHouse()); if (S.wm.campAt === m) other.push(gen.wmCampaign()); if (S.sched.pep === m) other.push(gen.wmPep()); }
   if (S.sched.out === m) other.push(gen.outage());
   if (S.sched.sanc.includes(m)) other.push(gen.sanctions());
@@ -1333,7 +1339,7 @@ function closeMonth(){
   for (const w of S.wsTranches) post('intCB', -w.amt * w.rate / 1200);
   if (upMonthly()) post('costs', -upMonthly());
   post('costs', -(38 - (S.flags.branch === 'closed' ? 10 : S.flags.branch === 'hub' ? 6 : 0)) * Math.pow(Math.max(1, assets() / 16800), 0.5));
-  opsMonth(ev);
+  opsMonth(ev); growthMonth(ev);
   if (S.flags.od !== undefined && S.flags.od !== false && S.flags.od < m){
     post('fees', 7); S.flags.odTotal += 7; S.trust = clamp(S.trust - 0.8, 0, 100);
     if (m - S.flags.od >= 3 && R() < 0.3){ post('redress', -(S.flags.odTotal + 25)); S.comp = clamp(S.comp - 12, 0, 100); S.stats.fines += S.flags.odTotal + 25; news(8, 'Regulator orders refunds over unfair overdraft fee', `Customers charged £6 a day for going overdrawn will get ${fmt(S.flags.odTotal)} back.`); ev(`The regulator ruled your overdraft fee unfair. You refund ${fmt(S.flags.odTotal)} and pay a ${fmt(25)} fine.`, 'bad'); S.flags.od = false; }
@@ -1348,6 +1354,7 @@ function closeMonth(){
     if (p.p != null && R() > p.p) continue;
     if (p.news) news(p.news[0], p.news[1], p.news[2]);
     if (p.special){ wealthSpecial(p, ev); continue; }
+    if (p.gr && S.growth) S.growth.upheld.push(S.year * 12 + S.month);
     if (p.cash){ post(p.key || 'redress', p.cash); if (p.fine) S.stats.fines += -p.cash; }
     if (p.trust) S.trust = clamp(S.trust + p.trust, 0, 100);
     if (p.comp) S.comp = clamp(S.comp + p.comp, 0, 100);
@@ -1555,7 +1562,7 @@ function opsMonth(ev){
     if (n > 0 && O.staff[t] - n >= 1){ O.staff[t] -= n; if (l > 1) ev(`${n} left ${label.toLowerCase()}, worn down by the workload.`, 'bad'); }
   }
   // the change programme
-  const limit = O.staff.it * OPS_CAP.it, projLoad = O.projects.reduce((a, p) => a + p.load, 0), meter = projLoad / Math.max(1, limit);
+  const limit = O.staff.it * OPS_CAP.it, projLoad = O.projects.reduce((a, p) => a + p.load, 0) + (S.growth ? S.growth.acq.filter(a => now - a.start < 12).length * 15 + Object.values(S.growth.products).filter(p => now - p.start < 6).length * 8 : 0), meter = projLoad / Math.max(1, limit);
   let spend = 0;
   for (const p of [...O.projects]){
     spend += p.cost / p.months; p.left -= meter > 1 ? 0.5 : 1;
@@ -1589,6 +1596,209 @@ function opsMonth(ev){
   O.last = rows;
   O.m = { load, age, fraud: fr, falseRate: fAF / Math.max(1, tAF + fAF), alertsPer: (D.fraud + D.fincrime) / Math.max(1, O.staff.fraud + O.staff.fincrime), unreviewed: Math.round(unreviewed * 10) / 10, meter, limit, supInc, missedA: Math.round(missedA * 100) / 100, overdue: Math.round(overdue * 10) / 10 };
 }
+
+/* ---- growth ----
+   Four ways to grow, each adding revenue quickly and risk slowly.
+   Products: seven can be launched from a catalogue. Volume grows over a year, peaks, then settles as competitors respond. Each
+   brings its own risk (rates and unemployment, sector downturns, early losses, conduct). Fees are a trade-off: higher fees earn more
+   and are more likely to fail the regulator's fair value review, which forces refunds and repricing.
+   Incentives: volume-heavy bonuses lift sales within a quarter, but sales made under pressure may be mis-sold. Complaints arrive one
+   to three years later and then redress; a pattern brings an independent review at the bank's cost. A hidden culture score falls
+   under pressure and whistleblowers say so. Quality gates, clawback and retraining are the remedies, and each costs sales or money.
+   Acquisitions: offers arrive in the inbox. Due diligence (light, standard or deep) reveals more of the target's hidden losses. Paying above
+   book creates goodwill, which comes off capital in full. Integration uses change capacity and loses customers, and what diligence
+   missed arrives over the next two years, with a goodwill write-down if the deal underperforms.
+   Branch network: seven towns, each with a population, an age profile and a reliance on cash. A branch, a hub or nothing, town by town.
+   Closing saves running costs but loses deposits and trust, most in older, cash-reliant towns; closing the last bank in a town makes the Herald.
+   Until the player takes the area over none of this happens. The random stream is used only when it is owned, so branch play and
+   the golden games are unchanged. Products and the network are modelled as contributions to profit and to deposits rather than as
+   loans and accounts on the balance sheet; acquisitions are on it, through the ledger. */
+const GROWTH_PRODUCTS = {
+  btl:      { name: 'Buy-to-let mortgages', field: 'launchBtl', dev: 40, rev: 18, scrut: 0.5 },
+  od:       { name: 'Business overdrafts and asset finance', field: 'launchOverdraft', dev: 30, rev: 12, scrut: 0.6 },
+  isa:      { name: 'ISAs and regular savers', field: 'launchIsa', dev: 25, rev: 9, scrut: 0.4 },
+  builder:  { name: 'Credit builder card', field: 'launchBuilder', dev: 35, rev: 7, scrut: 1 },
+  bnpl:     { name: 'Buy now, pay later', field: 'launchBnpl', dev: 45, rev: 20, scrut: 1.4 },
+  packaged: { name: 'Packaged accounts with insurance', field: 'launchPackaged', dev: 20, rev: 14, scrut: 1.5 },
+  green:    { name: 'Green home improvement loans', field: 'launchGreen', dev: 30, rev: 11, scrut: 0.5 },
+};
+const FEE_MULT = [0.8, 1, 1.3], REVIEW_RISK = [0.02, 0.08, 0.25];
+const GROWTH_TOWNS = [
+  { key: 'town1', name: 'Marlow', pop: 22, old: 0.2, cash: 0.25, sole: false, base: 2 }, { key: 'town2', name: 'Aldwick', pop: 20, old: 0.3, cash: 0.3, sole: false, base: 2 },
+  { key: 'town3', name: 'Thornby', pop: 18, old: 0.4, cash: 0.35, sole: false, base: 2 }, { key: 'town4', name: 'Eskdale', pop: 12, old: 0.7, cash: 0.7, sole: true, base: 2 },
+  { key: 'town5', name: 'Caldwell', pop: 10, old: 0.6, cash: 0.6, sole: true, base: 2 }, { key: 'town6', name: 'Ravenscourt', pop: 14, old: 0.2, cash: 0.2, sole: false, base: 0 },
+  { key: 'town7', name: 'Pemberton', pop: 12, old: 0.15, cash: 0.15, sole: false, base: 0 },
+];
+const BRANCH_COST = 6, HUB_COST = 2.5;
+const ACQ_TARGETS = [
+  { name: 'Brightwater Car Finance', what: 'a car finance lender', book: 700, premium: 0.12, hidden: [0.05, 0.14], redress: 0.04, sys: 'creaking' },
+  { name: 'Fairhaven Building Society', what: "a building society's mortgage book", book: 1800, premium: 0.06, hidden: [0.01, 0.05], redress: 0.01, sys: 'sound' },
+  { name: 'Nimbus', what: 'a fintech with an app and young customers', book: 300, premium: 0.55, hidden: [0.03, 0.1], redress: 0.02, sys: 'weak' },
+];
+const growthOwned = () => S.policy.owner.growth === 'player';
+function growthOf(){
+  if (!S.growth) S.growth = { products: {}, culture: 60, sidx: 1, upheld: [], whistle: 0, ignored: 0, claw: 0, clawed: false, townState: {}, acq: [], acqCount: 0, offerAt: null, indep: -99, reviewsFailed: 0, last: null, fvLog: [] };
+  const G = S.growth; for (const t of GROWTH_TOWNS) if (G.townState[t.key] == null) G.townState[t.key] = t.base;
+  return G;
+}
+const townCost = st => st === 2 ? BRANCH_COST : st === 1 ? HUB_COST : 0;
+const townShare = G => { const present = GROWTH_TOWNS.filter(t => G.townState[t.key] > 0).reduce((a, t) => a + t.pop, 0); return t => G.townState[t.key] > 0 ? t.pop / Math.max(1, present) : 0; };
+const growthSize = () => Math.sqrt(clamp(S.deposits / 15650, 0.6, 3));
+
+// At the start of the month: launch and withdraw products, and change the branch network.
+function growthByPolicy(){
+  if (!growthOwned() || S.over || S.tutorial || S.scenario) return;
+  const G = growthOf(), gp = S.policy.growth, now = S.year * 12 + S.month, notes = [];
+  for (const [key, def] of Object.entries(GROWTH_PRODUCTS)){
+    const want = gp[def.field] > 0, p = G.products[key];
+    if (want && !p){ G.products[key] = { start: now, ended: null, repriced: false, cum: 0, lastReview: now }; post('costs', -def.dev); notes.push(`launching ${def.name.toLowerCase()} (${full(def.dev)} to build)`); }
+    else if (!want && p && p.ended == null){ p.ended = now; notes.push(`withdrawing ${def.name.toLowerCase()}; customers already on it stay on the books`); }
+    else if (want && p && p.ended != null){ p.ended = null; }
+  }
+  for (const t of GROWTH_TOWNS){
+    const to = gp[t.key], from = G.townState[t.key]; if (to === from) continue;
+    G.townState[t.key] = to; G.townSince = G.townSince || {}; G.townSince[t.key] = now;
+    const word = ['nothing', 'a banking hub', 'a branch'];
+    if (to > from){ post('costs', -(to === 2 ? 40 : 15)); notes.push(`opening ${word[to]} in ${t.name} (${full(to === 2 ? 40 : 15)} to open; deposits build over a year)`); }
+    else {
+      const full0 = 0.10 + 0.45 * t.cash + 0.25 * t.old, lossFor = st => st === 0 ? full0 : st === 1 ? 0.35 * full0 : 0, dropFor = st => st === 0 ? 2 + 5 * t.old + 5 * t.cash : st === 1 ? 1 + 2.5 * t.old + 2.5 * t.cash : 0;
+      const lost = S.deposits * (t.pop / 82) * (lossFor(to) - lossFor(from)), drop = (dropFor(to) - dropFor(from)) * (t.pop / 20 + 0.5);
+      if (lost > 1){ je('deposit.flow', [['cash', -lost], ['deposits', lost]]); }
+      S.trust = clamp(S.trust - drop, 0, 100);
+      notes.push(`${to === 0 ? 'closing' : 'replacing with a hub'} the ${t.name} branch: about ${fmt(lost)} of deposits and ${drop.toFixed(1)} points of customer trust go with it`);
+      if (to === 0 && t.sole){ S.comp = clamp(S.comp - 2, 0, 100); S.trust = clamp(S.trust - 3, 0, 100); news(8, `Last bank in ${t.name} closes`, `Residents, many of them older and reliant on cash, say they now have to travel to reach a branch. The regulator has asked how the bank looked after vulnerable customers.`); }
+    }
+  }
+  if (gp.clawback > 0 && !G.clawed){ G.clawed = true; G.claw = 3; G.culture = clamp(G.culture + 6, 0, 100); post('costs', -20); notes.push('clawing back past bonuses: culture improves, sales dip for three months'); }
+  if (!(gp.clawback > 0)) G.clawed = false;
+  if (notes.length) addMail('Your board', 'Growth changes', `Following your settings: ${notes.join('; ')}.`, '', S.month, S.year);
+}
+
+// Contribution of one product this month, with the losses and conduct cost it brings.
+function productMonth(key, p, G, gp, f, mk){
+  const def = GROWTH_PRODUCTS[key], now = S.year * 12 + S.month, a = now - p.start;
+  const v = a < 12 ? Math.max(0.05, a / 12) : Math.max(0.75, 1 - (a - 12) / 48), tail = p.ended != null ? Math.max(0, 1 - (now - p.ended) / 12) : 1, u = uf();
+  const fee = FEE_MULT[Math.round(gp.feeLevel)] * (p.repriced ? 0.7 : 1), vol = f * v * mk * tail;
+  let rev = def.rev * vol * fee, loss = 0, extra = 0, mis = 0;
+  if (key === 'btl') loss = 4 * vol * (Math.pow(u, 1.4) + 0.6 * Math.max(0, S.base - 4));
+  if (key === 'od') loss = 2.4 * vol * Math.pow(u, 1.3);
+  if (key === 'isa'){ extra = 3.2 * vol; if (S.month === 3) extra += 4 * vol; const inflow = S.deposits * 0.002 * vol; je('deposit.flow', [['cash', inflow], ['deposits', -inflow]]); }
+  if (key === 'builder'){ rev = def.rev * vol * fee * (0.4 + 0.6 * Math.min(1, a / 24)); loss = 6 * vol * u * Math.max(0.2, 1 - a / 24); }
+  if (key === 'bnpl') loss = 10 * vol * u;
+  if (key === 'packaged') mis = 6 * vol;
+  if (key === 'green'){ loss = 0.5 * vol; if (R() < 0.08 * Math.min(1, vol)) loss += 30; }
+  return { rev, loss, extra, mis };
+}
+
+// Each month: products, incentives, the network, and acquisitions already made.
+function growthMonth(ev){
+  if (!growthOwned() || S.tutorial || S.scenario) return;
+  const G = growthOf(), gp = S.policy.growth, now = S.year * 12 + S.month, f = growthSize();
+  const live = Object.entries(G.products).filter(([, p]) => p.ended == null || now - p.ended < 12), running = Object.values(G.products).filter(p => p.ended == null).length;
+  const mk = 0.5 + 0.5 * Math.min(1, (gp.marketing / Math.max(1, running)) / 3);
+  let revenue = 0, losses = 0, extraCost = gp.marketing, misProducts = 0, townRev = 0;
+  for (const [key, p] of live){
+    const r = productMonth(key, p, G, gp, f, mk); revenue += r.rev; losses += r.loss; extraCost += r.extra + 1; misProducts += r.mis; p.cum += r.rev;
+    p.last = Math.round((r.rev - r.loss - r.extra - 1) * 100) / 100;
+  }
+  // the regulator's fair value review of products with high fees relative to their benefit
+  if (S.month % 3 === 2) for (const [key, p] of live){
+    if (p.ended != null || now - p.start < 6 || now - p.lastReview < 6) continue;
+    const def = GROWTH_PRODUCTS[key], risk = REVIEW_RISK[Math.round(gp.feeLevel)] * def.scrut; p.lastReview = now;
+    const failed = R() < risk; G.fvLog.push({ y: S.year, m: S.month, key, failed });
+    if (failed){ const refund = p.cum * 0.35; post('redress', -refund); p.repriced = true; G.reviewsFailed++; S.comp = clamp(S.comp - 4, 0, 100); S.stats.fines += refund;
+      ev(`The regulator's fair value review found ${def.name.toLowerCase()} poor value. Refunds of ${fmt(refund)} and a cut in price.`, 'bad'); news(6, `Regulator orders refunds on ${def.name.toLowerCase()}`, 'Customers will be refunded and fees cut after a fair value review.'); }
+    else ev(`The fair value review passed ${def.name.toLowerCase()}.`, 'good');
+  }
+  // incentives and conduct
+  const press = gp.bonusSales * gp.salesTarget - 0.8 * gp.bonusQuality, claw = G.claw > 0 ? 1 : 0;
+  const targetIdx = 1 + 0.5 * clamp(press, -0.3, 1) - (gp.qualityGate > 0 ? 0.08 : 0) - 0.1 * claw;
+  G.sidx += (targetIdx - G.sidx) / 3; if (G.claw > 0) G.claw--;
+  const salesFee = 9 * f * (G.sidx - 1), vol = 120 * f * G.sidx * (1 + 0.4 * (G.products.packaged && G.products.packaged.ended == null ? 1 : 0));
+  const misRate = (0.02 + 0.2 * Math.max(0, press + (60 - G.culture) / 150)) * (gp.qualityGate > 0 ? 0.35 : 1) * (1 + 0.3 * Math.min(3, G.ignored));
+  let mis = Math.max(0, vol * misRate - 120 * f * (0.02 + 0.2 * 0.06)) + misProducts * (gp.qualityGate > 0 ? 0.5 : 1);      // the plan's normal mis-selling is already in the bank's results
+  for (let i = 0, n = Math.floor(mis) + (R() < mis - Math.floor(mis) ? 1 : 0); i < n; i++)
+    later(12 + Math.floor(R() * 24), { text: 'A mis-selling complaint is upheld', cash: -0.3, key: 'redress', tone: 'bad', trust: -0.15, gr: true });
+  G.culture = clamp(G.culture - 3 * Math.max(0, press) + 1.5 * Math.max(0, -press) + (gp.retraining > 0 ? Math.min(1, gp.retraining / 3) : 0) + (gp.qualityGate > 0 ? 0.4 : 0) + (60 - G.culture) * 0.02, 0, 100);
+  const remedy = gp.retraining >= 2 || gp.qualityGate > 0;
+  if (G.culture < 45 && R() < 0.4){ G.whistle++; if (!remedy) G.ignored++; addMail('A member of staff', 'Pressure to hit sales targets', 'Several of us feel we are being pushed to sell products customers do not need. Managers say the bonus depends on it. I would rather tell you now than the regulator later.', 'bad', S.month, S.year); }
+  if (remedy && G.ignored > 0 && S.month % 2 === 0) G.ignored--;
+  G.upheld = G.upheld.filter(x => now - x < 12);
+  if (G.upheld.length >= 8 && now - G.indep > 24){ G.indep = now; post('redress', -120); S.comp = clamp(S.comp - 8, 0, 100); S.stats.fines += 120; ev('The regulator commissions an independent review of how the bank sells, at our cost.', 'bad'); news(9, 'Regulator orders review of Counting House sales practices', 'A pattern of upheld complaints has prompted an independent review, paid for by the bank.'); }
+  // the branch network
+  const share = townShare(G); let netCost = 0, trustDeficit = 0;
+  for (const t of GROWTH_TOWNS){
+    const st = G.townState[t.key]; netCost += townCost(st) - townCost(t.base);
+    const since = (G.townSince && G.townSince[t.key]) != null ? now - G.townSince[t.key] : 99;
+    // local business: what a branch earns from the town's customers, compared with what the plan already has. Towns the bank is not in yet are underserved, so they pay back well once built.
+    { const rf = s => s === 2 ? 1 : s === 1 ? 0.7 : (t.base > 0 ? 0.25 : 0), d = rf(st) - rf(t.base), local = 0.4 * t.pop * f * (t.base === 0 ? 1.1 : 1);
+      townRev += d * local * (d < 0 ? 1 + 0.5 * t.cash : Math.min(1, since / 12)); }
+    if (t.base === 0 && st > 0 && since < 12){ const inflow = S.deposits * (t.pop / 82) * (st === 2 ? 0.012 : 0.006); je('deposit.flow', [['cash', inflow], ['deposits', -inflow]]); }
+    if (t.base > 0 && st === 0) trustDeficit += (t.old + t.cash) * 0.12;
+  }
+  if (trustDeficit > 0) S.trust = clamp(S.trust - trustDeficit, 0, 100);
+  // acquisitions already made
+  let acqCost = 0;
+  for (const A of G.acq){
+    const age = now - A.start;
+    if (age < 24){ const x = A.L * A.hidden / 24; je('acq.loss', [['legacy', -x], ['pl.losses', x]]); A.realised += x; }
+    if (age === 6 && A.redress > 0){ post('redress', -A.L * A.redress); S.stats.fines += A.L * A.redress; ev(`${A.name}: undisclosed commission on old sales comes to light. Redress of ${fmt(A.L * A.redress)}.`, 'bad'); }
+    if (age < 12){ acqCost += 1.2; if (R() < (A.sys === 'weak' ? 0.08 : A.sys === 'creaking' ? 0.05 : 0.02) * (S.ops && S.ops.m && S.ops.m.meter > 1 ? 2.5 : 1)){ A.slipped = true; opsIncidentGrowth(ev, A); } }
+    else if (age >= 12 && age < 24 && !A.slipped) acqCost -= (A.L * 0.0007) * ((age - 11) / 12);
+    if (age === 24 && !A.written){ A.written = true; if (A.realised > 0.8 * A.goodwill && S.goodwill > 0){ const w = Math.min(S.goodwill, A.goodwill * 0.5); je('goodwill.writedown', [['goodwill', -w], ['equity.writedown', w]]); ev(`${A.name} has underperformed: ${fmt(w)} of goodwill is written down.`, 'bad'); news(5, 'Counting House writes down acquisition', `The bank has written down the value of ${A.name}.`); } }
+  }
+  // what it all adds up to
+  post('fees', revenue + salesFee + townRev); post('losses', -losses); post('costs', -(extraCost + (gp.retraining || 0) + netCost + acqCost));
+  const goodwill = S.goodwill || 0;
+  G.last = { revenue: Math.round(revenue * 10) / 10, losses: Math.round(losses * 10) / 10, salesIdx: Math.round(G.sidx * 1000) / 1000, mis: Math.round(mis * 100) / 100, culture: Math.round(G.culture * 10) / 10, upheld: G.upheld.length, goodwill: Math.round(goodwill * 10) / 10 };
+}
+function opsIncidentGrowth(ev, A){
+  const cost = 40; post('redress', -cost); S.trust = clamp(S.trust - 2, 0, 100); S.comp = clamp(S.comp - 3, 0, 100);
+  ev(`Integrating ${A.name} slips: a migration weekend goes badly. It cost ${fmt(cost)}, and the promised savings are at risk.`, 'bad');
+}
+
+// An offer to buy a smaller lender arrives in the inbox every so often.
+function acquisitionOffer(){
+  if (!growthOwned() || S.over || S.tutorial || S.scenario) return null;
+  const G = growthOf(), now = S.year * 12 + S.month;
+  if (G.acqCount >= 3 || S.queue.some(c => (c.kind === 'acquire' || c.kind === 'acquire2') && !c.done)) return null;
+  if (G.offerAt == null){ G.offerAt = now + 3 + Math.floor(R() * 5); return null; }
+  if (now < G.offerAt) return null;
+  G.offerAt = now + 8 + Math.floor(R() * 5);
+  const ti = Math.floor(R() * ACQ_TARGETS.length), t = ACQ_TARGETS[ti], hidden = t.hidden[0] + R() * (t.hidden[1] - t.hidden[0]);
+  return gen.acquire(ti, hidden);
+}
+// The regulator will not let a bid take capital below the minimum, so the offer cannot be accepted if it would.
+const price0 = c => c.h.price;
+const acqCapitalAfter = (t, price) => (capital() - Math.max(0, price - t.book)) / (rwa() + t.book * 0.75);
+gen.acquire = (ti, hidden) => {
+  const t = ACQ_TARGETS[ti], price = Math.round(t.book * (1 + t.premium));
+  return card('acquire', { label: 'Acquisition offer', who: { name: t.name, sub: 'For sale', age: 0, hue: 0 }, note: `${t.name}, ${t.what}, is for sale. They say their loan book is clean. How much checking do you want to do before you bid?`,
+    fields: [ F('Loan book', full(t.book)), F('Asking price', full(price) + ' (' + pc(t.premium, 0) + ' over book)', 'Goodwill', true), F('Claimed arrears', pc(0.02 + hidden * 0.15, 1)), F('Their systems', t.sys === 'sound' ? 'Described as modern' : 'Described as sound') ],
+    opts: [ { k: 'light', l: 'Light checks', sub: `${full(10)}, a month`, s: 'neutral', st: 'LIGHT' }, { k: 'standard', l: 'Standard diligence', sub: `${full(35)}`, s: 'alt', st: 'STANDARD' }, { k: 'deep', l: 'Deep diligence', sub: `${full(90)}`, s: 'go', st: 'DEEP' }, { k: 'pass', l: 'Pass', s: 'no', st: 'PASSED' } ],
+    h: { ti, hidden, price } });
+};
+res.acquire = (c, k) => {
+  if (k === 'pass'){ say('Passed. Another lender will buy it.'); return; }
+  const cost = { light: 10, standard: 35, deep: 90 }[k]; money('costs', -cost, 'Diligence');
+  const t = ACQ_TARGETS[c.h.ti], h = c.h.hidden;
+  const finding = k === 'light' ? 'The light checks found nothing wrong. They were not looking very hard.' : k === 'standard' ? `Standard diligence suggests hidden losses of between ${pc(h * 0.6, 0)} and ${pc(h * 1.5, 0)} of the loan book. ${t.sys === 'sound' ? 'Their systems are fine.' : 'Their systems need work.'}` : `Deep diligence finds hidden losses of ${pc(h, 1)} of the loan book${t.redress > 0 ? `, and undisclosed commission on old sales worth about ${pc(t.redress, 0)} in redress` : ''}. Their systems are ${t.sys}.`;
+  say(finding);
+  S.queue.push(card('acquire2', { label: 'Acquisition decision', who: { name: t.name, sub: 'Decision', age: 0, hue: 0 }, note: `${finding} Do you still want to bid ${full(c.h.price)}?`,
+    fields: [ F('Asking price', full(c.h.price) + ' (' + pc(t.premium, 0) + ' over book)', 'Goodwill', true), F('Checks done', { light: 'Light', standard: 'Standard', deep: 'Deep' }[k]) ],
+    opts: [ { k: 'buy', l: 'Buy it', sub: full(c.h.price), why: `Capital would fall to ${pc(acqCapitalAfter(t, c.h.price))}, below what the regulator allows`, s: 'go', st: 'BOUGHT', cash: acqCapitalAfter(t, c.h.price) < MIN_CAP + 0.005 ? 1e12 : price0(c) }, { k: 'walk', l: 'Walk away', s: 'no', st: 'WALKED' } ], h: { ti: c.h.ti, hidden: c.h.hidden, price: c.h.price, depth: k } }));
+};
+res.acquire2 = (c, k) => {
+  if (k === 'walk'){ say('You walk away. The diligence money is spent.'); return; }
+  const t = ACQ_TARGETS[c.h.ti], G = growthOf(), price = c.h.price, L = t.book, gw = Math.max(0, price - L);
+  if (S.cash < price){ say('The bank cannot find the cash. The offer lapses.', 'bad'); return; }
+  je('acq.buy', [['cash', -price], ['legacy', L], ['goodwill', gw], ...(price < L ? [['equity.writedown', price - L]] : [])]);
+  S.startCap -= gw;      // goodwill comes off capital in full, but it is a deal, not a result
+  G.acq.push({ id: ++G.acqCount, name: t.name, L, hidden: c.h.hidden, redress: t.redress, sys: t.sys, depth: c.h.depth, price, goodwill: gw, start: S.year * 12 + S.month, realised: 0, slipped: false, written: false });
+  const left = L * 0.08; je('acq.runoff', [['legacy', -left], ['cash', left]]);
+  chip('Bought ' + t.name, 'good'); say(`You buy ${t.name} for ${full(price)}, ${full(gw)} of it goodwill, which comes off your capital. Integration takes a year, and some of its customers will leave.`);
+  news(5, `Counting House buys ${t.name}`, `The bank has paid ${fmt(price)} for ${t.what}.`);
+};
 
 /* ---- Bank of England facility ----
    The central bank lends against the loan book at Bank Rate plus 1%, after a haircut on the collateral. It is always
@@ -1697,7 +1907,7 @@ function maturityLadder(){
    Everything here is read-only except runStress, which stores its result, and warnMonth, which writes mail. None of it
    uses the game's random stream, so it cannot change how a game plays out. It only applies once the player has been
    handed a Chief Executive area, so branch-manager play is untouched. */
-const CE_AREAS = ['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations'];
+const CE_AREAS = ['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations', 'growth'];
 const ceMode = () => !!(S.progress && S.progress.unlocked.some(a => CE_AREAS.includes(a)));
 const LEVEL = { ok: 0, watch: 1, alarm: 2 };
 const band = (v, watch, alarm) => v >= alarm ? 'alarm' : v >= watch ? 'watch' : 'ok';
@@ -1750,7 +1960,30 @@ function indicators(){
     { key: 'rates', role: 'Treasurer', label: 'Interest-rate sensitivity', value: sens, shown: (sens >= 0 ? '+' : '−') + fmt(Math.abs(sens)) + ' a year for +1 point', status: sensStatus,
       text: sens >= 0 ? `A one-point rise in Bank Rate would add about ${fmt(sens)} to a year's net interest income.` : `A one-point rise in Bank Rate would cut a year's net interest income by about ${fmt(-sens)}: more of your funding reprices than your assets.` },
   ];
-  return list.concat(opsIndicators());
+  return list.concat(opsIndicators(), growthIndicators());
+}
+// Early warnings from growth, once the player has the area.
+function growthIndicators(){
+  if (!growthOwned() || !S.growth) return [];
+  const G = S.growth, now = S.year * 12 + S.month, f = growthSize(), out = [];
+  const prods = Object.entries(G.products), young = prods.filter(([, p]) => p.ended == null && now - p.start < 6).length;
+  out.push({ key: 'launches', role: 'Head of operations', label: 'Products still launching', value: young, shown: young + ' in their first six months', status: band(young, 3, 5), text: `${young} products are less than six months old. Launching many at once overloads change capacity and attention.` });
+  const worst = prods.filter(([, p]) => p.ended == null && now - p.start >= 3 && p.last != null).reduce((a, [k, p]) => p.last < a.v ? { k, v: p.last } : a, { k: '', v: Infinity });
+  if (worst.k) out.push({ key: 'margin', role: 'Finance director', label: 'Weakest product, margin a month', value: worst.v, shown: GROWTH_PRODUCTS[worst.k].name.toLowerCase() + ' ' + fmt(worst.v, true), status: worst.v < 0 ? 'alarm' : worst.v < 1 ? 'watch' : 'ok', text: `${GROWTH_PRODUCTS[worst.k].name} made ${fmt(worst.v, true)} last month after its losses and costs. Watch the loss rate against the margin as the economy turns.` });
+  const sales = Math.max(1, 120 * f * G.sidx * 12 / 1000), cp = G.upheld.length / sales;
+  out.push({ key: 'complaints', role: 'Chief risk officer', label: 'Upheld complaints per 1,000 sales', value: cp, shown: cp.toFixed(1), status: band(cp, 3, 8), text: `${G.upheld.length} mis-selling complaints were upheld in the last year, ${cp.toFixed(1)} for every 1,000 sales. They arrive a year or two after the sales that caused them.` });
+  out.push({ key: 'whistle', role: 'Chief risk officer', label: 'Whistleblower reports unanswered', value: G.ignored, shown: String(G.ignored), status: band(G.ignored, 1, 2), text: `${G.ignored} whistleblower report${G.ignored === 1 ? '' : 's'} about sales pressure ${G.ignored === 1 ? 'has' : 'have'} not been acted on. Acting early is cheap, ignoring it is not.` });
+  if (G.acq.length){
+    const gw = (S.goodwill || 0) / Math.max(1, capital() + (S.goodwill || 0));
+    out.push({ key: 'goodwill', role: 'Finance director', label: 'Goodwill, share of capital', value: gw, shown: pc(gw, 0), status: band(gw, 0.1, 0.25), text: `Goodwill from acquisitions is ${pc(gw, 0)} of what capital would be without deducting it. It is taken off your capital in full, and a deal that underperforms is written down.` });
+    const cov = G.acq.reduce((a, x) => a + ({ light: 0.3, standard: 0.65, deep: 1 })[x.depth] * x.L, 0) / G.acq.reduce((a, x) => a + x.L, 0);
+    out.push({ key: 'diligence', role: 'Chief risk officer', label: 'Diligence coverage on acquisitions', value: cov, shown: pc(cov, 0), status: bandLow(cov, 0.65, 0.4), text: `Checks before buying covered about ${pc(cov, 0)} of what there was to find. What diligence misses arrives over the next two years as defaults and redress.` });
+    const live = G.acq.filter(a => now - a.start < 12), slip = live.some(a => a.slipped);
+    if (live.length) out.push({ key: 'integration', role: 'Head of operations', label: 'Integration progress', value: slip ? 0 : 1, shown: `month ${Math.max(...live.map(a => now - a.start)) + 1} of 12${slip ? ', slipping' : ''}`, status: slip ? 'alarm' : 'ok', text: slip ? 'Integration of an acquired lender has slipped, and the promised savings are at risk.' : 'Integration is on plan.' });
+  }
+  const closed = GROWTH_TOWNS.filter(t => t.base > 0 && G.townState[t.key] === 0), hit = closed.reduce((a, t) => a + t.pop * (t.old + t.cash) / 2, 0) / GROWTH_TOWNS.filter(t => t.base > 0).reduce((a, t) => a + t.pop, 0);
+  if (closed.length) out.push({ key: 'towns', role: 'Chief risk officer', label: 'Vulnerable customers hit by closures', value: hit, shown: pc(hit, 0) + ' (' + closed.map(t => t.name).join(', ') + ')', status: band(hit, 0.08, 0.2), text: `Closing ${closed.map(t => t.name).join(' and ')} affects older and cash-reliant customers most. The regulator expects the bank to show it has looked after them.` });
+  return out;
 }
 // Early warnings from operations, only once the player runs it. The trouble they show comes months before the losses.
 function opsIndicators(){
@@ -1846,6 +2079,19 @@ function advisers(){
     }
     const out = ['outsourceCards', 'outsourceContact', 'outsourceHosting'].filter(k => op[k] > 0).length;
     if (out && op.oversight < 2) add('Head of operations', 'warn', `We have outsourced ${out} service${out === 1 ? '' : 's'} with almost no oversight. The regulator still holds us responsible when a supplier fails.`);
+  }
+  if (own('growth') && S.growth){
+    const G = S.growth, gp = P.growth, now = S.year * 12 + S.month, prods = Object.entries(G.products);
+    const bad = prods.find(([, p]) => p.ended == null && now - p.start >= 3 && p.last != null && p.last < 0);
+    if (bad) add('Finance director', 'warn', `${GROWTH_PRODUCTS[bad[0]].name} is losing ${fmt(-bad[1].last)} a month. A product that loses in a downturn is a bet on the economy, not a business.`);
+    else if (prods.length && S.month >= 4) add('Finance director', 'info', `Our new products added ${fmt(G.last ? G.last.revenue - G.last.losses : 0, true)} last month before costs.`);
+    if (gp.bonusSales * gp.salesTarget > 0.8 && gp.qualityGate === 0 && gp.bonusQuality < 0.3) add('Chief risk officer', 'warn', `The bonus scheme rewards volume and nothing else. Sales will rise within a quarter, and the mis-selling complaints arrive a year or two later. The finance director likes the sales.`);
+    if (G.whistle > 0 && G.ignored > 0) add('Chief risk officer', 'alarm', `Staff have warned us about pressure to sell and we have done nothing. A quality gate or retraining now is cheap. Ignoring it is not.`);
+    if (prods.length >= 3 && prods.filter(([, p]) => now - p.start < 6).length >= 3) add('Head of operations', 'warn', `Three products are launching at once. Each takes change capacity, and the fair value reviews arrive together.`);
+    if (gp.feeLevel >= 2 && prods.length) add('Chief risk officer', 'warn', `Fees are high. The regulator reviews products whose fees are high relative to what customers get, and a failed review means refunds and cutting the price.`);
+    const closedTowns = GROWTH_TOWNS.filter(t => t.base > 0 && gp[t.key] === 0);
+    if (closedTowns.length) add('Finance director', 'info', `Closing ${closedTowns.map(t => t.name).join(' and ')} saves about ${fmt(closedTowns.length * BRANCH_COST * 12)} a year. The chief risk officer worries about the older, cash-reliant customers there.`);
+    if (G.acq.some(a => now - a.start < 24 && a.depth === 'light')) add('Chief risk officer', 'warn', `We bought on light checks. Whatever they missed will come through as defaults and redress over the next two years.`);
   }
   if (quietLeft() > 0) add('Head of operations', 'info', `${quietLeft() - 1} quiet month${quietLeft() === 2 ? '' : 's'} left after this one: nothing outside the bank will go wrong while you learn the new settings.`);
   return notes;
@@ -1998,7 +2244,7 @@ function rating(){
 }
 
 /* ---- inbox: mail is game state, created by the engine ---- */
-const FROM = { fraud:'Fraud operations', aml:'Financial crime team', sanctions:'Sanctions screening', card:'Cards team', rate:'Bank of England', treasury:'Your treasurer', liqshock:'Your treasurer', funding:'Your treasurer', outage:'Operations', complaint:'Complaints team', capital:'Finance director', wmLaunch:'The board', wmHouse:'Wealth product team', wmMarket:'Wealth desk', wmCampaign:'Wealth team' };
+const FROM = { acquire:'Your board', acquire2:'Your board', fraud:'Fraud operations', aml:'Financial crime team', sanctions:'Sanctions screening', card:'Cards team', rate:'Bank of England', treasury:'Your treasurer', liqshock:'Your treasurer', funding:'Your treasurer', outage:'Operations', complaint:'Complaints team', capital:'Finance director', wmLaunch:'The board', wmHouse:'Wealth product team', wmMarket:'Wealth desk', wmCampaign:'Wealth team' };
 const fv = (c, l) => { const f = c.fields.find(x => x.l === l); return f ? f.v : ''; };
 const firstSentence = t => { const m = String(t).match(/^(.{12,}?[.:!?])(\s|$)/); const x = m ? m[1].replace(/[.:]$/, '') : String(t); return x.length > 90 ? x.slice(0, 87) + '…' : x; };
 function fromOf(c){ return FROM[c.kind] || c.who.name; }
@@ -2016,6 +2262,8 @@ function subjOf(c){
     case 'complaint': return `Formal complaint from ${c.who.name}`;
     case 'capital': return `Capital ratio is ${fv(c, 'Capital ratio')}`;
     case 'wmLaunch': return 'Should we start managing money for customers?';
+    case 'acquire': return `${c.who.name} is for sale`;
+    case 'acquire2': return `Do we still want ${c.who.name}?`;
     case 'wmHouse': return 'Proposal: our own investment fund';
     case 'wmMarket': return 'Shares have fallen and clients are calling';
     case 'wmCampaign': return 'Proposal: pitch portfolios to our savers';

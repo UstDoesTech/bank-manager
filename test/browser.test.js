@@ -204,9 +204,10 @@ test('the page works with no server: opened from a file there is no account butt
   assert.match(await page.textContent('.panel'), /Confidence \d+ \/ 100/);
   assert.match(await page.textContent('.panel'), /Share price £\d/);
   // operations: once taken over, the Team screen shows each team's staff, load and backlog
-  await page.evaluate(() => { S.tutorial = false; S.progress.unlocked.push('operations'); dispatch({ type: 'setPolicy', area: 'operations', values: {} }); for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); dispatch({ type: 'closeMonth' }); closeOverlay(); hud(); teamScreen(); });
+  await page.evaluate(() => { S.tutorial = false; S.progress.unlocked.push('operations', 'growth'); dispatch({ type: 'setPolicy', area: 'operations', values: {} }); dispatch({ type: 'setPolicy', area: 'growth', values: { launchBtl: 1, marketing: 3, town4: 1 } }); for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); dispatch({ type: 'closeMonth' }); closeOverlay(); hud(); teamScreen(); });
   assert.match(await page.textContent('.panel'), /Staff \/ advised/);
   assert.match(await page.textContent('.panel'), /Fraud operations/);
+  assert.match(await page.textContent('.panel'), /Buy-to-let mortgages/); assert.match(await page.textContent('.panel'), /Eskdale/);
   await page.click('summary:has-text("Resign")'); await page.click('#exResign');
   await waitFor(async () => /steps down/.test(await page.textContent('.panel')), 'the Herald reports the resignation');
   assert.strictEqual(await page.evaluate(() => S.over), 'resigned');

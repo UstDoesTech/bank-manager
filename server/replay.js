@@ -63,6 +63,13 @@ async function verifyGame(pool, host, gameId) {
     }
   }
 
+  if (state && state.growth) {
+    const acq = (await pool.query('SELECT count(*)::int AS n FROM bank.acquisition WHERE game_id = $1', [gameId])).rows[0].n;
+    if (acq !== state.growth.acq.length) problems.push(`${acq} stored acquisitions, replay made ${state.growth.acq.length}`);
+    const pr = (await pool.query('SELECT count(*)::int AS n FROM bank.product WHERE game_id = $1', [gameId])).rows[0].n;
+    if (pr !== Object.keys(state.growth.products).length) problems.push(`${pr} stored products, replay launched ${Object.keys(state.growth.products).length}`);
+  }
+
   if (state && state.ops) {
     const inc = (await pool.query('SELECT coalesce(max(incident_id), 0)::int AS n FROM bank.incident WHERE game_id = $1', [gameId])).rows[0].n;
     if (inc !== state.ops.iid) problems.push(`latest stored incident is ${inc}, replay's is ${state.ops.iid}`);

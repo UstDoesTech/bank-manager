@@ -4,7 +4,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), '
 const golden = JSON.parse(fs.readFileSync(path.join(__dirname, 'golden.json'), 'utf8'));
 let n = 0;
 // 1. Behaviour is unchanged against snapshots from the original engine (all bots, scenarios, tutorial).
-const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'ops', 'meet', 'pq', 'applied', 'swaps', 'collateral', 'swapId', 'fid', 'px'];
+const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'ops', 'meet', 'pq', 'applied', 'growth', 'goodwill', 'swaps', 'collateral', 'swapId', 'fid', 'px'];
 { const Eg = loadEngine(src); Eg.dispatch({ type: 'newGame', seed: 1 });
   for (const [key, want] of Object.entries(golden)){
     const [bot, tag, seed] = key.split(':');
@@ -86,7 +86,7 @@ for (const pol of ALL()) for (const seed of [3, 17]){
 //    the verdict separates good applications from bad using only what the applicant shows.
 { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 21 });
   const sys = JSON.parse(JSON.stringify(E.S.policy));
-  assert.strictEqual(JSON.stringify(sys.owner), '{"pricing":"system","credit":"system","treasury":"system","funding":"system","capital":"system","operations":"system"}'); n++;
+  assert.strictEqual(JSON.stringify(sys.owner), '{"pricing":"system","credit":"system","treasury":"system","funding":"system","capital":"system","operations":"system","growth":"system"}'); n++;
   const refuses = (cmd, why) => { const snap = JSON.stringify(E.S.policy); assert.throws(() => E.dispatch(cmd), why); assert.strictEqual(JSON.stringify(E.S.policy), snap); n++; };
   refuses({ type: 'setPolicy', area: 'pricing', values: { cardRate: 5 } }, /not unlocked/);
   refuses({ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 99 } }, /not unlocked/);
@@ -118,8 +118,8 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   for (const seed of [4, 8, 15, 16, 23, 42]) for (const bot of ['careful', 'greedy']){
     const a = play(loadEngine(src), seed, bot, 3), S = a.S, strong = (S.career || []).filter(c => ['AAA', 'AA', 'A'].includes(c.letter)).length;
     const unlocked = S.progress.unlocked.filter(x => x !== 'branch');
-    assert.strictEqual(unlocked.length, Math.min(6, strong), 'unlock count should follow strong years: ' + bot + seed);
-    assert.strictEqual(JSON.stringify(unlocked), JSON.stringify(['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations'].slice(0, unlocked.length)));
+    assert.strictEqual(unlocked.length, Math.min(7, strong), 'unlock count should follow strong years: ' + bot + seed);
+    assert.strictEqual(JSON.stringify(unlocked), JSON.stringify(['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations', 'growth'].slice(0, unlocked.length)));
     // the letter arrives with the unlock (the inbox only keeps the latest 60 messages, so check at the moment it happens)
     { const R = loadEngine(src); for (const cmd of a.cmds){ const k = R.S ? R.S.progress.unlocked.length : 0; R.dispatch(cmd);
         if (cmd.type === 'nextYear' && R.S.progress.unlocked.length > k) assert(R.S.inbox.some(m => m.from === 'The board' && /is yours/.test(m.subject) && !m.read), 'briefing letter on unlock'); } }
@@ -567,5 +567,63 @@ for (const pol of ALL()) for (const seed of [3, 17]){
     const go = (c) => { cmds.push(c); return A.dispatch(c); };
     go({ type: 'setPolicy', area: 'treasury', values: { liquidityTarget: 0.25 } }); for (let i = 0; i < 2; i++){ for (let c; (c = A.current());) go({ type: 'resolve', id: c.id, k: c.opts[0].k }); go({ type: 'closeMonth' }); }
     go({ type: 'setPolicy', area: 'treasury', values: { liquidityTarget: 0.3 } });
+    const B = loadEngine(src); for (const c of cmds) B.dispatch(c); assert.strictEqual(JSON.stringify(B.S), JSON.stringify(A.S)); n++; } }
+// 18. Growth: products, incentives and conduct, acquisitions, and the branch network.
+{ const month = (E) => { for (let c; (c = E.current());){ const o = c.opts.filter(o => !(o.cash && E.S.cash < o.cash)); E.dispatch({ type: 'resolve', id: c.id, k: o[0].k }); } E.dispatch({ type: 'closeMonth' }); };
+  const start = (seed, vals, path) => { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed, opts: { chiefExecutive: true } }); if (path) E.S.path = path; if (vals) E.dispatch({ type: 'setPolicy', area: 'growth', values: vals }); return E; };
+  const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+  // until the player takes over nothing happens, and indicators appear only when they own it
+  { const E = start(3); for (let i = 0; i < 3; i++) month(E); assert(!E.S.growth && !E.indicators().some(i => i.key === 'complaints')); n++; }
+  { const E = start(3, {}); for (let i = 0; i < 3; i++) month(E); const G = E.S.growth; assert(G && G.last && G.acqCount === 0); assert(E.indicators().some(i => i.key === 'complaints') && E.indicators().some(i => i.key === 'whistle')); n += 3;
+    const P = JSON.stringify(E.S.growth); E.stressTest({}, 3); assert.strictEqual(JSON.stringify(E.S.growth), P, 'the stress test leaves growth alone'); n++; }
+  // launching a product costs to build, then earns; marketing roughly doubles the volume; it is withdrawn without cancelling what is on the books
+  { const a = start(3, { launchBtl: 1, marketing: 3 }, 'soft'), b = start(3, { launchBtl: 1 }, 'soft'); for (let i = 0; i < 4; i++){ month(a); month(b); }
+    assert(a.S.growth.products.btl && a.S.growth.products.btl.cum > b.S.growth.products.btl.cum * 1.4, 'marketing lifts volume'); assert(a.S.inbox.some(x => x.subject === 'Growth changes' && /buy-to-let/.test(x.body))); n += 2;
+    a.dispatch({ type: 'setPolicy', area: 'growth', values: { launchBtl: 0 } }); month(a); assert(a.S.growth.products.btl.ended != null); n++; }
+  // a product's risk shows in the economy: buy now, pay later loses in a downturn and makes money in a soft landing
+  { const run = (path) => { const E = start(3, { launchBnpl: 1, marketing: 3 }, path); for (let i = 0; i < 8; i++) month(E); return E.S.growth.products.bnpl.last; };
+    const soft = run('soft'), down = run('downturn'); assert(soft > down + 2 && down < 1, `bnpl: soft ${soft} against downturn ${down}`); n++; }
+  // higher fees are more likely to fail the regulator's fair value review
+  { let hi = 0, lo = 0; for (const seed of [1, 2, 3, 4, 5, 6]){
+      const a = start(seed, { launchPackaged: 1, launchBnpl: 1, marketing: 6, feeLevel: 2 }), b = start(seed, { launchPackaged: 1, launchBnpl: 1, marketing: 6, feeLevel: 0 });
+      for (let i = 0; i < 12 && !a.S.over; i++) month(a); for (let i = 0; i < 12 && !b.S.over; i++) month(b); hi += a.S.growth.reviewsFailed; lo += b.S.growth.reviewsFailed; }
+    assert(hi > lo, `high fees fail more reviews: ${hi} against ${lo}`); n++; }
+  // incentives: volume-heavy bonuses lift sales, raise mis-selling, wear the culture down and bring whistleblowers; a quality gate and retraining help
+  { const heavy = { bonusSales: 1, bonusQuality: 0, salesTarget: 1.5 }; const a = start(3, heavy), plan = start(3, {}), gate = start(3, Object.assign({ qualityGate: 1 }, heavy));
+    for (let i = 0; i < 6; i++){ month(a); month(plan); month(gate); }
+    assert(a.S.growth.sidx > plan.S.growth.sidx + 0.2, 'sales rise within a quarter'); assert(a.S.growth.culture < plan.S.growth.culture - 8, 'culture falls under pressure'); n += 2;
+    const pend = E => E.S.pending.filter(p => p.gr).length;
+    assert(pend(a) > pend(plan) + 5, `mis-selling complaints are stored up: ${pend(a)} vs ${pend(plan)}`); assert(pend(gate) < pend(a) * 0.6, 'a quality gate cuts them'); n += 2;
+    let whistle = 0; for (const seed of [1, 2, 3, 4]){ const E = start(seed, heavy); for (let i = 0; i < 9 && !E.S.over; i++) month(E); whistle += E.S.growth.whistle; }
+    assert(whistle >= 2, 'staff speak up when the culture is bad: ' + whistle); n++; }
+  // the pattern of upheld complaints brings an independent review, at the bank's cost, and not again soon
+  { const E = start(3, {}); month(E); const now = E.S.year * 12 + E.S.month; E.S.growth.upheld = Array(9).fill(now - 1); const comp = E.S.comp; month(E);
+    assert(E.S.growth.indep >= now && E.S.comp < comp - 5 && E.S.news.some(x => /independent review|review of Counting House sales/.test(x.head + x.body))); n++;
+    E.S.growth.upheld = Array(9).fill(E.S.year * 12 + E.S.month); const was = E.S.growth.indep; month(E); assert.strictEqual(E.S.growth.indep, was, 'not reviewed again within two years'); n++; }
+  // acquisitions: an offer arrives, deeper diligence reveals more, goodwill comes off capital (not off profit), and the ledger balances throughout
+  { const E = start(3, {}); month(E); E.S.growth.offerAt = 0; month(E); const offer = E.S.queue.find(c => c.kind === 'acquire' && !c.done); assert(offer, 'an offer arrives in the inbox'); assert(offer.opts.length === 4 && /is for sale/.test(offer.note) && !offer.phys); n += 2;
+    const cap0 = E.capRatio(), prof0 = E.S.cash; E.dispatch({ type: 'resolve', id: offer.id, k: 'deep' });
+    const follow = E.S.queue.find(c => c.kind === 'acquire2' && !c.done); assert(follow && /Deep diligence finds hidden losses of/.test(follow.note), 'deep diligence reveals the hidden loss rate'); n++;
+    const profitBefore = E.rating().profit; E.dispatch({ type: 'resolve', id: follow.id, k: 'buy' }); const A = E.S.growth.acq[0];
+    assert(A && E.S.goodwill > 0 && Math.abs(E.S.goodwill - A.goodwill) < 1e-6 && A.depth === 'deep'); n++;
+    assert(Math.abs(E.rating().profit - profitBefore) < 5, 'buying is a capital event, not a loss: ' + (E.rating().profit - profitBefore)); n++;
+    const real0 = A.realised; month(E); month(E); assert(E.S.growth.acq[0].realised > real0, 'hidden losses arrive over the next two years'); n++;
+    assert(E.indicators().some(i => i.key === 'goodwill') && E.indicators().some(i => i.key === 'diligence' && i.value === 1)); n++;
+    // goodwill is written down when the deal underperforms, which leaves capital alone and the ledger balanced
+    E.S.growth.acq[0].realised = A.goodwill; E.S.growth.acq[0].start = E.S.year * 12 + E.S.month - 24; const gw = E.S.goodwill, capital = E.capRatio(); month(E);
+    assert(E.S.goodwill < gw && E.S.growth.acq[0].written, 'goodwill is written down'); n++; }
+  { const light = start(3, {}); month(light); light.S.growth.offerAt = 0; month(light); const o = light.S.queue.find(c => c.kind === 'acquire' && !c.done); light.dispatch({ type: 'resolve', id: o.id, k: 'light' });
+    assert(/not looking very hard/.test(light.S.queue.find(c => c.kind === 'acquire2' && !c.done).note)); const w = light.S.queue.find(c => c.kind === 'acquire2' && !c.done); light.dispatch({ type: 'resolve', id: w.id, k: 'walk' }); assert.strictEqual(light.S.growth.acq.length, 0); assert(light.S.goodwill === 0); n += 3; }
+  // the branch network: closing the only bank in an older, cash-reliant town costs more deposits and trust than closing a younger town's, saves running costs, and makes the Herald
+  { const base = start(3, {}), a = start(3, { town4: 0 }), b = start(3, { town1: 0 });
+    const d0 = base.S.deposits, t0 = base.S.trust; month(base); month(a); month(b); const lostA = (base.S.deposits - a.S.deposits) / 12, lostB = (base.S.deposits - b.S.deposits) / 22;
+    assert(lostA > lostB * 1.5, `the older, cash-reliant town loses more per head: ${lostA} vs ${lostB}`); assert(base.S.trust - a.S.trust > base.S.trust - b.S.trust); n += 2;
+    assert(a.S.news.some(x => /Last bank in Eskdale closes/.test(x.head))); assert(a.indicators().some(i => i.key === 'towns')); n += 2;
+    const costs = E => E.S.ledger.bal['pl.costs'] || 0; for (let i = 0; i < 3; i++){ month(base); month(a); } assert(costs(a) < costs(base), 'closing saves running costs'); n++; }
+  { const open = start(3, { town6: 2 }), shut = start(3, {}); for (let i = 0; i < 3; i++){ month(open); month(shut); } assert(open.S.deposits > shut.S.deposits, 'an opened branch builds deposits'); n++; }
+  // a replay of the same commands gives the same game, acquisitions included
+  { const cmds = []; const A = loadEngine(src); const go = (c) => { cmds.push(c); return A.dispatch(c); };
+    go({ type: 'newGame', seed: 11, opts: { chiefExecutive: true } }); go({ type: 'setPolicy', area: 'growth', values: { launchBtl: 1, marketing: 3, bonusSales: 0.8 } });
+    for (let i = 0; i < 6; i++){ for (let c; (c = A.current());){ const o = c.opts.filter(o => !(o.cash && A.S.cash < o.cash)); go({ type: 'resolve', id: c.id, k: o[0].k }); } go({ type: 'closeMonth' }); }
     const B = loadEngine(src); for (const c of cmds) B.dispatch(c); assert.strictEqual(JSON.stringify(B.S), JSON.stringify(A.S)); n++; } }
 console.log('ok', n, 'checks');

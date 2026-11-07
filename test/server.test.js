@@ -242,7 +242,7 @@ test('portfolio: borrowers, agreements, collateral and month-end cohorts are rec
 test('policy: every game starts on the system pricing and credit policy and cannot change it until it is unlocked', async () => {
   const cookie = await newPlayer('rex@example.com');
   const g = (await call('POST', '/api/games', {}, cookie)).json;
-  assert.deepStrictEqual(g.state.policy.owner, { pricing: 'system', credit: 'system', treasury: 'system', funding: 'system', capital: 'system', operations: 'system' });
+  assert.deepStrictEqual(g.state.policy.owner, { pricing: 'system', credit: 'system', treasury: 'system', funding: 'system', capital: 'system', operations: 'system', growth: 'system' });
   assert.strictEqual(g.state.policy.pricing.cardRate, 24.9);
   const url = `/api/games/${g.id}/commands`;
   const r = await call('POST', url, { seq: 2, command: { type: 'setPolicy', area: 'pricing', values: { cardRate: 5 } } }, cookie);
@@ -264,10 +264,10 @@ test('ledger: every account the engine can post to is in the chart of accounts',
   const have = new Set((await pool.query('SELECT code FROM bank.gl_account')).rows.map((r) => r.code));
   const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), 'utf8');
   // accounts named in journal entries, plus one P&L account per line of the profit-and-loss statement
-  const named = new Set([...src.matchAll(/\[\s*'((?:pl|equity)\.[A-Za-z]+|cash|gilts|legacy|loans|deposits|cb|wholesale|bonds|retained|collateral)'\s*,/g)].map((m) => m[1]));
+  const named = new Set([...src.matchAll(/\[\s*'((?:pl|equity)\.[A-Za-z]+|cash|gilts|legacy|loans|deposits|cb|wholesale|bonds|retained|collateral|goodwill)'\s*,/g)].map((m) => m[1]));
   const pl = [...src.matchAll(/function blankPL\(\)\{ return \{([^}]*)\}/g)][0][1].split(',').map((s) => 'pl.' + s.split(':')[0].trim());
   for (const a of [...named, ...pl]) assert(have.has(a), 'missing from the chart of accounts: ' + a);
-  assert(have.has('wholesale') && have.has('equity.dividend') && have.has('pl.swaps') && have.has('collateral'));
+  assert(have.has('wholesale') && have.has('equity.dividend') && have.has('pl.swaps') && have.has('collateral') && have.has('goodwill') && have.has('equity.writedown'));
 });
 
 test('households: a game started with them records the cast and each month, and the replay agrees', async () => {
@@ -469,7 +469,7 @@ test('chief executive: policy and stress commands are recorded with their detail
   const no = await call('POST', `/api/games/${plain.id}/commands`, { seq: 2, command: { type: 'stress' } }, cookie);
   assert.strictEqual(no.status, 403); assert.strictEqual(no.json.error, 'not_unlocked');
   const g = (await call('POST', '/api/games', { chiefExecutive: true }, cookie)).json;
-  assert.deepStrictEqual(g.state.progress.unlocked, ['branch', 'pricing', 'credit', 'treasury', 'funding', 'capital', 'operations']);
+  assert.deepStrictEqual(g.state.progress.unlocked, ['branch', 'pricing', 'credit', 'treasury', 'funding', 'capital', 'operations', 'growth']);
   const url = `/api/games/${g.id}/commands`; let seq = 1;
   const send = (command) => call('POST', url, { seq: ++seq, command }, cookie);
   assert.strictEqual((await send({ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 80 } })).status, 200);
@@ -550,5 +550,25 @@ test('executive meeting: settings are tabled and take effect at the start of nex
   const v = await verifyGame(pool, host, g.id); assert.deepStrictEqual(v.problems, []);
   // the plain games the server makes without the option are unchanged
   const plain = (await call('POST', '/api/games', { chiefExecutive: true }, cookie)).json; assert(!plain.state.meet);
+});
+
+test('growth: products, the branch network, incentives and acquisitions are recorded and the replay agrees', async () => {
+  const cookie = await newPlayer('grow@example.com');
+  const g = (await call('POST', '/api/games', { chiefExecutive: true }, cookie)).json;
+  assert(g.state.progress.unlocked.includes('growth'));
+  const url = `/api/games/${g.id}/commands`;
+  const r = await call('POST', url, { seq: 2, command: { type: 'setPolicy', area: 'growth', values: { launchBtl: 1, marketing: 3, town4: 0, bonusSales: 0.8 } } }, cookie);
+  assert.strictEqual(r.status, 200);
+  const bad = await call('POST', url, { seq: 3, command: { type: 'setPolicy', area: 'growth', values: { town9: 1 } } }, cookie);
+  assert(bad.status >= 400 && bad.status < 500, 'an unknown setting is refused');
+  const played = await play(cookie, g.id, r.json.state, 2, 3);
+  assert(played.state.growth && played.state.growth.products.btl);
+  const q = async (sql) => (await pool.query(sql, [g.id])).rows;
+  assert.deepStrictEqual((await q("SELECT product, status FROM bank.product WHERE game_id = $1")).map((x) => [x.product, x.status]), [['btl', 'live']]);
+  const towns = Object.fromEntries((await q("SELECT town, state FROM bank.branch_site WHERE game_id = $1")).map((x) => [x.town, x.state]));
+  assert.strictEqual(towns.town4, 'none'); assert.strictEqual(towns.town1, 'branch'); assert.strictEqual(Object.keys(towns).length, 7);
+  assert((await q("SELECT count(*)::int n FROM bank.incentive_month WHERE game_id = $1"))[0].n >= 2);
+  assert.strictEqual((await q("SELECT count(*)::int n FROM bank.acquisition WHERE game_id = $1"))[0].n, played.state.growth.acq.length);
+  const v = await verifyGame(pool, host, g.id); assert.deepStrictEqual(v.problems, []);
 });
 
