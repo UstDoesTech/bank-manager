@@ -478,6 +478,16 @@ function uf(){ return Math.pow(unemp() / 4.3, 1.8) * (P().lossMult || 1); }
 function mkt(){ return Math.max(0.25, S.base - 1.5); }
 
 /* balance sheet */
+// Facts for the analysis layer: nothing here changes the game. The server stores them each month so the metric views can use them.
+function riskFacts(){
+  const dep = Math.max(1, S.deposits), fund = dep + S.wholesale + (S.bonds || 0), ladder = maturityLadder();
+  const top10 = (S.large || []).map(d => d.amt).sort((a, b) => b - a).slice(0, 10).reduce((a, b) => a + b, 0) / dep;
+  const mort = loanSum('mortgage');
+  return { rateSensitivity: rateSensitivity(), horizon: survivalHorizon(), lcr: ladder.lcr, wholesaleShare: S.wholesale / fund, top10Share: top10, loanToDeposit: (S.legacy + loanSum()) / dep,
+    hedgeRatio: mort > 0 ? swapNotional() / mort : 0, collateral: S.collateral || 0, changeMeter: S.ops && S.ops.m ? S.ops.m.meter : null, boe: S.cb || 0 };
+}
+function giltRows(){ return S.gilts.map(g => ({ kind: g.kind, amt: g.amt, coupon: g.coupon, dur: g.dur, mv: g.amt * (1 - g.dur * (giltYield(g.kind) - g.y0) / 100) })); }
+function marketFacts(){ return { base: S.base, unemp: unemp(Math.min(S.month, 11)), hpi: hpi(Math.min(S.month, 11)), infl: inflation(Math.min(S.month, 11)), mkt: S.mkt, path: S.path }; }
 function giltBook(){ return S.gilts.reduce((a, g) => a + g.amt, 0); }
 function giltYield(kind){ return S.base + (kind === 'long' ? 0.65 : 0.15); }
 function giltMV(){ return S.gilts.reduce((a, g) => a + g.amt * (1 - g.dur * (giltYield(g.kind) - g.y0) / 100), 0); }
@@ -678,6 +688,7 @@ function setPolicy(area, values, release){
   return applyPolicy(area, values, release);
 }
 function applyPolicy(area, values, release){
+  { const log = S.policyLog = S.policyLog || []; log.push({ id: (S.plid = (S.plid || 0) + 1), y: S.year, m: Math.min(S.month, 11), area, release: !!release, values: release ? null : Object.assign({}, values) }); if (log.length > 60) log.shift(); }
   if (release){ S.policy[area] = systemPolicy()[area]; S.policy.owner[area] = 'system'; if (area === 'treasury') syncGilts(); return S.policy[area]; }   // hand the area back to the executive team
   const first = S.policy.owner[area] !== 'player';
   Object.assign(S.policy[area], values); S.policy.owner[area] = 'player';
@@ -2121,7 +2132,7 @@ function growthMonth(ev){
   const mk = 0.5 + 0.5 * Math.min(1, (gp.marketing / Math.max(1, running)) / 3);
   let revenue = 0, losses = 0, extraCost = gp.marketing, misProducts = 0, townRev = 0;
   for (const [key, p] of live){
-    const r = productMonth(key, p, G, gp, f, mk); revenue += r.rev; losses += r.loss; extraCost += r.extra + 1; misProducts += r.mis; p.cum += r.rev;
+    const r = productMonth(key, p, G, gp, f, mk); revenue += r.rev; losses += r.loss; extraCost += r.extra + 1; misProducts += r.mis; p.cum += r.rev; p.mRev = r.rev; p.mLoss = r.loss; p.mCost = r.extra + 1;
     p.last = Math.round((r.rev - r.loss - r.extra - 1) * 100) / 100;
   }
   // the regulator's fair value review of products with high fees relative to their benefit
@@ -2173,7 +2184,7 @@ function growthMonth(ev){
   // what it all adds up to
   post('fees', revenue + salesFee + townRev); post('losses', -losses); post('costs', -(extraCost + (gp.retraining || 0) + netCost + acqCost));
   const goodwill = S.goodwill || 0;
-  G.last = { revenue: Math.round(revenue * 10) / 10, losses: Math.round(losses * 10) / 10, salesIdx: Math.round(G.sidx * 1000) / 1000, mis: Math.round(mis * 100) / 100, culture: Math.round(G.culture * 10) / 10, upheld: G.upheld.length, goodwill: Math.round(goodwill * 10) / 10 };
+  G.last = { sales: Math.round(vol * 10) / 10, revenue: Math.round(revenue * 10) / 10, losses: Math.round(losses * 10) / 10, salesIdx: Math.round(G.sidx * 1000) / 1000, mis: Math.round(mis * 100) / 100, culture: Math.round(G.culture * 10) / 10, upheld: G.upheld.length, goodwill: Math.round(goodwill * 10) / 10 };
 }
 function opsIncidentGrowth(ev, A){
   const cost = 40; post('redress', -cost); S.trust = clamp(S.trust - 2, 0, 100); S.comp = clamp(S.comp - 3, 0, 100);

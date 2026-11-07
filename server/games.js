@@ -161,12 +161,66 @@ async function syncGrowth(client, gid, at, state, closing) {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (game_id, acquisition_id) DO UPDATE SET status = EXCLUDED.status`,
       [gid, a.id, a.name, pence(a.price), pence(a.L), pence(a.goodwill), a.depth, a.start, a.hidden * 100, a.written ? 'written down' : (state.year * 12 + Math.min(state.month, 11)) - a.start < 24 ? 'integrating' : 'settled']);
   if (closing && G.last)
-    await client.query('INSERT INTO bank.incentive_month (game_id, year, month, sales_index, mis_sold, culture, upheld_12m) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
-      [gid, at.year, at.month, G.last.salesIdx, G.last.mis, G.last.culture, G.last.upheld]);
+    await client.query('INSERT INTO bank.incentive_month (game_id, year, month, sales_index, mis_sold, culture, upheld_12m, sales) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING',
+      [gid, at.year, at.month, G.last.salesIdx, G.last.mis, G.last.culture, G.last.upheld, G.last.sales]);
   const names = ['none', 'hub', 'branch'];
   for (const [town, st] of Object.entries(G.townState || {})) {
     const since = (G.townSince && G.townSince[town]) != null ? G.townSince[town] : 0;
     await client.query('INSERT INTO bank.branch_site (game_id, town, state, since_abs) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING', [gid, town, names[st], since]);
+  }
+}
+
+// Keeps the analysis tables in step: policy changes, deposit accounts, party roles, and each month's market, gilts, risk measures,
+// alerts, products and the year's result.
+async function syncAnalytics(client, gid, at, state, facts, closing) {
+  for (const e of state.policyLog || []) {
+    if (e.release) await client.query("INSERT INTO bank.policy_setting (game_id, log_id, year, month, area, setting, value, owner) VALUES ($1,$2,$3,$4,$5,'*',NULL,'system') ON CONFLICT DO NOTHING", [gid, e.id, e.y, e.m, e.area]);
+    else for (const [k, v] of Object.entries(e.values || {}))
+      await client.query("INSERT INTO bank.policy_setting (game_id, log_id, year, month, area, setting, value, owner) VALUES ($1,$2,$3,$4,$5,$6,$7,'player') ON CONFLICT DO NOTHING", [gid, e.id, e.y, e.m, e.area, k, v]);
+  }
+  // deposit accounts: the retail pool, each large depositor, each bond, and each household's savings
+  const accounts = [{ id: 'easy', kind: 'easy_access', bal: state.deposits - (state.large || []).reduce((a, d) => a + d.amt, 0), rate: state.savRate }];
+  for (const d of state.large || []) accounts.push({ id: 'large-' + d.id, kind: 'large_deposit', bal: d.amt, rate: d.rate });
+  for (const b of state.bondTranches || []) accounts.push({ id: 'bond-' + (b.id != null ? b.id : b.due + '-' + b.amt), kind: 'fixed_bond', bal: b.amt, rate: b.rate });
+  for (const h of state.households || []) accounts.push({ id: 'hh-' + h.id, kind: 'household_savings', bal: (h.cash || 0) / 1000, rate: null });
+  for (const a of accounts)
+    await client.query(
+      `INSERT INTO bank.account (game_id, account_id, kind, balance_pence, rate_pct) VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (game_id, account_id) DO UPDATE SET balance_pence = EXCLUDED.balance_pence, rate_pct = EXCLUDED.rate_pct, status = 'active'`,
+      [gid, a.id, a.kind, pence(a.bal), a.rate]);
+  await client.query("UPDATE bank.account SET status = 'closed', balance_pence = 0 WHERE game_id = $1 AND status = 'active' AND account_id <> ALL ($2::text[])", [gid, accounts.map((a) => a.id)]);
+  for (const l of state.loans || []) {
+    await client.query("INSERT INTO bank.party_role (game_id, party_id, role) VALUES ($1,$2,'borrower') ON CONFLICT DO NOTHING", [gid, l.id]);
+    if (l.guar) await client.query("INSERT INTO bank.party_role (game_id, party_id, role) VALUES ($1,$2,'guarantor') ON CONFLICT DO NOTHING", [gid, l.id]);
+  }
+  if (!closing || !facts.analytics) return;
+  const A = facts.analytics, m = A.market, r = A.risk;
+  await client.query('INSERT INTO bank.market_state (game_id, year, month, base_rate, unemployment, house_price_index, share_index, inflation, path) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING',
+    [gid, at.year, at.month, m.base, m.unemp, m.hpi, m.mkt, m.infl, m.path]);
+  for (const [i, g] of A.gilts.entries())
+    await client.query('INSERT INTO bank.security_holding (game_id, year, month, holding, kind, nominal_pence, coupon_pct, duration_years, market_pence) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING',
+      [gid, at.year, at.month, i + 1, g.kind, pence(g.amt), g.coupon, g.dur, pence(g.mv)]);
+  await client.query(
+    `INSERT INTO bank.risk_month (game_id, year, month, rate_sensitivity_pence, survival_horizon_days, lcr, wholesale_share, top10_depositor_share, loan_to_deposit, hedge_ratio, collateral_pence, change_meter, boe_pence)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT DO NOTHING`,
+    [gid, at.year, at.month, pence(r.rateSensitivity), Math.round(r.horizon), r.lcr, r.wholesaleShare, r.top10Share, r.loanToDeposit, r.hedgeRatio, pence(r.collateral), r.changeMeter, pence(r.boe)]);
+  const O = state.ops && state.ops.m;
+  if (O) {
+    await client.query("INSERT INTO bank.alert_month (game_id, year, month, kind, true_cases, caught, missed, false_alerts, unreviewed) VALUES ($1,$2,$3,'fraud',$4,$5,$6,$7,NULL) ON CONFLICT DO NOTHING",
+      [gid, at.year, at.month, O.fraud.trueCases, O.fraud.caught, O.fraud.missed, O.fraud.falseAlerts]);
+    await client.query("INSERT INTO bank.alert_month (game_id, year, month, kind, true_cases, caught, missed, false_alerts, unreviewed) VALUES ($1,$2,$3,'aml',NULL,NULL,$4,NULL,$5) ON CONFLICT DO NOTHING",
+      [gid, at.year, at.month, O.missedA, O.unreviewed]);
+  }
+  for (const [key, p] of Object.entries((state.growth && state.growth.products) || {}))
+    if (p.mRev != null)
+      await client.query('INSERT INTO bank.product_month (game_id, year, month, product, revenue_pence, loss_pence, cost_pence) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
+        [gid, at.year, at.month, key, pence(p.mRev), pence(p.mLoss), pence(p.mCost)]);
+  if (facts.over) {
+    const k = A.rating;
+    await client.query(
+      `INSERT INTO bank.year_result (game_id, year, status, letter, score, profit_pence, return_on_capital, peer_benchmark) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (game_id, year) DO UPDATE SET status = EXCLUDED.status, letter = EXCLUDED.letter, score = EXCLUDED.score, profit_pence = EXCLUDED.profit_pence, return_on_capital = EXCLUDED.return_on_capital, peer_benchmark = EXCLUDED.peer_benchmark`,
+      [gid, at.year, facts.over, k.letter, k.score, pence(k.profit), k.roe, k.peer]);
   }
 }
 
@@ -206,10 +260,10 @@ async function persist(client, game, seq, cmd, before, out) {
   if (cmd.type === 'resolve') {
     const card = before.card;
     await client.query(
-      `INSERT INTO bank.decision (game_id, command_seq, card_id, kind, year, month, options, chosen, truth)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      `INSERT INTO bank.decision (game_id, command_seq, card_id, kind, year, month, options, chosen, truth, shown)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [gid, seq, card.id, card.kind, before.year, before.month,
-        JSON.stringify(card.opts.map((o) => ({ k: o.k, l: o.l }))), cmd.k, JSON.stringify(card.h || {})]);
+        JSON.stringify(card.opts.map((o) => ({ k: o.k, l: o.l }))), cmd.k, JSON.stringify(card.h || {}), JSON.stringify((card.fields || []).map((f) => ({ l: f.l, v: f.v })))]);
     for (const l of (result && result.lines) || [])
       await client.query('INSERT INTO bank.event (game_id, command_seq, year, month, kind, tone, text) VALUES ($1, $2, $3, $4, $5, $6, $7)',
         [gid, seq, before.year, before.month, 'outcome', l.tone || '', l.t]);
@@ -231,6 +285,7 @@ async function persist(client, game, seq, cmd, before, out) {
   await syncBook(client, gid, before || { year: state.year, month: state.month }, state.loans || []);
   if (state.households && cmd.type === 'closeMonth') await syncHouseholds(client, gid, before, state.households);
   await syncFunding(client, gid, facts.instruments || []);
+  await syncAnalytics(client, gid, before || { year: state.year, month: state.month }, state, facts, cmd.type === 'closeMonth');
   if (state.growth && (cmd.type === 'closeMonth' || cmd.type === 'nextYear')) await syncGrowth(client, gid, before || { year: state.year, month: state.month }, state, cmd.type === 'closeMonth');
   if (state.ops && (cmd.type === 'closeMonth' || cmd.type === 'nextYear')) await syncOperations(client, gid, before || { year: state.year, month: state.month }, state, cmd.type === 'closeMonth');
   if (cmd.type === 'closeMonth' && state.px && state.px.hist.length) {

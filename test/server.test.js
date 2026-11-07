@@ -421,6 +421,22 @@ test('literacy: every example analysis query runs', async () => {
   for (const q of queries) await pool.query(q);
 });
 
+test('analysis: every example query over the metric views runs, as the read-only role too', async () => {
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'db', 'analysis', 'metrics.sql'), 'utf8');
+  const queries = sql.split(';').map((q) => q.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean);
+  assert(queries.length >= 8);
+  for (const q of queries) await pool.query(q);
+  const role = await pool.query("SELECT 1 FROM pg_roles WHERE rolname = 'bank_analysis'");
+  if (role.rows.length) {
+    const client = await pool.connect();
+    try {
+      await client.query('SET ROLE bank_analysis');
+      // the role reads the metric views; the queries that join the raw tables are for the owner, and are refused here
+      for (const q of queries.slice(0, 5)) await client.query(q);
+    } finally { await client.query('RESET ROLE'); client.release(); }
+  }
+});
+
 test('guests: a game played without signing in is recorded under an opaque key and claimed by registering; guests cannot delete', async () => {
   const g1 = await call('POST', '/api/guest', {});
   assert.strictEqual(g1.status, 201); assert(g1.cookie && /bm_session/.test(g1.cookie));
@@ -572,3 +588,94 @@ test('growth: products, the branch network, incentives and acquisitions are reco
   const v = await verifyGame(pool, host, g.id); assert.deepStrictEqual(v.problems, []);
 });
 
+test('analysis: the metric views agree with the game, leave out opted-out players, and are all that the analysis role can see', async () => {
+  // a full branch year, and a chief executive game that runs operations and growth
+  const cookie = await newPlayer('ana@example.com');
+  const a = (await call('POST', '/api/games', {}, cookie)).json;
+  const pa = await play(cookie, a.id, a.state, 1, 12);
+  assert.strictEqual(pa.state.over, 'done');
+  const b = (await call('POST', '/api/games', { chiefExecutive: true }, cookie)).json;
+  const urlB = `/api/games/${b.id}/commands`;
+  const sb = await call('POST', urlB, { seq: 2, command: { type: 'setPolicy', area: 'operations', values: { staffFraud: 5 } } }, cookie);
+  const sg = await call('POST', urlB, { seq: 3, command: { type: 'setPolicy', area: 'growth', values: { launchBtl: 1, marketing: 3 } } }, cookie);
+  assert.strictEqual(sb.status, 200); assert.strictEqual(sg.status, 200);
+  const pb = await play(cookie, b.id, sg.json.state, 3, 4);
+  const q = async (sql, args = []) => (await pool.query(sql, args)).rows;
+
+  // the new tables are filled
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.market_state WHERE game_id = $1', [a.id]))[0].n, 12);
+  assert((await q('SELECT count(*)::int n FROM bank.security_holding WHERE game_id = $1', [a.id]))[0].n >= 12);
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.risk_month WHERE game_id = $1', [a.id]))[0].n, 12);
+  assert((await q("SELECT count(*)::int n FROM bank.account WHERE game_id = $1 AND kind = 'easy_access'", [a.id]))[0].n === 1);
+  assert((await q('SELECT count(*)::int n FROM bank.party_role WHERE game_id = $1', [a.id]))[0].n >= 1);
+  const yr = (await q('SELECT letter, status, return_on_capital, peer_benchmark FROM bank.year_result WHERE game_id = $1', [a.id]));
+  assert.strictEqual(yr.length, 1); assert.strictEqual(yr[0].status, 'done'); assert(/^(AAA|AA|A|BBB|BB|B|CCC|CC|D)$/.test(yr[0].letter));
+  assert((await q("SELECT count(*)::int n FROM bank.policy_setting WHERE game_id = $1 AND area IN ('operations', 'growth')", [b.id]))[0].n >= 3);
+  assert((await q('SELECT count(*)::int n FROM bank.alert_month WHERE game_id = $1', [b.id]))[0].n >= 2, 'alerts are stored once operations has run');
+  assert((await q('SELECT count(*)::int n FROM bank.product_month WHERE game_id = $1', [b.id]))[0].n >= 2);
+
+  // the monthly metrics: finite, and consistent with the ledger and with the game's own state
+  const mm = await q('SELECT * FROM bank.metric_month WHERE game_id = $1 ORDER BY year, month', [a.id]);
+  assert.strictEqual(mm.length, 12);
+  for (const r of mm) { for (const k of ['net_interest_margin', 'cost_income', 'cost_of_risk', 'capital_ratio', 'liquidity_ratio', 'loan_to_deposit']) assert(r[k] !== null && Number.isFinite(Number(r[k])), k + ' is a number'); }
+  const last = mm[mm.length - 1];
+  assert(Number(last.net_interest_margin) > 0 && Number(last.net_interest_margin) < 0.2 && Number(last.cost_income) > 0 && Number(last.cost_income) < 5, 'plausible margin and cost/income');
+  const st = pa.state, loans = st.legacy + st.loans.reduce((x, l) => x + l.bal, 0);
+  assert(Math.abs(Number(last.loan_to_deposit) - loans / st.deposits) < 1e-4, `loan to deposit ${last.loan_to_deposit} against ${loans / st.deposits}`);
+  const reg = (await q('SELECT capital_ratio FROM bank.regulatory_snapshot WHERE game_id = $1 AND month = 11', [a.id]))[0];
+  assert.strictEqual(Number(last.capital_ratio), Number(reg.capital_ratio));
+  const pl = await q('SELECT * FROM bank.v_month_pl WHERE game_id = $1 ORDER BY year, month', [a.id]);
+  for (const r of pl) assert.strictEqual(Number(r.net_interest_pence) + Number(r.fees_pence) + Number(r.losses_pence) + Number(r.costs_pence) + Number(r.redress_pence) + Number(r.trading_pence), Number(r.profit_pence), 'the parts add up to profit');
+  const eng = pa.state.last.pl, nii = (eng.intLoans + eng.intGilts + eng.intRes + eng.intDep + eng.intCB) * 1e5;
+  assert(Math.abs(Number(pl[11].net_interest_pence) - nii) < 500, `net interest in the view ${pl[11].net_interest_pence} against the engine's ${nii}`);
+  // the year's return against peers is the same arithmetic as the rating
+  const my = (await q('SELECT return_vs_peers FROM bank.metric_year WHERE game_id = $1', [a.id]))[0];
+  assert(Math.abs(Number(my.return_vs_peers) - (Number(yr[0].return_on_capital) - Number(yr[0].peer_benchmark))) < 1e-9);
+
+  // decisions: accuracy by case type, cases and documents
+  const acc = await q('SELECT * FROM bank.metric_decision_accuracy ORDER BY case_type');
+  assert(acc.length >= 3 && acc.every((r) => Number(r.accuracy) >= 0 && Number(r.accuracy) <= 1 && Number(r.decisions) > 0), JSON.stringify(acc));
+  assert((await q('SELECT count(*)::int n FROM bank."case" WHERE game_id = $1', [a.id]))[0].n >= 1);
+  assert((await q("SELECT count(*)::int n FROM bank.document WHERE game_id = $1 AND field = 'Amount'", [a.id]))[0].n >= 1);
+  assert((await q('SELECT count(*)::int n FROM bank.metric_fraud_month WHERE game_id = $1', [a.id]))[0].n >= 1);
+
+  // operations and growth metrics
+  const ts = await q('SELECT * FROM bank.metric_team_month WHERE game_id = $1', [b.id]); assert(ts.length >= 5 && ts.every((r) => Number(r.utilisation) > 0));
+  const al = await q("SELECT * FROM bank.metric_alerts_month WHERE game_id = $1 AND kind = 'fraud'", [b.id]); assert(al.length >= 1 && Number(al[0].false_alarm_rate) >= 0);
+  const pm = await q('SELECT * FROM bank.metric_product_month WHERE game_id = $1 ORDER BY year, month', [b.id]); assert(pm.length >= 2 && Number(pm[pm.length - 1].cumulative_margin_pence) !== 0);
+  assert((await q('SELECT count(*)::int n FROM bank.metric_conduct_month WHERE game_id = $1', [b.id]))[0].n >= 2);
+
+  // a player who keeps games out of analysis never appears in any view
+  const coy = await newPlayer('coy@example.com', { consent: false });
+  assert.strictEqual((await call('POST', '/api/consent', { optOut: true }, coy)).status, 200);
+  const c = (await call('POST', '/api/games', {}, coy)).json; await play(coy, c.id, c.state, 1, 2);
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.decision WHERE game_id = $1', [c.id]))[0].n > 0, true);
+  for (const v of ['metric_month', 'metric_fraud_month', 'v_month_pl', 'v_position', 'v_decision_truth', '"case"', 'document'])
+    assert.strictEqual((await q(`SELECT count(*)::int n FROM bank.${v} WHERE game_id = $1`, [c.id]))[0].n, 0, v + ' leaks an opted-out game');
+  // and the training day is left out too
+  const tut = (await call('POST', '/api/games', { tutorial: true }, cookie)).json; await play(cookie, tut.id, tut.state, 1, 1);
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.metric_month WHERE game_id = $1', [tut.id]))[0].n, 0);
+
+  // the analysis role sees the metric views and nothing underneath them
+  const role = await q("SELECT 1 FROM pg_roles WHERE rolname = 'bank_analysis'");
+  if (role.length) {
+    const client = await pool.connect();
+    try {
+      await client.query('SET ROLE bank_analysis');
+      assert((await client.query('SELECT count(*)::int n FROM bank.metric_month')).rows[0].n >= 12);
+      for (const sql of ['SELECT * FROM bank.decision', 'SELECT * FROM bank.journal_line', 'SELECT * FROM account.player', 'SELECT * FROM bank.game', "UPDATE bank.game SET status = 'failed'", 'DELETE FROM bank.game'])
+        await assert.rejects(client.query(sql), /permission denied/, sql);
+    } finally { await client.query('RESET ROLE'); client.release(); }
+  }
+
+  // the semantic file: every metric points at a real view and column, and every table has its vocabulary in a comment
+  const yaml = fs.readFileSync(path.join(__dirname, '..', 'db', 'semantic', 'bank_metrics.yaml'), 'utf8');
+  const metrics = [...yaml.matchAll(/- name: (\w+)\n\s+description: .+\n\s+view: ([\w."]+)\n\s+column: (\w+)\n\s+grain: .+\n\s+unit: (\w+)/g)].map((m) => ({ name: m[1], view: m[2], column: m[3], unit: m[4] }));
+  assert(metrics.length >= 20, 'the design lists ten and the phases add more: ' + metrics.length);
+  assert.strictEqual(new Set(metrics.map((m) => m.name)).size, metrics.length);
+  for (const m of metrics) await pool.query(`SELECT ${m.column} FROM ${m.view} LIMIT 0`);
+  for (const must of ['net_interest_margin', 'cost_income', 'cost_of_risk', 'capital_ratio', 'liquidity_ratio', 'rate_sensitivity', 'arrears_rate_30_plus', 'decision_accuracy', 'return_on_capital_vs_peers', 'survival_horizon', 'wholesale_funding_share', 'top10_depositor_share', 'oldest_case_age', 'complaints_per_1000_sales'])
+    assert(metrics.some((m) => m.name === must), 'metric ' + must);
+  const bare = await q("SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'bank' AND c.relkind = 'r' AND obj_description(c.oid, 'pg_class') IS NULL");
+  assert.deepStrictEqual(bare.map((r) => r.relname), [], 'every table carries its vocabulary in a comment');
+});

@@ -1,0 +1,152 @@
+# The metrics, defined once. Each entry names the view and column that implement it, so every screen and every
+# analysis uses the same definition. The layout follows the Open Semantic Interchange idea (name, description, expression,
+# grain, unit) and can be converted to an Apache Ossie model as that specification's financial services work matures.
+# A test checks that every view and column named here exists, and that the views agree with the game's own figures.
+model: bank_manager
+version: 1
+population: games that allow analysis, are synthetic and are not the training day
+metrics:
+  - name: net_interest_margin
+    description: Net interest income, annualised, over average total assets
+    view: bank.metric_month
+    column: net_interest_margin
+    grain: bank x month
+    unit: ratio
+  - name: cost_income
+    description: Operating costs over net interest income plus fees
+    view: bank.metric_month
+    column: cost_income
+    grain: bank x month
+    unit: ratio
+  - name: cost_of_risk
+    description: Credit losses, annualised, over average loans
+    view: bank.metric_month
+    column: cost_of_risk
+    grain: bank x month
+    unit: ratio
+  - name: capital_ratio
+    description: Capital over risk-weighted assets, with goodwill deducted in full
+    view: bank.metric_month
+    column: capital_ratio
+    grain: bank x month
+    unit: ratio
+  - name: liquidity_ratio
+    description: Reserves plus gilts at market value over deposits and wholesale funding
+    view: bank.metric_month
+    column: liquidity_ratio
+    grain: bank x month
+    unit: ratio
+  - name: rate_sensitivity
+    description: Change in twelve months' net interest income for a one-point rise in Bank Rate
+    view: bank.metric_month
+    column: rate_sensitivity_pence
+    grain: bank x month
+    unit: pence
+  - name: loan_to_deposit
+    description: Loans over customer deposits
+    view: bank.metric_month
+    column: loan_to_deposit
+    grain: bank x month
+    unit: ratio
+  - name: survival_horizon
+    description: Days the bank could pay out in a severe run before cash runs out
+    view: bank.metric_month
+    column: survival_horizon_days
+    grain: bank x month
+    unit: days
+  - name: wholesale_funding_share
+    description: Wholesale borrowing over deposits, wholesale borrowing and bonds
+    view: bank.metric_month
+    column: wholesale_share
+    grain: bank x month
+    unit: ratio
+  - name: top10_depositor_share
+    description: Share of deposits held by the ten largest depositors
+    view: bank.metric_month
+    column: top10_depositor_share
+    grain: bank x month
+    unit: ratio
+  - name: arrears_rate_30_plus
+    description: Balance behind with payments (30 days, 60 days or on a payment plan) over total balance. The game has no 90+ day bucket because it writes an account off after two months
+    view: bank.metric_month
+    column: arrears_30_plus
+    grain: bank x month
+    unit: ratio
+  - name: arrears_rate_60_plus
+    description: Balance two months behind over total balance
+    view: bank.metric_month
+    column: arrears_60_plus
+    grain: bank x month
+    unit: ratio
+  - name: goodwill_share_of_capital
+    description: Goodwill over book equity, before goodwill is deducted
+    view: bank.metric_month
+    column: goodwill_share_of_capital
+    grain: bank x month
+    unit: ratio
+  - name: change_load
+    description: Running projects' load over what the IT team can deliver; above 1 each month risks an incident
+    view: bank.metric_month
+    column: change_meter
+    grain: bank x month
+    unit: ratio
+  - name: return_on_capital_vs_peers
+    description: Profit over opening capital, minus the peer benchmark for the year's economy
+    view: bank.metric_year
+    column: return_vs_peers
+    grain: bank x year
+    unit: ratio
+  - name: decision_accuracy
+    description: Share of decisions consistent with the true outcome the engine knew, by decision maker and case type (fraud, money laundering, sanctions, onboarding, personal and business loans)
+    view: bank.metric_decision_accuracy
+    column: accuracy
+    grain: decision maker x case type
+    unit: ratio
+  - name: fraud_detection
+    description: Share of true frauds the player blocked
+    view: bank.metric_fraud_month
+    column: fraud_detection
+    grain: bank x month
+    unit: ratio
+  - name: fraud_false_alarm_rate
+    description: Share of the player's blocks that were genuine customers
+    view: bank.metric_fraud_month
+    column: false_alarm_rate
+    grain: bank x month
+    unit: ratio
+  - name: alert_detection_rate
+    description: Share of true fraud or laundering cases caught at the thresholds the player set, from the operations model
+    view: bank.metric_alerts_month
+    column: detection_rate
+    grain: bank x month x alert kind
+    unit: ratio
+  - name: alert_false_alarm_rate
+    description: Share of alerts that were genuine customers, from the operations model
+    view: bank.metric_alerts_month
+    column: false_alarm_rate
+    grain: bank x month x alert kind
+    unit: ratio
+  - name: oldest_case_age
+    description: Months of work in a team's backlog, which is how old its oldest case is
+    view: bank.metric_team_month
+    column: oldest_case_age_months
+    grain: team x month
+    unit: months
+  - name: team_utilisation
+    description: A team's demand over its capacity
+    view: bank.metric_team_month
+    column: utilisation
+    grain: team x month
+    unit: ratio
+  - name: product_margin
+    description: A product's revenue less its losses and costs
+    view: bank.metric_product_month
+    column: margin_pence
+    grain: product x month
+    unit: pence
+  - name: complaints_per_1000_sales
+    description: Upheld complaints in the last year for every thousand sales in it
+    view: bank.metric_conduct_month
+    column: complaints_per_1000_sales
+    grain: bank x month
+    unit: count

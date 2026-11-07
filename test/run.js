@@ -4,7 +4,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), '
 const golden = JSON.parse(fs.readFileSync(path.join(__dirname, 'golden.json'), 'utf8'));
 let n = 0;
 // 1. Behaviour is unchanged against snapshots from the original engine (all bots, scenarios, tutorial).
-const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'ops', 'meet', 'pq', 'applied', 'growth', 'goodwill', 'swaps', 'collateral', 'swapId', 'fid', 'px'];
+const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'ops', 'meet', 'pq', 'applied', 'growth', 'goodwill', 'policyLog', 'plid', 'swaps', 'collateral', 'swapId', 'fid', 'px'];
 { const Eg = loadEngine(src); Eg.dispatch({ type: 'newGame', seed: 1 });
   for (const [key, want] of Object.entries(golden)){
     const [bot, tag, seed] = key.split(':');

@@ -63,6 +63,11 @@ async function verifyGame(pool, host, gameId) {
     }
   }
 
+  if (state && state.policyLog && state.policyLog.length) {
+    const last = (await pool.query('SELECT coalesce(max(log_id), 0)::int AS n FROM bank.policy_setting WHERE game_id = $1', [gameId])).rows[0].n;
+    if (last !== state.plid) problems.push(`latest stored policy change is ${last}, replay's is ${state.plid}`);
+  }
+
   if (state && state.growth) {
     const acq = (await pool.query('SELECT count(*)::int AS n FROM bank.acquisition WHERE game_id = $1', [gameId])).rows[0].n;
     if (acq !== state.growth.acq.length) problems.push(`${acq} stored acquisitions, replay made ${state.growth.acq.length}`);
