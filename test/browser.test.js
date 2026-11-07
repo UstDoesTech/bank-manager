@@ -176,14 +176,18 @@ test('the page works with no server: opened from a file there is no account butt
   assert.match(await page.textContent('.panel'), /Your executive team/);
   for (const r of ['Finance director', 'Chief risk officer', 'Treasurer', 'Head of operations']) assert.match(await page.textContent('.panel'), new RegExp(r));
   assert(await page.locator('.ewi').count() >= 8, 'early warning indicators are listed');
+  assert.match(await page.textContent('.panel'), /Funding ladder/); assert.match(await page.textContent('.panel'), /Within a month/);
+  assert(await page.locator('.ewi').count() >= 12, 'hedging and ladder indicators are listed');
   await page.click('[data-seg=stress]');
   const before = await page.evaluate(() => JSON.stringify([S.cash, S.deposits, S.rs, S.month, S.loans.length]));
   await page.click('#stRun');
   await waitFor(async () => /Lowest capital ratio/.test(await page.textContent('.panel')), 'stress test result');
   assert.strictEqual(await page.evaluate(() => JSON.stringify([S.cash, S.deposits, S.rs, S.month, S.loans.length])), before, 'the stress test does not change the real bank');
   assert.strictEqual(await page.evaluate(() => !!S.stress), true);
+  await page.selectOption('#stScn', 'rates'); await page.click('#stRun');
+  await waitFor(async () => (await page.evaluate(() => S.stress && S.stress.scenario)) === 'rates', 'rate shock run');
   await page.click('[data-seg=settings]');
-  assert.match(await page.textContent('.panel'), /Stress test \(/);          // the last result stays visible
+  assert.match(await page.textContent('.panel'), /Stress test, rate shock \(/);          // the last result stays visible
   assert.match(await page.textContent('.panel'), /Not yet yours/);        // credit is still locked
   await page.fill('input[data-key=mortgageSpread]', '1.4'); await page.click('#plSave');
   await waitFor(async () => /Saved/.test(await page.textContent('.acct .msg')), 'policy saved');

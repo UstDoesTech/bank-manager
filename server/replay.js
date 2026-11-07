@@ -47,6 +47,12 @@ async function verifyGame(pool, host, gameId) {
     }
   }
 
+  if (state) {
+    const hs = (await pool.query("SELECT count(*)::int AS n, count(*) FILTER (WHERE status = 'active')::int AS live FROM bank.hedge WHERE game_id = $1", [gameId])).rows[0];
+    if (hs.n !== (state.swapId || 0)) problems.push(`${hs.n} stored swaps, replay entered ${state.swapId || 0}`);
+    if (hs.live !== (state.swaps || []).length) problems.push(`${hs.live} active swaps stored, replay has ${(state.swaps || []).length}`);
+  }
+
   if (state && state.households) {
     const rows = (await pool.query('SELECT household_id, credit_score, year, month FROM bank.household_month WHERE game_id = $1 ORDER BY year, month', [gameId])).rows;
     for (const h of state.households) {

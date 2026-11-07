@@ -60,7 +60,7 @@ function cleanCommand(cmd) {
   if (cmd.type === 'resolve') { out.id = cmd.id; out.k = cmd.k; }
   if (cmd.type === 'buy' || cmd.type === 'read') out.key = cmd.key;
   if (cmd.type === 'setPolicy') { out.area = cmd.area; out.values = cmd.values; if (cmd.release) out.release = true; }
-  if (cmd.type === 'stress' && cmd.overrides) out.overrides = cmd.overrides;
+  if (cmd.type === 'stress'){ if (cmd.overrides) out.overrides = cmd.overrides; if (cmd.scenario && cmd.scenario !== 'recession') out.scenario = cmd.scenario; }
   if (cmd.type === 'newGame') { out.seed = cmd.seed; out.opts = cmd.opts || {}; }
   return out;
 }
@@ -95,6 +95,18 @@ async function syncBook(client, gid, at, loans) {
        outcome = CASE WHEN status = 'current' THEN 'sold' ELSE 'written_off' END, status = 'closed'
      WHERE game_id = $1 AND status <> 'closed' AND agreement_id <> ALL (SELECT (jsonb_array_elements($2::jsonb)->>'id')::int)`,
     [gid, json, at.year, at.month]);
+}
+
+// Keeps the swaps in step with the engine: new ones inserted, ones that have run off marked ended.
+async function syncHedges(client, gid, at, state) {
+  const swaps = state.swaps || [];
+  for (const w of swaps)
+    await client.query(
+      `INSERT INTO bank.hedge (game_id, swap_id, notional_pence, fixed_rate_pct, term_months, start_year, start_month)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`,
+      [gid, w.id, pence(w.n), w.k, w.years * 12, Math.floor(w.start / 12), w.start % 12]);
+  await client.query(
+    "UPDATE bank.hedge SET status = 'ended' WHERE game_id = $1 AND status = 'active' AND swap_id <> ALL ($2::int[])", [gid, swaps.map((w) => w.id)]);
 }
 
 // Keeps the household cast and each closed month of their money in step with the engine.
@@ -157,6 +169,14 @@ async function persist(client, game, seq, cmd, before, out) {
 
   await syncBook(client, gid, before || { year: state.year, month: state.month }, state.loans || []);
   if (state.households && cmd.type === 'closeMonth') await syncHouseholds(client, gid, before, state.households);
+  if ((state.swaps && state.swaps.length) || cmd.type === 'closeMonth' || cmd.type === 'nextYear') await syncHedges(client, gid, before, state);
+  if (cmd.type === 'closeMonth') {
+    const notional = (state.swaps || []).reduce((a, w) => a + w.n, 0);
+    if (notional > 0 || state.collateral > 0)
+      await client.query('INSERT INTO bank.hedge_position (game_id, year, month, notional_pence, mtm_pence, collateral_pence) VALUES ($1,$2,$3,$4,$5,$6)', [gid, before.year, before.month, pence(notional), pence(facts.mtm || 0), pence(state.collateral || 0)]);
+    for (const r of (facts.ladder && facts.ladder.rows) || [])
+      await client.query('INSERT INTO bank.liquidity_ladder (game_id, year, month, bucket, inflow_pence, outflow_pence, cover_pence) VALUES ($1,$2,$3,$4,$5,$6,$7)', [gid, before.year, before.month, r.key, pence(r.inflow), pence(r.outflow), pence(r.cover)]);
+  }
   if (cmd.type === 'closeMonth') {
     for (const c of facts.cohorts)
       await client.query(

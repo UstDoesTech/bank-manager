@@ -119,6 +119,23 @@ of this applies to branch-manager play. All of it is in `engine/engine.js` (`ind
   play was sacked twice, and reckless settings lost the job in 16 and failed the bank in 14. The Team screen shows the
   meter, the next meeting and the last six quarters, and has the resign button.
 
+- **Hedging** (`hedgeByPolicy()`, `swapMonth()`, treasury policy `hedgeTarget` and `hedgeYears`): New mortgages are lent at a fixed rate
+  while savers and wholesale lenders follow Bank Rate. A pay-fixed swap pays a fixed rate (Bank Rate plus 0.1 points and a little
+  more for a longer term) and receives Bank Rate on a notional amount, so it pays out when rates rise and costs when they
+  fall. The standing rule tops swaps up to the target share of the fixed mortgage book each month. Each month's net payment is
+  a profit or loss (`pl.swaps`). A swap's value is not in capital, but when it is under water the shortfall is posted as cash
+  collateral (`collateral`, an asset that does not count as liquid) and comes back as the value recovers or the swap ends.
+  Swaps cannot be cancelled and run to their end even if treasury is handed back. A target above 100% is a bet on rising rates and
+  is flagged as an over-hedge. Over three years of careful play, a 100% hedge improved capital in a rate shock by about
+  £186k and cost about £106k more in a recession, and 150% cost more again (20 seeds), so it is insurance, not free money.
+- **Maturity ladder** (`maturityLadder()`): contractual loan repayments against wholesale and bond funding falling due, in five
+  buckets (within a month, 1 to 3, 3 to 6, 6 to 12 months, over a year), with a stressed run on deposits shown separately (5% of
+  ordinary deposits and every large depositor in a month). It gives a liquidity coverage figure and a "left after a run" amount
+  per bucket, and three more early warnings: funding gap by maturity, swap cover, and collateral posted.
+- **Second stress scenario:** the stress test now has a rate shock (Bank Rate to 6.5%, inflation 8%, house prices down 12%) beside the
+  severe recession, so a hedge's value shows in one and its cost in the other. Migration 008 adds the `collateral` and
+  `pl.swaps` accounts, `bank.hedge`, `bank.hedge_position` and `bank.liquidity_ladder`; the replay checks stored swaps.
+
 Not built: the monthly executive meeting (settings still apply at once), share price, and indicators for staffing and alerts
 (they need the operations phase).
 

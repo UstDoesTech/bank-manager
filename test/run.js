@@ -4,7 +4,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), '
 const golden = JSON.parse(fs.readFileSync(path.join(__dirname, 'golden.json'), 'utf8'));
 let n = 0;
 // 1. Behaviour is unchanged against snapshots from the original engine (all bots, scenarios, tutorial).
-const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy'];
+const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'swaps', 'collateral', 'swapId'];
 { const Eg = loadEngine(src); Eg.dispatch({ type: 'newGame', seed: 1 });
   for (const [key, want] of Object.entries(golden)){
     const [bot, tag, seed] = key.split(':');
@@ -399,4 +399,48 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 4 }); assert.throws(() => E.dispatch({ type: 'resign' }), /only a chief executive/); n++;
     const F = start(4); for (let i = 0; i < 4; i++) month(F); F.dispatch({ type: 'resign' });
     assert.strictEqual(F.S.over, 'resigned'); assert.notStrictEqual(F.rating().letter, 'D'); assert.throws(() => F.dispatch({ type: 'resign' }), /already over/); n += 3; } }
+// 14. Hedging and the maturity ladder.
+{ const month = (E) => { for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' }); };
+  const start = (seed, tre) => { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed, opts: { chiefExecutive: true } }); E.dispatch({ type: 'setPolicy', area: 'credit', values: {} }); E.dispatch({ type: 'setPolicy', area: 'treasury', values: Object.assign({ liquidityTarget: 0.2 }, tre) }); return E; };
+  // off by default: nothing is entered
+  { const E = start(3, {}); for (let i = 0; i < 6; i++) month(E); assert.strictEqual(E.S.swaps.length, 0); assert.strictEqual(E.S.collateral, 0); n += 2; }
+  // the standing rule enters swaps up to the target, once, and says so
+  const E = start(3, { hedgeTarget: 1, hedgeYears: 1 });
+  for (let i = 0; i < 6; i++) month(E);
+  assert(E.S.swaps.length >= 1, 'swaps entered'); assert(E.S.inbox.some(x => x.subject === 'Interest-rate swap entered')); n += 2;
+  { const book = E.loanSum('mortgage'), cover = E.S.swaps.reduce((a, w) => a + w.n, 0); assert(cover <= book + 1 && cover > 0.3 * book, `cover ${cover} of ${book}`); n++; }
+  assert(E.S.swaps.every(w => w.k > E.S.y0.base - 3 && w.due - w.start === 12 && w.n % 250 === 0)); n++;
+  // a rise in Bank Rate pays the bank, a fall costs it and ties up cash as collateral; the ledger agrees throughout (dispatch checks it)
+  { const run = (path) => { const F = start(3, { hedgeTarget: 1, hedgeYears: 3 }); F.S.path = path; const paid = [], coll = []; for (let i = 0; i < 9; i++){ month(F); paid.push(-(F.S.ledger.bal['pl.swaps'] || 0)); coll.push(F.S.collateral); } return { F, paid, coll }; };
+    const up = run('sticky'), down = run('downturn');
+    const last = (r) => r.paid[r.paid.length - 1] - r.paid[r.paid.length - 2];
+    assert(last(up) > 0, 'a rate rise pays the bank'); assert(last(down) < 0 && Math.max(...down.coll) > 0, 'a rate cut costs the bank and calls collateral');
+    assert(up.coll[up.coll.length - 1] < down.coll[down.coll.length - 1], 'rising rates return collateral, falling rates call more'); n += 3;
+    assert(down.F.indicators().find(i => i.key === 'collateral').value > 0); n++; }
+  // swaps run to their end, and the collateral is returned
+  for (let i = 0; i < 14; i++){ month(E); if (E.S.over === 'done') E.dispatch({ type: 'nextYear' }); }
+  assert(E.S.swaps.every(w => w.start >= E.S.year * 12 + E.S.month - 12)); n++;
+  { const G = start(3, { hedgeTarget: 1, hedgeYears: 1 }); for (let i = 0; i < 3; i++) month(G); G.dispatch({ type: 'setPolicy', area: 'treasury', release: true });
+    const k = G.S.swaps.length; assert(k > 0); month(G); assert(G.S.swaps.length >= 1 || G.S.swaps.length === k, 'handing treasury back does not cancel swaps'); n++; }
+  // over-hedging is flagged, and the executive team says so
+  { const H = start(3, { hedgeTarget: 1.5, hedgeYears: 3 }); for (let i = 0; i < 5; i++) month(H);
+    const ind = H.indicators().find(i => i.key === 'hedge'); assert(ind.value > 1.1 && ind.status === 'alarm'); n++; }
+  // the maturity ladder accounts for every contractual flow
+  { const L = E.maturityLadder(), S = E.S;
+    assert.strictEqual(L.rows.length, 5); assert(Math.abs(L.rows.reduce((a, r) => a + r.inflow, 0) - (S.legacy + S.loans.filter(l => l.status !== 'plan').reduce((a, l) => a + l.bal, 0))) < 1e-6); n += 2;
+    assert(Math.abs(L.rows.reduce((a, r) => a + r.outflow, 0) - ((S.wholesale || 0) + (S.bonds || 0))) < 1e-6); assert(L.lcr > 0 && L.liquid > 0); n += 2;
+    assert(['ladder', 'hedge', 'collateral'].every(k => E.indicators().some(i => i.key === k))); n++; }
+  // wholesale funding shows up in the ladder, due within three months
+  { const W = start(3, {}); W.dispatch({ type: 'setPolicy', area: 'funding', values: { wholesaleTarget: 0.2 } }); for (let i = 0; i < 2; i++) month(W);
+    const L = W.maturityLadder(); assert(W.S.wholesale > 0 && L.rows[0].outflow + L.rows[1].outflow > 0); n += 2; }
+  // two stress scenarios: a rate shock favours the hedged bank, a recession the unhedged one
+  { let dRates = 0, dRec = 0, k = 0; for (const seed of [1, 2, 3]){
+      const run = (v) => { const X = loadEngine(src); const { S } = play(X, seed, 'careful', 3, { chiefExecutive: true }, (r) => { r({ type: 'setPolicy', area: 'credit', values: {} }); r({ type: 'setPolicy', area: 'treasury', values: Object.assign({ liquidityTarget: 0.2 }, v) }); }); if (S.over === 'done') X.dispatch({ type: 'nextYear' }); return X; };
+      const a = run({}), b = run({ hedgeTarget: 1, hedgeYears: 3 }); if (a.S.over || b.S.over) continue; k++;
+      dRates += b.stressTest({}, 9, 'rates').capChange - a.stressTest({}, 9, 'rates').capChange; dRec += b.stressTest({}, 9, 'recession').capChange - a.stressTest({}, 9, 'recession').capChange; }
+    assert(k >= 2); assert(dRates / k > 20, 'hedging helps in a rate shock: ' + dRates / k); assert(dRates > dRec, `and helps less (or costs) in a recession: ${dRates / k} against ${dRec / k}`); n += 3; }
+  { const Z = start(3, { hedgeTarget: 1, hedgeYears: 1 }); for (let i = 0; i < 3; i++) month(Z);
+    Z.dispatch({ type: 'stress', scenario: 'rates' }); assert.strictEqual(Z.S.stress.scenario, 'rates');
+    assert.throws(() => Z.dispatch({ type: 'stress', scenario: 'meteor' }), /unknown stress scenario/); n += 2;
+    let leaked = 0; Z.setSink(() => { leaked++; }); Z.stressTest({}, 4, 'rates'); Z.setSink(null); assert.strictEqual(leaked, 0); n++; } }
 console.log('ok', n, 'checks');

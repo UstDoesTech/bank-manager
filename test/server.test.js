@@ -264,10 +264,10 @@ test('ledger: every account the engine can post to is in the chart of accounts',
   const have = new Set((await pool.query('SELECT code FROM bank.gl_account')).rows.map((r) => r.code));
   const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), 'utf8');
   // accounts named in journal entries, plus one P&L account per line of the profit-and-loss statement
-  const named = new Set([...src.matchAll(/\[\s*'((?:pl|equity)\.[A-Za-z]+|cash|gilts|legacy|loans|deposits|cb|wholesale|bonds|retained)'\s*,/g)].map((m) => m[1]));
+  const named = new Set([...src.matchAll(/\[\s*'((?:pl|equity)\.[A-Za-z]+|cash|gilts|legacy|loans|deposits|cb|wholesale|bonds|retained|collateral)'\s*,/g)].map((m) => m[1]));
   const pl = [...src.matchAll(/function blankPL\(\)\{ return \{([^}]*)\}/g)][0][1].split(',').map((s) => 'pl.' + s.split(':')[0].trim());
   for (const a of [...named, ...pl]) assert(have.has(a), 'missing from the chart of accounts: ' + a);
-  assert(have.has('wholesale') && have.has('equity.dividend'));
+  assert(have.has('wholesale') && have.has('equity.dividend') && have.has('pl.swaps') && have.has('collateral'));
 });
 
 test('households: a game started with them records the cast and each month, and the replay agrees', async () => {
@@ -479,8 +479,18 @@ test('chief executive: policy and stress commands are recorded with their detail
   assert.strictEqual((await send({ type: 'stress', overrides: { credit: { mortgageMaxLtv: 500 } } })).status >= 400, true); seq--;       // refused, so the sequence number is not used
   const stored = (await pool.query("SELECT payload FROM bank.command WHERE game_id = $1 AND type IN ('setPolicy','stress') ORDER BY seq", [g.id])).rows.map((r) => r.payload);
   assert.deepStrictEqual(stored, [{ type: 'setPolicy', area: 'credit', values: { mortgageMaxLtv: 80 } }, { type: 'stress', overrides: { credit: { mortgageMaxLtv: 70 } } }]);
-  const played = await play(cookie, g.id, st.json.state, seq, 3);
-  assert(played.state.month >= 3);
+  const hd = await send({ type: 'setPolicy', area: 'treasury', values: { hedgeTarget: 1, hedgeYears: 2 } });
+  assert.strictEqual(hd.status, 200);
+  const played = await play(cookie, g.id, hd.json.state, seq, 4);
+  assert(played.state.month >= 4);
+  // swaps, their month-end position and the maturity ladder are stored, and the replay agrees with them
+  assert(played.state.swaps.length >= 1, 'a swap was entered');
+  const q1 = async (sql) => (await pool.query(sql, [g.id])).rows;
+  assert.strictEqual((await q1("SELECT count(*)::int n FROM bank.hedge WHERE game_id = $1 AND status = 'active'"))[0].n, played.state.swaps.length);
+  assert.strictEqual(Number((await q1("SELECT sum(notional_pence) s FROM bank.hedge WHERE game_id = $1"))[0].s), Math.round(played.state.swaps.reduce((a, w) => a + w.n, 0) * 1e5));
+  assert((await q1("SELECT count(*)::int n FROM bank.hedge_position WHERE game_id = $1"))[0].n >= 1);
+  assert.strictEqual((await q1("SELECT count(*)::int n FROM bank.liquidity_ladder WHERE game_id = $1"))[0].n % 5, 0); assert((await q1("SELECT count(*)::int n FROM bank.liquidity_ladder WHERE game_id = $1"))[0].n >= 5 * 4);
+  assert.strictEqual(Number((await q1("SELECT balance_pence b FROM bank.position_snapshot WHERE game_id = $1 AND account = 'collateral' ORDER BY year DESC, month DESC LIMIT 1"))[0].b), Math.round(played.state.collateral * 1e5));
   const v = await verifyGame(pool, host, g.id);
   assert.deepStrictEqual(v.problems, []); assert.strictEqual(v.ok, true);
   // resigning ends the game as finished, is replayed, and nothing more is accepted
