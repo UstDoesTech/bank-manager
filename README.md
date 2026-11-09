@@ -51,6 +51,8 @@ npm run test:server       # API, accounts, ledger, replay, rollback, privacy (th
 npm run test:browser      # the real page in Edge/Chrome against the real server, including going offline
 npm run test:all
 npm run a11y             # axe-core (WCAG 2.2 A/AA) over every screen at phone and desktop width; needs Edge or Chrome
+npm run visual           # screenshots of every screen compared with the approved images in test/visual/baseline/<platform>/
+npm run visual:update    # approve what the page looks like now (review the images before committing them)
 ```
 
 
@@ -166,6 +168,22 @@ the server turn on for a new career), so a game started without it, and every ol
   months you led and the months you trailed, by difficulty), which the read-only role can read. `db/semantic/bank_metrics.yaml` has four
   metrics on them and queries 12 and 13 in `db/analysis/metrics.sql` answer "does beating the rivals pay". `server/replay.js` checks the
   stored months and rivals against the replay.
+
+## Screenshot comparison
+
+`npm run visual` (`tools/visual.js`) plays a fixed career (seed 11) and a fixed chief executive game (seed 21), takes a screenshot of each
+screen, and compares it with the approved image, the way the golden snapshots catch engine drift. 57 images: every screen at phone (390 wide)
+and desktop (1280) width, and the main ones in the light theme, with larger text and at 320px. An image fails if more than 0.05% of its
+pixels differ; the actual, expected and difference pictures are written to `shots/visual-diff/` and the command exits 1.
+
+To make the pictures repeatable the page runs with a fixed random number source, animations off, the 3D canvas hidden (its frames depend on
+timing and the graphics card) and every request that is not a local file blocked, so web fonts and the 3D library cannot change the result.
+That means the text uses the fonts installed on the machine, which differ between systems, so approved images are kept per platform in
+`test/visual/baseline/<platform>/` (Windows only so far). On a platform with none, or with no Edge or Chrome, the check is skipped and passes.
+The 3D hall itself is not compared; the layout around it is.
+
+**When a change is deliberate**, run `npm run visual:update`, look at the changed images (`git diff --stat test/visual`, or open them) and
+commit them with the change. To approve a new platform, run it there once and commit that folder. The check is part of `npm run test:all`.
 
 ## Display, sound and the Settings preview
 

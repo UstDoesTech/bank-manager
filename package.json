@@ -10,7 +10,9 @@
     "test:browser": "node --test test/browser.test.js",
     "shots": "node tools/shots.js",
     "a11y": "node tools/a11y.js",
-    "test:all": "npm test && npm run test:server && npm run test:browser"
+    "visual": "node tools/visual.js",
+    "visual:update": "node tools/visual.js --update",
+    "test:all": "npm test && npm run test:server && npm run test:browser && npm run visual"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.5",
@@ -20,6 +22,8 @@
   },
   "devDependencies": {
     "axe-core": "4.10.2",
-    "playwright-core": "1.65.0"
+    "pixelmatch": "5.3.0",
+    "playwright-core": "1.65.0",
+    "pngjs": "7.0.0"
   }
 }
