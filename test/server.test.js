@@ -452,6 +452,33 @@ test('difficulty: a level chosen at the start is stored with the game, replays e
   assert.strictEqual((await call('GET', '/api/games', undefined, cookie)).json.games.find((g) => g.id === hard.json.id).difficulty, 'hard');
 });
 
+test('rivals: introduced only once pricing is unlocked, recorded every month, and the analysis views show how the player did against them', async () => {
+  const cookie = await newPlayer('rivalry@example.com');
+  const q = async (sql, args = []) => (await pool.query(sql, args)).rows;
+  // a branch manager has not unlocked pricing, so no rivals exist and nothing is stored
+  const early = (await call('POST', '/api/games', { rivals: true }, cookie)).json; assert.strictEqual(early.state.rivals.intro, null);
+  await play(cookie, early.id, early.state, 1, 2);
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.rival WHERE game_id = $1', [early.id]))[0].n, 0);
+  assert.strictEqual((await verifyGame(pool, host, early.id)).ok, true);
+  // in the chief executive role pricing is open from the start
+  const g = (await call('POST', '/api/games', { chiefExecutive: true, rivals: true }, cookie)).json; assert.strictEqual(g.state.rivals.list.length, 4);
+  const p = await play(cookie, g.id, g.state, 1, 3); assert.strictEqual(p.state.rivals.list.length, 4);
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.rival WHERE game_id = $1', [g.id]))[0].n, 4);
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.rival_month WHERE game_id = $1', [g.id]))[0].n, 12);
+  const cm = await q('SELECT * FROM bank.competitor_month WHERE game_id = $1 ORDER BY year, month', [g.id]); assert.strictEqual(cm.length, 3);
+  assert(cm.every((r) => Number(r.our_saver_rate) > 0 && Number(r.our_share) > 0 && Number(r.our_share) < 1));
+  const last = p.state.rivals.last; assert.strictEqual(Number(cm[2].our_saver_rate), last.us.saver);
+  const nm = (await q('SELECT rival_name FROM bank.rival WHERE game_id = $1 ORDER BY rival_key', [g.id])).map((r) => r.rival_name); assert(nm.includes('Hartley & Co'));
+  const mrm = await q('SELECT * FROM bank.metric_rival_month WHERE game_id = $1 ORDER BY year, month', [g.id]);
+  assert.strictEqual(mrm.length, 3); assert(mrm.every((r) => r.rivals === 4 && r.difficulty === 'standard' && Number.isFinite(Number(r.saver_gap)) && Number.isFinite(Number(r.mortgage_gap))));
+  assert(mrm[0].deposit_growth === null && Number.isFinite(Number(mrm[1].deposit_growth)), 'growth needs a previous month');
+  assert(Math.abs(Number(mrm[2].best_saver_rate) - Math.max(...last.rows.map((x) => x.saver))) < 1e-6, 'the best rival rate in the view is the best the engine reported');
+  const mr = await q('SELECT * FROM bank.metric_rival'); assert(mr.length >= 1 && mr.every((x) => x.games >= 1 && x.months >= 1), JSON.stringify(mr));
+  assert.strictEqual((await verifyGame(pool, host, g.id)).ok, true, 'the stored rivals agree with the replay');
+  await pool.query('DELETE FROM bank.rival_month WHERE game_id = $1', [g.id]); await pool.query('DELETE FROM bank.competitor_month WHERE game_id = $1', [g.id]);
+  assert.strictEqual((await verifyGame(pool, host, g.id)).ok, false, 'the replay notices missing rival records');
+});
+
 test('literacy: every example analysis query runs', async () => {
   const sql = fs.readFileSync(path.join(__dirname, '..', 'db', 'analysis', 'literacy.sql'), 'utf8');
   const queries = sql.split(';').map((q) => q.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean);
@@ -539,7 +566,7 @@ test('chief executive: policy and stress commands are recorded with their detail
   assert.strictEqual(hd.status, 200);
   let played = await play(cookie, g.id, hd.json.state, seq, 3);
   // the seed is random, so a game may need a few more months before it lends a mortgage and the rule has something to hedge
-  for (let extra = 0; extra < 4 && !played.state.swaps.length && played.state.over !== 'done'; extra++) played = await play(cookie, g.id, played.state, played.seq, 1);
+  for (let extra = 0; extra < 8 && !played.state.swaps.length && played.state.over !== 'done'; extra++) played = await play(cookie, g.id, played.state, played.seq, 1);
   assert(played.state.month >= 3 || played.state.year > 2027);
   // swaps, their month-end position and the maturity ladder are stored, and the replay agrees with them
   assert(played.state.swaps.length >= 1, 'a swap was entered');

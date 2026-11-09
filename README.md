@@ -141,6 +141,32 @@ and median progress, the average shortfall of those who did not, and the average
 both, `db/semantic/bank_metrics.yaml` defines four metrics on them, and queries 10 and 11 in `db/analysis/metrics.sql` answer "how did
 players do against each target". `server/replay.js` checks the stored ambitions against the replay.
 
+## Rival banks
+
+Four invented rivals (Northgate Building Society, Hartley & Co, Clearwater Bank, Meridian Direct) appear once the player has **unlocked the
+pricing controls**, with a short note from the board. Before that there are none. They are a game option (`opts.rivals`, which the page and
+the server turn on for a new career), so a game started without it, and every older game, is exactly as it was.
+
+- **What they do.** Each month the engine moves each rival's saver rate and mortgage price around the market (Bank Rate and its mortgage
+  spread) and grows its deposits, and Meridian matches your savings rate when you pay more than it does. Their personalities are set so the
+  rivals average out at the market, so being at the market rate costs you nothing on average, but being the best or the worst matters.
+  Difficulty scales how far from the market they sit (×0.75 Gentle, ×1.3 Hard).
+- **What it does to you.** The deposit flow compares your savings rate with the rivals' average instead of the plain market rate, so paying
+  less than they do moves money out and paying more brings it in. If you also set the prices (own pricing), the price at which you start
+  losing mortgage and loan customers moves with the rivals' mortgage prices: dearer than they are loses customers, cheaper leaves room to
+  charge more.
+- **No random numbers.** Their moves are a pure function of the game's seed, the date and your own savings rate, so they never move the random
+  stream. `rivalFacts()` is read only. A test plays the same seed twice, and checks that rivals change where savers go, that paying more
+  than them draws money in, and that the training day has none.
+- **On screen.** A Rivals tab in the Bank panel (once they exist) shows each bank's saver rate, mortgage rate, deposits and share, with your
+  own row, and how you compare with the best saver rate and the cheapest mortgage.
+- **In the database** (migration 015): `bank.rival` (who, and when introduced), `bank.rival_month` (each rival's saver rate, mortgage rate,
+  deposits and share) and `bank.competitor_month` (your side), written as each month closes. Analysis reads `bank.metric_rival_month` (your
+  gap to the best saver rate and the cheapest mortgage, share, deposit growth) and `bank.metric_rival` (deposit growth and share in the
+  months you led and the months you trailed, by difficulty), which the read-only role can read. `db/semantic/bank_metrics.yaml` has four
+  metrics on them and queries 12 and 13 in `db/analysis/metrics.sql` answer "does beating the rivals pay". `server/replay.js` checks the
+  stored months and rivals against the replay.
+
 ## Executive team, early warnings and the stress test
 
 Once a player has been handed any Chief Executive area, the Policy tab opens three screens (Team, Settings, Stress test); none

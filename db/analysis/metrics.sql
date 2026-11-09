@@ -72,3 +72,16 @@ SELECT year, letter, ambition_name, round(avg(progress), 3) AS mean_progress, co
 FROM bank.metric_ambition_year
 GROUP BY year, letter, ambition_name
 ORDER BY year, letter, mean_progress DESC;
+
+-- 12. Does beating the rivals' savings rate pay? Deposit growth, market share and the gaps, in the months the player led and the months it trailed.
+SELECT difficulty, led_on_savers, games, months, mean_deposit_growth, mean_share, mean_saver_gap, mean_mortgage_gap
+FROM bank.metric_rival
+ORDER BY difficulty, led_on_savers DESC;
+
+-- 13. How did the player stand against the rivals, year by year? Average share, and how often the player had the best savings rate or the cheapest mortgage.
+SELECT year, difficulty, round(avg(our_share), 4) AS mean_share,
+       round(avg((saver_gap >= 0)::int), 3) AS share_of_months_best_saver_rate,
+       round(avg((mortgage_gap <= 0)::int), 3) AS share_of_months_cheapest_mortgage
+FROM bank.metric_rival_month
+GROUP BY year, difficulty
+ORDER BY year, difficulty;

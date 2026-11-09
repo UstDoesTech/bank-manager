@@ -241,6 +241,25 @@ async function syncHouseholds(client, gid, at, households) {
       [gid, JSON.stringify(rows), at.year, at.month]);
 }
 
+// The rival banks and the player's side of the comparison, as the engine recorded them when the month closed.
+async function syncRivals(client, gid, state) {
+  const V = state.rivals; if (!V || !V.intro || !V.last) return;
+  const L = V.last;
+  await client.query(
+    `INSERT INTO bank.rival (game_id, rival_key, rival_name, style, introduced_year, introduced_month, opening_deposits_pence)
+     SELECT $1, r.key, r.name, r.style, $3, $4, r.dep0 FROM json_to_recordset($2::json) AS r(key text, name text, style text, dep0 bigint)
+     ON CONFLICT (game_id, rival_key) DO NOTHING`,
+    [gid, JSON.stringify(V.list.map((x) => ({ key: x.key, name: x.name, style: x.style, dep0: pence(x.dep0) }))), V.intro.y, V.intro.m]);
+  await client.query(
+    `INSERT INTO bank.rival_month (game_id, rival_key, year, month, saver_rate, mortgage_rate, deposits_pence, share)
+     SELECT $1, r.key, $3, $4, r.saver, r.mort, r.dep, r.share FROM json_to_recordset($2::json) AS r(key text, saver numeric, mort numeric, dep bigint, share numeric)
+     ON CONFLICT DO NOTHING`,
+    [gid, JSON.stringify(L.rows.map((x) => ({ key: x.key, saver: x.saver, mort: x.mort, dep: pence(x.dep), share: x.share }))), L.y, L.m]);
+  await client.query(
+    `INSERT INTO bank.competitor_month (game_id, year, month, our_saver_rate, our_mortgage_rate, our_deposits_pence, our_share) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,
+    [gid, L.y, L.m, L.us.saver, L.us.mort, pence(L.us.dep), L.share]);
+}
+
 // How the player did against each long-term ambition as the year ended: the value reached, the target, and whether it is met.
 async function syncAmbitions(client, gid, year, list) {
   await client.query(
@@ -297,6 +316,7 @@ async function persist(client, game, seq, cmd, before, out) {
   if (state.households && cmd.type === 'closeMonth') await syncHouseholds(client, gid, before, state.households);
   await syncFunding(client, gid, facts.instruments || []);
   if (facts.ambitions && before) await syncAmbitions(client, gid, before.year, facts.ambitions);
+  if (cmd.type === 'closeMonth' && state.rivals) await syncRivals(client, gid, state);
   await syncAnalytics(client, gid, before || { year: state.year, month: state.month }, state, facts, cmd.type === 'closeMonth');
   if (state.growth && (cmd.type === 'closeMonth' || cmd.type === 'nextYear')) await syncGrowth(client, gid, before || { year: state.year, month: state.month }, state, cmd.type === 'closeMonth');
   if (state.ops && (cmd.type === 'closeMonth' || cmd.type === 'nextYear')) await syncOperations(client, gid, before || { year: state.year, month: state.month }, state, cmd.type === 'closeMonth');
@@ -355,6 +375,7 @@ function register(app, { pool, host }) {
     if (body.households && !opts.tutorial && !opts.scenario) opts.households = true;
     if (body.meetings && !opts.tutorial && !opts.scenario) opts.meetings = true;
     if (body.chiefExecutive && !opts.tutorial && !opts.scenario) opts.chiefExecutive = true;
+    if (body.rivals && !opts.tutorial && !opts.scenario) opts.rivals = true;
     if ((body.difficulty === 'gentle' || body.difficulty === 'hard') && !opts.tutorial && !opts.scenario) opts.difficulty = body.difficulty;
     const seed = crypto.randomInt(1, 0x7fffffff);
     const cmd = { type: 'newGame', seed, opts };

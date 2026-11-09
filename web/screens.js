@@ -82,6 +82,23 @@ function ambitionsYearEnd(){
   return `<h3>Ambitions</h3>${fresh.map(a => `<div class="note ambnew"><div class="eyebrow">Ambition reached</div><p><b>${esc(a.name)}</b> ${esc(a.blurb)}</p></div>`).join('')}
     ${next.length ? `<div class="ambs">${next.map(ambitionHTML).join('')}</div>` : ''}`;
 }
+function rivalsPanel(){
+  const R = rivalFacts(), sgn = (v, d = 2) => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(d), stat = (l, v, sub) => `<div class="stat"><span>${l}</span><b>${v}</b>${sub ? `<span style="text-transform:none;letter-spacing:0">${sub}</span>` : ''}</div>`;
+  if (!R.live){ overlay(`${bankTop('books')}<p class="dim">There are no rival banks yet.</p>${bankFoot()}`); $('#ovGo').onclick = closeOverlay; bankWire(); tabSel('bank'); return; }
+  const priced = S.policy.owner.pricing === 'player';
+  overlay(`${bankTop('rivals')}<div class="eyebrow">The competition</div><h2>Rival banks</h2>
+    <p class="dim">Savers compare your rate with these banks. Pay less than they get elsewhere and money moves out; pay more and it comes in.${priced ? ' You set your own prices, so charging more than they do for mortgages and loans loses customers, and charging less than them wins room to charge more.' : ''}</p>
+    <div class="grid2">
+      ${stat('Your savings rate', S.savRate.toFixed(2) + '%', `${sgn(R.saverGap)} points against the best, ${esc(R.bestSaver.name)} at ${R.bestSaver.rate.toFixed(2)}%`)}
+      ${stat('Your mortgage rate', R.banks[R.banks.length - 1].mort.toFixed(2) + '%', `${sgn(R.mortgageGap)} points against the cheapest, ${esc(R.cheapestMortgage.name)} at ${R.cheapestMortgage.rate.toFixed(2)}%`)}
+      ${stat('Your share of deposits', pc(R.share, 1), 'Of what you and the four rivals hold')}
+      ${stat('Rivals’ average saver rate', R.saverAvg.toFixed(2) + '%', 'What savers compare you with')}
+    </div>
+    <table class="rtable rivals"><thead><tr><th scope="col">Bank</th><th scope="col">Saver</th><th scope="col">Mortgage</th><th scope="col">Deposits</th><th scope="col">Share</th></tr></thead><tbody>
+      ${R.banks.slice().sort((a, b) => b.dep - a.dep).map(b => `<tr${b.us ? ' class="us"' : ''}><th scope="row">${esc(b.name)}<small>${esc(b.style)}</small></th><td>${b.saver.toFixed(2)}%</td><td>${b.mort.toFixed(2)}%</td><td>${fmt(b.dep)}</td><td>${pc(b.share, 1)}</td></tr>`).join('')}</tbody></table>
+    ${bankFoot()}`);
+  $('#ovGo').onclick = closeOverlay; bankWire(); tabSel('bank');
+}
 function replayScreen(){
   const R = yearReplay(), mon = R.months;
   const moment = m => `<div class="moment ${m.good ? 'good' : 'bad'}"><span class="mm">${esc(m.name.slice(0, 3))}</span><div><b><span aria-hidden="true">${m.good ? '▲' : '▼'}</span> ${esc(m.head)}</b><p>${esc(m.text)}</p></div></div>`;

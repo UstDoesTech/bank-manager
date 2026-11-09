@@ -23,6 +23,7 @@ const SCREENS = [
   ['month-end', () => { closeOverlay(); while (!S.over && S.month < 2) { play(); closeBooks && closeBooks(); if (S.month < 2) closeOverlay(); } }],
   ['herald', () => { closeOverlay(); herald(); }],
   ['year-end', () => { closeOverlay(); while (!S.over) { play(); dispatch({ type: 'closeMonth' }); } endScreen(); }],
+  ['rivals', () => { S.tutorial = false; S.scenario = null; S.rivals = { on: true, intro: null, list: [] }; S.progress.unlocked.push('pricing'); rivalsSync(true); rivalsPanel(); }],
   ['replay', () => replayScreen()],
   ['goals', () => goalsPanel()],
   ['debrief', () => { try { debriefScreen(); } catch (e) {} }],

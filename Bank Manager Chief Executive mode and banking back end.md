@@ -95,6 +95,10 @@ At the end of each year the player can replay it: a short account of how the cap
 
 Ambitions are also written to the back end, one row per ambition for each finished year with the value reached, the target at the time and whether it is met, so analysis can ask how players performed against each target, by level of difficulty, and how long the ones who met it took.
 
+## Rival banks
+
+Once the player has unlocked the pricing controls, four invented rival banks appear, each with its own style: one pays savers well, one is the mainstream high-street bank, one is cheap on mortgages and one is a digital bank that matches the player's savings rate. They are a game option, so older games are unchanged. They give pricing a market to be judged against: savers compare the player's rate with the rivals' average, and a player who sets prices loses customers by charging more than the rivals do. Their behaviour is deterministic from the game's seed, the date and the player's own savings rate, so a replay is exact. Each month the engine's record of every rival's rates, deposits and share, and of the player's own rates and share, is written to the back end, so analysis can ask whether leading on savings rates paid, how often the player had the cheapest mortgage, and how market share moved by level of difficulty.
+
 ## Difficulty levels
 
 A new career can be played at Gentle, Standard (the original tuning) or Hard. The level is chosen on the title screen and is part of the game's opening options, so it is recorded with the game and replays exactly. It scales credit losses, the chance of a market crash, the mix of economic paths from year to year, one extra funding scare on Hard, and the board's starting confidence. The regulator's limits and the board's removal level do not change. Ratings are not adjusted; they are shown with the level they were earned at. The training day and the scenarios ignore the level.

@@ -174,3 +174,27 @@ metrics:
     column: mean_years_to_meet
     grain: ambition x difficulty
     unit: count
+  - name: saver_rate_gap
+    description: The player's savings rate minus the best rate any rival paid that month, in percentage points; above zero means the player led
+    view: bank.metric_rival_month
+    column: saver_gap
+    grain: bank x month
+    unit: ratio
+  - name: mortgage_rate_gap
+    description: The player's mortgage rate minus the cheapest rival's, in percentage points; above zero means the player was dearer
+    view: bank.metric_rival_month
+    column: mortgage_gap
+    grain: bank x month
+    unit: ratio
+  - name: deposit_market_share
+    description: The player's share of the deposits held by the player and the four rivals together
+    view: bank.metric_rival_month
+    column: our_share
+    grain: bank x month
+    unit: ratio
+  - name: deposit_growth_when_leading
+    description: Average monthly deposit growth, split by whether the player led or trailed the rivals on savings rates, by level of difficulty
+    view: bank.metric_rival
+    column: mean_deposit_growth
+    grain: led on savers x difficulty
+    unit: ratio

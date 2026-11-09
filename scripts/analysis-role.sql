@@ -6,6 +6,6 @@ DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bank_analysis
 GRANT USAGE ON SCHEMA bank TO bank_analysis;
 GRANT SELECT ON bank.metric_month, bank.metric_year, bank.metric_decision_accuracy, bank.metric_fraud_month, bank.metric_alerts_month,
   bank.metric_team_month, bank.metric_product_month, bank.metric_conduct_month, bank."case", bank.document,
-  bank.literacy_progress, bank.literacy_by_concept, bank.literacy_with_play, bank.metric_ambition_year, bank.metric_ambition TO bank_analysis;
+  bank.literacy_progress, bank.literacy_by_concept, bank.literacy_with_play, bank.metric_ambition_year, bank.metric_ambition, bank.metric_rival_month, bank.metric_rival TO bank_analysis;
 SELECT databricks_create_role(:'analyst', 'SERVICE_PRINCIPAL') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'analyst');
 GRANT bank_analysis TO :"analyst";

@@ -430,3 +430,8 @@ progress::-moz-progress-bar{background:var(--brass);border-radius:4px}
 .rtable thead th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
 .rtable tbody th{font-family:var(--f-mono);font-weight:600}
 .rtable td:nth-child(2),.rtable td:nth-child(3){font-family:var(--f-mono);white-space:nowrap}
+.seg.four{grid-template-columns:repeat(4,1fr)}
+.rivals th small{display:block;font-weight:400;color:var(--muted);font-size:11.5px}
+.rtable.rivals tbody th{font-family:inherit;font-weight:600}
+.rivals tr.us{background:rgba(217,171,79,.12)}
+.rivals td{white-space:nowrap;font-family:var(--f-mono)}

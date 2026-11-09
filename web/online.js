@@ -86,7 +86,7 @@ async function offerLiteracy(){
 }
 
 async function startGame(opts = {}){
-  if (!opts.tutorial && !opts.scenario && opts.households === undefined) opts = Object.assign({}, opts, { households: true, meetings: true });
+  if (!opts.tutorial && !opts.scenario && opts.households === undefined) opts = Object.assign({}, opts, { households: true, meetings: true, rivals: true });
   clearSave(); Remote.drop(); acknowledgeCookie();
   let seed = null;
   await Remote.guest();

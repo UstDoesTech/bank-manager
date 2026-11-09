@@ -4,7 +4,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), '
 const golden = JSON.parse(fs.readFileSync(path.join(__dirname, 'golden.json'), 'utf8'));
 let n = 0;
 // 1. Behaviour is unchanged against snapshots from the original engine (all bots, scenarios, tutorial).
-const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'ops', 'meet', 'pq', 'applied', 'growth', 'goodwill', 'policyLog', 'plid', 'swaps', 'collateral', 'swapId', 'fid', 'px', 'yr', 'amb'];
+const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'ops', 'meet', 'pq', 'applied', 'growth', 'goodwill', 'policyLog', 'plid', 'swaps', 'collateral', 'swapId', 'fid', 'px', 'yr', 'amb', 'rivals'];
 { const Eg = loadEngine(src); Eg.dispatch({ type: 'newGame', seed: 1 });
   for (const [key, want] of Object.entries(golden)){
     const [bot, tag, seed] = key.split(':');
@@ -667,4 +667,25 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   const A = loadEngine(src), B = loadEngine(src); for (const X of [A, B]){ X.dispatch({ type: 'newGame', seed: 8, opts: {} }); year(X); } assert.strictEqual(hashState(A.S), hashState(B.S), 'the log is rebuilt exactly by replaying');
   const T = loadEngine(src); T.dispatch({ type: 'newGame', seed: 3, opts: { tutorial: true } }); assert.strictEqual(T.S.amb, undefined, 'the training day has no ambitions');
   n += 12; }
+// 22. Rival banks: a game option, introduced only once pricing is unlocked, pure (no random numbers), and they really compete
+{ const mk = (opts, seed = 41) => { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed, opts }); return E; };
+  const month = (E) => { for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' }); };
+  const off = mk({}); assert.strictEqual(off.S.rivals, undefined, 'without the option there are no rivals, so older games are untouched');
+  const on = mk({ rivals: true }); assert(on.S.rivals.on && !on.S.rivals.intro && !on.rivalFacts().live, 'no rivals before pricing is unlocked');
+  month(on); month(on); assert(!on.S.rivals.intro, 'a branch manager is not compared with rivals yet');
+  on.S.progress.unlocked.push('pricing'); month(on);
+  assert(on.S.rivals.intro && on.S.rivals.list.length === 4, 'unlocking pricing introduces four rivals'); assert((on.S.inbox || []).some(m => m.subject === 'Rival banks'), 'the board says so once');
+  const ce = mk({ rivals: true, chiefExecutive: true }); assert(ce.S.rivals.intro && ce.rivalFacts().live, 'in the chief executive role pricing is open, so the rivals are there from the start');
+  const seen = new Set(); for (let i = 0; i < 12; i++){ month(ce); for (const b of ce.rivalFacts().banks) seen.add(b.saver); }
+  const rf = ce.rivalFacts(); assert.strictEqual(rf.banks.length, 5); assert(rf.banks.every(b => Number.isFinite(b.saver) && b.saver >= 0.1 && Number.isFinite(b.mort) && b.dep > 0));
+  assert(Math.abs(rf.banks.reduce((t, b) => t + b.share, 0) - 1) < 1e-9 && rf.share > 0 && rf.share < 1); assert(seen.size > 5, 'rival rates move from month to month');
+  assert(ce.S.rivals.last && ce.S.rivals.last.rows.length === 4 && ce.S.rivals.last.us.dep > 0, 'each month closed leaves a record for the back end');
+  const before = hashState(ce.S) + JSON.stringify(ce.S.rngState || ''); ce.rivalFacts(); assert.strictEqual(hashState(ce.S) + JSON.stringify(ce.S.rngState || ''), before, 'looking at the rivals never changes the game');
+  const ce2 = mk({ rivals: true, chiefExecutive: true }); for (let i = 0; i < 12; i++) month(ce2); assert.strictEqual(hashState(ce.S), hashState(ce2.S), 'a game with rivals replays exactly');
+  const plain = mk({ chiefExecutive: true }); for (let i = 0; i < 12; i++) month(plain); assert.notStrictEqual(Math.round(plain.S.deposits), Math.round(ce.S.deposits), 'rivals change where savers put their money');
+  const lead = mk({ rivals: true, chiefExecutive: true }), lag = mk({ rivals: true, chiefExecutive: true });
+  lead.S.savRate = 4.5; lag.S.savRate = 0.5; for (let i = 0; i < 6; i++){ month(lead); month(lag); lead.S.savRate = 4.5; lag.S.savRate = 0.5; }
+  assert(lead.S.deposits > lag.S.deposits, 'paying savers more than the rivals draws money in');
+  assert.strictEqual(mk({ tutorial: true, rivals: true }).S.rivals, undefined, 'the training day has no rivals');
+  n += 13; }
 console.log('ok', n, 'checks');

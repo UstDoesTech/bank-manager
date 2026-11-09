@@ -82,6 +82,14 @@ async function verifyGame(pool, host, gameId) {
     if (state.ops.last.length && tm === 0) problems.push('no stored team months');
   }
 
+  if (state && state.rivals) {
+    const n = (await pool.query('SELECT count(*)::int AS n FROM bank.competitor_month WHERE game_id = $1', [gameId])).rows[0].n;
+    const want = state.rivals.intro ? (state.year * 12 + state.month) - (state.rivals.intro.y * 12 + state.rivals.intro.m) : 0;
+    if (n !== want) problems.push(`${n} stored months against the rivals, replay has ${want}`);
+    const rv = (await pool.query('SELECT count(*)::int AS n FROM bank.rival WHERE game_id = $1', [gameId])).rows[0].n;
+    if (rv !== (state.rivals.intro ? state.rivals.list.length : 0)) problems.push(`${rv} stored rivals, replay has ${state.rivals.intro ? state.rivals.list.length : 0}`);
+  }
+
   if (state && state.amb) {
     const rows = (await pool.query('SELECT year, ambition, met, met_year FROM bank.ambition_result WHERE game_id = $1 ORDER BY year', [gameId])).rows;
     const years = new Set(rows.map((r) => r.year));

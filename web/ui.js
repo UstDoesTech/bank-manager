@@ -304,8 +304,8 @@ function herald(){
 }
 
 /* ---------- Branch ---------- */
-function bankTop(which){ return `<div class="seg${S.amb ? ' three' : ''}" role="group" aria-label="Section"><button type="button" data-seg="books" aria-pressed="${which === 'books'}">Books</button><button type="button" data-seg="branch" aria-pressed="${which === 'branch'}">Branch</button>${S.amb ? `<button type="button" data-seg="goals" aria-pressed="${which === 'goals'}">Goals</button>` : ''}</div>`; }
-function bankWire(){ const sg = $('#ov .seg'); if (sg) sg.onclick = e => { const b = e.target.closest('[data-seg]'); if (!b) return; b.dataset.seg === 'branch' ? branchPanel() : b.dataset.seg === 'goals' ? goalsPanel() : booksPanel(); }; const sr = $('#sndRow'); if (sr){ sr.onclick = () => { Snd.toggle(); sndBtn(); if (Snd.on) Snd.play('click'); }; sndBtn(); } }
+function bankTop(which){ const rv = rivalsLive(), n = 2 + (S.amb ? 1 : 0) + (rv ? 1 : 0); return `<div class="seg${n === 3 ? ' three' : n === 4 ? ' four' : ''}" role="group" aria-label="Section"><button type="button" data-seg="books" aria-pressed="${which === 'books'}">Books</button><button type="button" data-seg="branch" aria-pressed="${which === 'branch'}">Branch</button>${S.amb ? `<button type="button" data-seg="goals" aria-pressed="${which === 'goals'}">Goals</button>` : ''}${rv ? `<button type="button" data-seg="rivals" aria-pressed="${which === 'rivals'}">Rivals</button>` : ''}</div>`; }
+function bankWire(){ const sg = $('#ov .seg'); if (sg) sg.onclick = e => { const b = e.target.closest('[data-seg]'); if (!b) return; b.dataset.seg === 'branch' ? branchPanel() : b.dataset.seg === 'goals' ? goalsPanel() : b.dataset.seg === 'rivals' ? rivalsPanel() : booksPanel(); }; const sr = $('#sndRow'); if (sr){ sr.onclick = () => { Snd.toggle(); sndBtn(); if (Snd.on) Snd.play('click'); }; sndBtn(); } }
 const bankFoot = () => `<div class="rowbtn two stickyfoot"><button type="button" class="btn neutral" id="sndRow">Sound</button><button type="button" class="btn primary" id="ovGo">Back</button></div>`;
 function branchPanel(msg){
   const mo = upMonthly();

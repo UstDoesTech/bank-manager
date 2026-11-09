@@ -25,14 +25,72 @@ function annuity(L, rate, years){ const r = rate / 1200, n = years * 12; return 
 
 /* ---- difficulty: a game option, stored with the game, so a replay plays the same. Standard is exactly the original tuning and takes the same random draws. ---- */
 const DIFFICULTY = {
-  gentle:   { name:'Gentle',   blurb:'Calmer markets, fewer crises, and a board that starts out on your side.',
+  gentle:   { name:'Gentle',   rival:0.75, blurb:'Calmer markets, fewer crises, and a board that starts out on your side.',
               loss:0.8, crash:0.4, extraLiq:0, board:70, path:{ soft:1.7, sticky:0.6, downturn:0.5, recovery:1.7 } },
-  standard: { name:'Standard', blurb:'The game as designed.',
+  standard: { name:'Standard', rival:1, blurb:'The game as designed.',
               loss:1, crash:1, extraLiq:0, board:60, path:{ soft:1, sticky:1, downturn:1, recovery:1 } },
-  hard:     { name:'Hard',     blurb:'More recessions and sticky inflation, bigger credit losses, an extra funding scare, and a board that is already wary.',
+  hard:     { name:'Hard',     rival:1.3, blurb:'More recessions and sticky inflation, bigger credit losses, an extra funding scare, and a board that is already wary.',
               loss:1.3, crash:1.6, extraLiq:1, board:50, path:{ soft:0.6, sticky:1.5, downturn:1.8, recovery:0.6 } },
 };
 const dif = () => DIFFICULTY[(S && S.diff) || 'standard'];
+
+/* ---- rival banks: four invented banks nearby, introduced once the player has unlocked the pricing controls. They are a game option (opts.rivals), so
+   games started without it are exactly as before. Their prices, size and reactions are pure functions of the game's seed, the date and the player's own
+   savings rate: they take no random numbers, so they never move the game's random stream. ---- */
+const RIVALS = [
+  { key:'northgate',  name:'Northgate Building Society', style:'Pays savers well',             dep:62000,  save:0.4,  mort:0.12,  react:0 },
+  { key:'hartley',    name:'Hartley & Co',               style:'High-street mainstream',       dep:140000, save:0,    mort:0.03,  react:0 },
+  { key:'clearwater', name:'Clearwater Bank',            style:'Cheap mortgages',              dep:38000,  save:-0.3, mort:-0.2,  react:0 },
+  { key:'meridian',   name:'Meridian Direct',            style:'Digital: matches your rates',  dep:24000,  save:-0.1, mort:0.05,  react:1 },
+];
+function rvNoise(i, t, salt){        // a repeatable value from -1 to 1 for rival i in month t
+  let h = Math.imul(((S.seed | 0) ^ Math.imul(i + 1, 0x9E3779B1)) ^ Math.imul(t + salt * 7919, 0x85EBCA6B), 0xC2B2AE35);
+  h ^= h >>> 15; h = Math.imul(h, 0x2C1B3C6D); h ^= h >>> 12;
+  return ((h >>> 0) % 2001) / 1000 - 1;
+}
+const rr = v => Math.round(v * 100) / 100;
+const rivalsLive = () => !!(S.rivals && S.rivals.intro);
+const refSaver = () => rivalsLive() ? S.rivals.saver : mkt();            // what savers can get elsewhere
+function rivalPrices(d, i, t){
+  const f = dif().rival, base = mkt() + d.save * f;
+  const react = d.react ? clamp((S.savRate - base) * 0.5, 0, 0.4 * f) : 0;
+  return { saver: Math.max(0.1, rr(base + 0.15 * rvNoise(i, t, 1) + react)), spread: rr(1.05 + d.mort * f + 0.08 * rvNoise(i, t, 2)) };
+}
+// How far the rivals' mortgage prices sit from the system's. Only matters once the player sets the prices.
+function rivalShift(name){
+  if (!rivalsLive() || S.policy.owner.pricing !== 'player') return 0;
+  const m = S.rivals.spread - systemPolicy().pricing.mortgageSpread;
+  return name === 'mortgageSpread' ? m : name === 'cardRate' ? m * 4 : m * 2;
+}
+// Called when a game starts and as each month closes. Introduces the rivals once pricing is unlocked, then moves them on for next month.
+function rivalsSync(monthly){
+  const V = S.rivals; if (!V || S.sim || S.scenario || S.tutorial) return;
+  const t = S.year * 12 + Math.min(S.month, 11) + (monthly ? 1 : 0);
+  if (!V.intro){
+    if (!S.progress.unlocked.includes('pricing')) return;
+    V.intro = { y: S.year, m: Math.min(S.month, 11) };
+    V.list = RIVALS.map((d, i) => { const p = rivalPrices(d, i, t); return { key: d.key, name: d.name, style: d.style, dep0: d.dep, dep: d.dep, saver: p.saver, spread: p.spread }; });
+    addMail('Your board', 'Rival banks', 'Now that you can set prices, customers can compare you with four other banks nearby. Under Bank, then Rivals, you can see what they pay savers and charge for mortgages, and how much of the savings in the area you hold. If you pay savers less than they get elsewhere, money moves.', '', Math.min(S.month, 11), S.year);
+  } else if (monthly){
+    V.list.forEach((x, i) => { const p = rivalPrices(RIVALS[i], i, t); x.saver = p.saver; x.spread = p.spread; x.dep = Math.round(x.dep * (1 + clamp(0.0025 + 0.012 * (p.saver - mkt()) + 0.004 * rvNoise(i, t, 3), -0.03, 0.03))); });
+  }
+  const n = V.list.length;
+  V.saver = rr(V.list.reduce((a, x) => a + x.saver, 0) / n); V.spread = rr(V.list.reduce((a, x) => a + x.spread, 0) / n);
+  if (monthly){
+    const tot = S.deposits + V.list.reduce((a, x) => a + x.dep, 0);
+    V.last = { y: S.year, m: Math.min(S.month, 11), share: Math.round(S.deposits / tot * 1e5) / 1e5, us: { saver: S.savRate, mort: rr(S.base + S.policy.pricing.mortgageSpread), dep: Math.round(S.deposits) },
+      rows: V.list.map(x => ({ key: x.key, saver: x.saver, mort: rr(S.base + x.spread), dep: x.dep, share: Math.round(x.dep / tot * 1e5) / 1e5 })) };
+  }
+}
+function rivalFacts(){
+  const V = S.rivals; if (!V || !V.intro) return { live: false, banks: [], note: null };
+  const rows = V.list.map(x => ({ key: x.key, name: x.name, style: x.style, saver: x.saver, mort: rr(S.base + x.spread), dep: x.dep, us: false }));
+  rows.push({ key: 'us', name: 'Counting House', style: 'You', saver: S.savRate, mort: rr(S.base + S.policy.pricing.mortgageSpread), dep: Math.round(S.deposits), us: true });
+  const tot = rows.reduce((a, x) => a + x.dep, 0); rows.forEach(x => { x.share = x.dep / tot; });
+  const rv = rows.filter(x => !x.us), best = rv.reduce((a, x) => x.saver > a.saver ? x : a), cheap = rv.reduce((a, x) => x.mort < a.mort ? x : a), us = rows[rows.length - 1];
+  return { live: true, banks: rows, since: V.intro, bestSaver: { name: best.name, rate: best.saver }, cheapestMortgage: { name: cheap.name, rate: cheap.mort },
+    saverGap: rr(us.saver - best.saver), mortgageGap: rr(us.mort - cheap.mort), share: us.share, saverAvg: V.saver };
+}
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const PATHS = {
@@ -211,7 +269,7 @@ const POLICY_LIMITS = {
 // Prices above the system's lose customers and attract riskier ones; at or below the system's nothing changes.
 // excess() is how many points a price is above the system price; dem() is the share of customers who still say yes;
 // adv() scales default risk for the customers who do. No random draw happens at the system prices.
-const excess = name => Math.max(0, S.policy.pricing[name] - systemPolicy().pricing[name]);
+const excess = name => Math.max(0, S.policy.pricing[name] - systemPolicy().pricing[name] - rivalShift(name));
 const dem = (ex, slope = 0.35) => ex <= 0 ? 1 : clamp(1 - slope * ex, 0.05, 1);
 const adv = ex => 1 + 0.08 * ex;
 const takeUp = (ex, slope) => ex <= 0 || chance(dem(ex, slope));
@@ -986,6 +1044,7 @@ function newGame(seed, opts = {}){
   S.path = S.diff ? wpick(['soft', 'sticky', 'downturn'].map(k => [k, dif().path[k]])) : pick(['soft', 'sticky', 'downturn']);
   if (opts.households && !opts.tutorial && !opts.scenario) S.households = makeCast();
   if (opts.meetings && !opts.tutorial && !opts.scenario) S.meet = true;
+  if (opts.rivals && !opts.tutorial && !opts.scenario) S.rivals = { on: true, intro: null, list: [] };
   if (opts.chiefExecutive && !opts.tutorial && !opts.scenario) S.progress.unlocked = ['branch'].concat(CE_AREAS);      // start straight in the Chief Executive role
   S.prodOrder = shuffle(['fraudModel','ob','od','branch','cyber','campaign']).concat(shuffle(['broker','ggs']));
   if (S.scenario){ const sc = SCENARIOS[S.scenario]; S.path = 'sc'; S.year = sc.year; S.tutorial = false; S.sched = makeSched(); sc.setup(); S.goals = sc.goals.map(g => ({ id:g.id, label:g.label, ok:null })); }
@@ -993,6 +1052,7 @@ function newGame(seed, opts = {}){
   openLedger('opening');
   S.startCap = capital();
   S.stats.minCap = capRatio();
+  rivalsSync(false);
   S.yr = { cap0: capRatio(), dec: [], mon: [] }; if (!S.scenario && !S.tutorial) S.amb = { cap0: S.startCap, yrs: [], done: {}, life: 0, lifeYear: 0 };
   buildMonth();
   welcomeMail();
@@ -1370,9 +1430,9 @@ function closeMonth(){
     if (m - S.flags.od >= 3 && R() < 0.3){ post('redress', -(S.flags.odTotal + 25)); S.comp = clamp(S.comp - 12, 0, 100); S.stats.fines += S.flags.odTotal + 25; news(8, 'Regulator orders refunds over unfair overdraft fee', `Customers charged £6 a day for going overdrawn will get ${fmt(S.flags.odTotal)} back.`); ev(`The regulator ruled your overdraft fee unfair. You refund ${fmt(S.flags.odTotal)} and pay a ${fmt(25)} fine.`, 'bad'); S.flags.od = false; }
   }
   // deposit flows
-  const fr = clamp(-((P().drain || [])[m] || 0) + 0.012 * (S.savRate - mkt()) + 0.0005 * (S.trust - 55) + (owned('refurb') ? 0.0025 : 0) + (owned('app') ? 0.003 : 0) + gauss(0, 0.003), -0.04, 0.03);
+  const fr = clamp(-((P().drain || [])[m] || 0) + 0.012 * (S.savRate - refSaver()) + 0.0005 * (S.trust - 55) + (owned('refurb') ? 0.0025 : 0) + (owned('app') ? 0.003 : 0) + gauss(0, 0.003), -0.04, 0.03);
   const flow = S.deposits * fr; je('deposit.flow', [['cash', flow], ['deposits', -flow]]);
-  if (Math.abs(flow) >= 10) ev(`Deposits ${flow > 0 ? 'grew' : 'fell'} by ${fmt(Math.abs(flow))}${S.savRate - mkt() > 0.3 && flow > 0 ? ': your savings rate is drawing money in' : S.savRate < mkt() - 0.3 && flow < 0 ? ': savers are finding better rates elsewhere' : ''}.`, flow > 0 ? 'good' : 'bad');
+  if (Math.abs(flow) >= 10) ev(`Deposits ${flow > 0 ? 'grew' : 'fell'} by ${fmt(Math.abs(flow))}${S.savRate - refSaver() > 0.3 && flow > 0 ? ': your savings rate is drawing money in' : S.savRate < refSaver() - 0.3 && flow < 0 ? ': savers are finding better rates elsewhere' : ''}.`, flow > 0 ? 'good' : 'bad');
   // delayed consequences
   const due = S.pending.filter(p => p.due <= m); S.pending = S.pending.filter(p => p.due > m);
   for (const p of due){
@@ -1412,6 +1472,7 @@ function closeMonth(){
   S.last = { pl:S.pl, profit:rep.profit };
   S.history.push({ m, profit: capital() - S.startCap + (S.divPaid || 0) - (S.injected || 0), cap: cr, liq: lq, trust: S.trust, comp: S.comp });
   logMonth(rep);
+  rivalsSync(true);
   S.month++;
   if (!S.over && S.month >= 12) S.over = 'done';
   boardMonth(rep); shareMonth();
