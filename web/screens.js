@@ -26,6 +26,7 @@ function endScreen(){
       <div class="stat"><span>Regulator</span><b>${regStatus()[0]}</b></div>
     </div>
     ${S.board ? `<p style="color:var(--muted);font-size:14px">The board's confidence in you: ${Math.round(S.board.conf)} (${esc(boardBand(S.board.conf))}).</p>` : ''}
+    ${ambitionsYearEnd()}
     <details class="more"><summary>The year in numbers</summary>
     <table class="ledger">
       <tr><td>Accounts opened</td><td>${st.customers}</td></tr>
@@ -43,13 +44,14 @@ function endScreen(){
     </details>
     ${fail ? '' : `<p style="color:var(--muted);font-size:14px">${S.loans.length} loans, ${fmt(giltBook())} of gilts and ${fmt(S.deposits)} of deposits carry into ${S.year + 1}, along with your customers' trust and the regulator's memory.</p>`}
 
-    <div class="rowbtn">${fail || S.scenario ? '' : `<button type="button" class="btn primary" id="ovGo">Continue into ${S.year + 1}</button>`}${S.debrief && S.debrief.length ? '<button type="button" class="btn neutral" id="ovDebrief">Notes from the executive team</button>' : ''}<button type="button" class="btn link" id="ovPaper">Read The Fiscal Herald again</button>${S.scenario ? `<button type="button" class="btn primary" id="ovRetry">Try ${esc(SCENARIOS[S.scenario].name.replace(/^The /, 'the '))} again</button><button type="button" class="btn neutral" id="ovMenu">Main menu</button>` : `<button type="button" class="btn ${fail ? 'primary' : 'neutral'}" id="ovNew">Start a new bank</button>`}</div>`);
+    <div class="rowbtn">${fail || S.scenario ? '' : `<button type="button" class="btn primary" id="ovGo">Continue into ${S.year + 1}</button>`}${S.debrief && S.debrief.length ? '<button type="button" class="btn neutral" id="ovDebrief">Notes from the executive team</button>' : ''}${S.yr && S.yr.mon.length > 1 ? '<button type="button" class="btn neutral" id="ovReplay">Replay the year</button>' : ''}<button type="button" class="btn link" id="ovPaper">Read The Fiscal Herald again</button>${S.scenario ? `<button type="button" class="btn primary" id="ovRetry">Try ${esc(SCENARIOS[S.scenario].name.replace(/^The /, 'the '))} again</button><button type="button" class="btn neutral" id="ovMenu">Main menu</button>` : `<button type="button" class="btn ${fail ? 'primary' : 'neutral'}" id="ovNew">Start a new bank</button>`}</div>`);
   const go = $('#ovGo'); if (go) go.onclick = () => { dispatch({ type:"nextYear" }); save(); play(); };
   const nw = $('#ovNew'); if (nw) nw.onclick = () => { clearSave(); start({ fresh:true }); };
   const rt = $('#ovRetry'); if (rt) rt.onclick = () => startScenario(S.scenario);
   const mn = $('#ovMenu'); if (mn) mn.onclick = () => { clearSave(); S = null; titleScreen(); };
   const pp = $('#ovPaper'); if (pp) pp.onclick = herald;
   const db = $('#ovDebrief'); if (db) db.onclick = debriefScreen;
+  const rp = $('#ovReplay'); if (rp) rp.onclick = replayScreen;
   offerLiteracy();
 }
 
@@ -58,6 +60,40 @@ function debriefScreen(){
   const cards = (S.debrief || []).map(c => '<div class="note"><div class="eyebrow">' + esc(c.concept) + ' · ' + esc(c.area) + '</div><p><b>' + esc(c.what) + '</b></p><p>' + esc(c.why) + '</p><p class="dim">To think about: ' + esc(c.ask) + '</p></div>').join('');
   overlay('<div class="eyebrow">' + S.year + ' · notes from the executive team</div><h2>What the year taught</h2><p class="dim">Not a test. A few moments from your year, and the idea behind each.</p>' + cards + '<div class="rowbtn"><button type="button" class="btn primary" id="dbBack">Back to the rating</button></div>');
   $('#dbBack').onclick = endScreen;
+}
+
+/* ---------- Ambitions (long-term goals) and the year in review ---------- */
+function ambitionHTML(a){
+  return `<div class="amb${a.done ? ' done' : ''}"><div class="ambh"><b>${esc(a.name)}</b><span>${esc(a.shown)}</span></div><p class="dim">${esc(a.blurb)}</p>
+    <progress value="${a.pct.toFixed(3)}" max="1" aria-label="${esc(a.name)}: ${esc(a.shown)}"></progress></div>`;
+}
+function goalsPanel(){
+  const list = ambitionFacts(), done = list.filter(a => a.done).length;
+  overlay(`${bankTop('goals')}<div class="eyebrow">Long-term goals</div><h2>Ambitions</h2>
+    <p class="dim">Optional, and they run across all your years. ${done} of ${list.length} done. They are checked as each year ends.</p>
+    <div class="ambs">${list.slice().sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0) || b.pct - a.pct).map(ambitionHTML).join('')}</div>
+    ${bankFoot()}`);
+  $('#ovGo').onclick = closeOverlay; bankWire(); tabSel('bank');
+}
+function ambitionsYearEnd(){
+  if (!S.amb || S.scenario) return '';
+  const list = ambitionFacts(), fresh = list.filter(a => a.fresh), next = list.filter(a => !a.done).sort((a, b) => b.pct - a.pct).slice(0, 2);
+  if (!fresh.length && !next.length) return '';
+  return `<h3>Ambitions</h3>${fresh.map(a => `<div class="note ambnew"><div class="eyebrow">Ambition reached</div><p><b>${esc(a.name)}</b> ${esc(a.blurb)}</p></div>`).join('')}
+    ${next.length ? `<div class="ambs">${next.map(ambitionHTML).join('')}</div>` : ''}`;
+}
+function replayScreen(){
+  const R = yearReplay(), mon = R.months;
+  const moment = m => `<div class="moment ${m.good ? 'good' : 'bad'}"><span class="mm">${esc(m.name.slice(0, 3))}</span><div><b><span aria-hidden="true">${m.good ? '▲' : '▼'}</span> ${esc(m.head)}</b><p>${esc(m.text)}</p></div></div>`;
+  overlay(`<div class="eyebrow">${R.year} · the year in review</div><h2>How the year went</h2>
+    <p>You made ${R.decisions} decision${R.decisions === 1 ? '' : 's'}. The bank ${R.profit >= 0 ? 'made' : 'lost'} ${fmt(Math.abs(R.profit))}, and the capital ratio went from ${pc(R.capStart)} to ${pc(R.capNow)}${R.lowCap ? `, with its lowest point in ${esc(R.lowCap.name)} at ${pc(R.lowCap.cap)}` : ''}.</p>
+    <div class="charts two">${chartHTML({ label: 'Capital ratio', pts: mon.map(m => m.cap), min: MIN_CAP, fmt: v => pc(v) })}${chartHTML({ label: 'Profit each month', pts: mon.map(m => m.profit), fmt: v => fmt(v, true) })}</div>
+    ${R.moments.length ? `<h3>Moments that mattered</h3><div class="moments">${R.moments.map(moment).join('')}</div>` : ''}
+    ${R.focus ? `<div class="note"><div class="eyebrow">For next year</div><p>${esc(R.focus)}</p></div>` : ''}
+    <details class="more"><summary>Month by month</summary><table class="rtable"><thead><tr><th scope="col">Month</th><th scope="col">Profit</th><th scope="col">Capital</th><th scope="col">Biggest item</th></tr></thead><tbody>
+      ${mon.map(m => `<tr><th scope="row">${esc(m.name.slice(0, 3))}</th><td style="color:${m.profit < 0 ? 'var(--bad)' : 'var(--good)'}">${fmt(m.profit, true)}</td><td>${pc(m.cap)}</td><td>${m.top ? esc(m.top.label) : '–'}</td></tr>`).join('')}</tbody></table></details>
+    <div class="rowbtn"><button type="button" class="btn primary" id="rpBack">Back to your rating</button></div>`);
+  $('#rpBack').onclick = endScreen;
 }
 
 function booksPanel(){

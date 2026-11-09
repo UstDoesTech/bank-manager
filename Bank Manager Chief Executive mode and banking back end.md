@@ -89,6 +89,12 @@ The chief executive is judged by the board and by shareholders, and can be sacke
 - **The Fiscal Herald:** gains chief-executive stories: dividend cuts, share issues, swap losses, acquisitions and, at worst, "Counting House chief executive ousted".
 - **Rating:** keeps the existing letter scale, with the profit part judged against peer banks in the same economy.
 
+## Year in review and ambitions
+
+At the end of each year the player can replay it: a short account of how the capital ratio and monthly profit moved, the few decisions and months that mattered most and why, and one line on what cost the most. It teaches cause and effect that the rating alone does not. Ambitions give the career a longer horizon: ten optional goals that span years (for example five good years in a row, three clean years, a recession survived, three branches). They are checked as each year ends, change nothing in the game and do not affect the rating. They have no narrative and no opt-in, and they are not shown in the training day or the scenarios.
+
+Ambitions are also written to the back end, one row per ambition for each finished year with the value reached, the target at the time and whether it is met, so analysis can ask how players performed against each target, by level of difficulty, and how long the ones who met it took.
+
 ## Difficulty levels
 
 A new career can be played at Gentle, Standard (the original tuning) or Hard. The level is chosen on the title screen and is part of the game's opening options, so it is recorded with the game and replays exactly. It scales credit losses, the chance of a market crash, the mix of economic paths from year to year, one extra funding scare on Hard, and the board's starting confidence. The regulator's limits and the board's removal level do not change. Ratings are not adjusted; they are shown with the level they were earned at. The training day and the scenarios ignore the level.

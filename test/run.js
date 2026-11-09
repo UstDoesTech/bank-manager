@@ -4,7 +4,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), '
 const golden = JSON.parse(fs.readFileSync(path.join(__dirname, 'golden.json'), 'utf8'));
 let n = 0;
 // 1. Behaviour is unchanged against snapshots from the original engine (all bots, scenarios, tutorial).
-const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'ops', 'meet', 'pq', 'applied', 'growth', 'goodwill', 'policyLog', 'plid', 'swaps', 'collateral', 'swapId', 'fid', 'px'];
+const IGNORE = ['engine', 'progress', 'inbox', 'mailId', 'ledger', 'policy', 'wholesale', 'wsTranches', 'bonds', 'bondTranches', 'retained', 'pools', 'large', 'debrief', 'debriefSeen', 'households', 'ewi', 'stress', 'board', 'sackedWhy', 'ops', 'meet', 'pq', 'applied', 'growth', 'goodwill', 'policyLog', 'plid', 'swaps', 'collateral', 'swapId', 'fid', 'px', 'yr', 'amb'];
 { const Eg = loadEngine(src); Eg.dispatch({ type: 'newGame', seed: 1 });
   for (const [key, want] of Object.entries(golden)){
     const [bot, tag, seed] = key.split(':');
@@ -652,4 +652,19 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   const tut = loadEngine(src); tut.dispatch({ type: 'newGame', seed: 3, opts: { tutorial: true, difficulty: 'hard' } }); assert.strictEqual(tut.S.diff, undefined, 'the training day and scenarios ignore difficulty');
   const bad = loadEngine(src); bad.dispatch({ type: 'newGame', seed: 3, opts: { difficulty: 'nightmare' } }); assert.strictEqual(bad.S.diff, undefined, 'an unknown level is ignored');
   n += 8; }
+// 21. End-of-year replay and ambitions: a year log, read only, rebuilt exactly by a replay, reset each year
+{ const year = (E, pre) => { for (let i = 0; i < 12; i++){ if (i === 11 && pre) pre(E); for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' }); } };
+  const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 31, opts: {} }); year(E, X => { X.S.trust = 100; });
+  const before = hashState(E.S) + JSON.stringify(E.S.rngState || ''); const rp = E.yearReplay(), am = E.ambitionFacts();
+  assert.strictEqual(rp.months.length, 12); assert(rp.months.every((m, i) => m.m === i && Number.isFinite(m.cap) && Number.isFinite(m.profit)));
+  assert(rp.decisions > 20 && rp.moments.length >= 1 && rp.moments.length <= 5 && rp.moments.every((m, i, a) => !i || a[i - 1].m <= m.m), 'moments are in month order');
+  assert(Math.abs(rp.months.reduce((t, m) => t + m.profit, 0) - rp.profit) < Math.abs(rp.profit) * 0.5 + 200, 'the months add up to roughly the year');
+  assert.strictEqual(am.length, E.AMBITIONS.length); assert(am.every(x => x.pct >= 0 && x.pct <= 1 && typeof x.shown === 'string'));
+  assert.strictEqual(E.S.amb.done.trust, 2027, 'an ambition is recorded in the year it is met'); assert(am.find(x => x.key === 'trust').fresh && /Done in 2027/.test(am.find(x => x.key === 'trust').shown));
+  assert.strictEqual(E.S.amb.yrs.length, 1); assert.strictEqual(hashState(E.S) + JSON.stringify(E.S.rngState || ''), before, 'the replay and ambitions never change the game');
+  E.dispatch({ type: 'nextYear' }); assert.strictEqual(E.S.yr.mon.length, 0, 'the log starts again each year'); assert(!E.ambitionFacts().some(x => x.fresh));
+  year(E); assert.strictEqual(E.S.amb.yrs.length, 2); assert.strictEqual(E.ambitionFacts().find(x => x.key === 'trust').done, 2027, 'a met ambition keeps its year');
+  const A = loadEngine(src), B = loadEngine(src); for (const X of [A, B]){ X.dispatch({ type: 'newGame', seed: 8, opts: {} }); year(X); } assert.strictEqual(hashState(A.S), hashState(B.S), 'the log is rebuilt exactly by replaying');
+  const T = loadEngine(src); T.dispatch({ type: 'newGame', seed: 3, opts: { tutorial: true } }); assert.strictEqual(T.S.amb, undefined, 'the training day has no ambitions');
+  n += 12; }
 console.log('ok', n, 'checks');

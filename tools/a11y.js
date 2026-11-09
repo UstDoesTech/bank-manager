@@ -23,6 +23,8 @@ const SCREENS = [
   ['month-end', () => { closeOverlay(); while (!S.over && S.month < 2) { play(); closeBooks && closeBooks(); if (S.month < 2) closeOverlay(); } }],
   ['herald', () => { closeOverlay(); herald(); }],
   ['year-end', () => { closeOverlay(); while (!S.over) { play(); dispatch({ type: 'closeMonth' }); } endScreen(); }],
+  ['replay', () => replayScreen()],
+  ['goals', () => goalsPanel()],
   ['debrief', () => { try { debriefScreen(); } catch (e) {} }],
   ['team', () => { S.progress.unlocked.push('pricing', 'credit', 'treasury', 'funding', 'capital', 'operations', 'growth'); closeOverlay(); dispatch({ type: 'nextYear' }); for (let m = 0; m < 4; m++) { play(); dispatch({ type: 'closeMonth' }); } closeOverlay(); hud(); teamScreen(); }],
   ['settings', () => policyScreen()],

@@ -117,6 +117,30 @@ The regulator's limits (10.5% capital, 10% liquidity) and the board's removal le
 adjusted for level: the year-end screen and the title screen's best rating say which level it was earned at. The values are in `DIFFICULTY`
 in the engine, and a test plays 24 seeds at each level to check the order of losses and bad years.
 
+## The year in review and ambitions
+
+**Replay the year.** The year-end screen has a "Replay the year" button. The engine keeps a small log for the current year (`S.yr`: each
+month's profit and loss, capital ratio, liquidity and first few events, and each decision with the capital it moved straight away, leaving
+out new money from shareholders). `yearReplay()` turns it into the screen: the year in one line, charts of capital ratio and monthly profit,
+up to five "moments that mattered" (the biggest decisions and the best and worst months, each with its biggest item), a line on what cost
+most, and a month-by-month table. The log starts again each year.
+
+**Ambitions** are long-term goals that run across years, shown on the year-end screen and in a Goals tab in the Bank panel. They are optional
+and have no effect on the rating or the game. They are checked once, as each year ends (`S.amb`), and an ambition keeps the year it was met.
+The ten are in `AMBITIONS` in the engine: double the deposit base, five good years (BBB or better), three clean years, trust of 80, capital
+one and a half times the start, a dividend in three years, a recession year survived at BBB or better, 40 frauds and scams stopped, three
+branches, and board confidence of 80. The training day and the scenarios have none. Both are read only, take no random numbers, and are
+rebuilt exactly by a replay; the golden checks ignore `yr` and `amb`.
+
+**Ambitions in the database.** As each year ends the server writes one row per ambition to `bank.ambition_result` (migration 014): the
+value the player had reached, the target at the time, progress from 0 to 1 (1 once met), and the year it was first met. The target is kept
+with the row, so changing a target later never rewrites what a player was set. Analysis reads two views, both limited to games that allow
+analysis, are synthetic and are not the training day: `bank.metric_ambition_year` (each game, year and ambition, with the shortfall, the
+level of difficulty and that year's rating) and `bank.metric_ambition` (for each ambition and level: games, the share that met it, mean
+and median progress, the average shortfall of those who did not, and the average years to meet it). The read-only analysis role can read
+both, `db/semantic/bank_metrics.yaml` defines four metrics on them, and queries 10 and 11 in `db/analysis/metrics.sql` answer "how did
+players do against each target". `server/replay.js` checks the stored ambitions against the replay.
+
 ## Executive team, early warnings and the stress test
 
 Once a player has been handed any Chief Executive area, the Policy tab opens three screens (Team, Settings, Stress test); none

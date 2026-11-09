@@ -25,6 +25,8 @@ const sizes = { phone: { width: 390, height: 844 }, desktop: { width: 1280, heig
     await shot('05-month-end');
     await page.evaluate(() => { closeOverlay(); while (!S.over) { for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); dispatch({ type: 'closeMonth' }); } endScreen(); });
     await shot('06-year-end');
+    await page.evaluate(() => replayScreen()); await shot('06b-replay');
+    await page.evaluate(() => goalsPanel()); await shot('06c-goals');
     await page.evaluate(() => { S.progress.unlocked.push('pricing', 'credit', 'treasury', 'funding', 'capital', 'operations', 'growth'); closeOverlay(); dispatch({ type: 'nextYear' }); hud(); });
     await page.evaluate(() => { for (let m = 0; m < 4; m++) { for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); dispatch({ type: 'closeMonth' }); } closeOverlay(); hud(); teamScreen(); });
     await shot('07-executive-team');

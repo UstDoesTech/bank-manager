@@ -150,3 +150,27 @@ metrics:
     column: complaints_per_1000_sales
     grain: bank x month
     unit: count
+  - name: ambition_progress
+    description: How far a player had got towards an ambition's target at the end of a year, from 0 to 1, where 1 means met
+    view: bank.metric_ambition_year
+    column: progress
+    grain: bank x year x ambition
+    unit: ratio
+  - name: ambition_shortfall
+    description: How far short of the target a player was at the end of a year, in the ambition's own unit
+    view: bank.metric_ambition_year
+    column: shortfall
+    grain: bank x year x ambition
+    unit: count
+  - name: ambition_met_rate
+    description: The share of games that had met an ambition by their last recorded year, by level of difficulty
+    view: bank.metric_ambition
+    column: met_rate
+    grain: ambition x difficulty
+    unit: ratio
+  - name: ambition_years_to_meet
+    description: The average number of years it took the games that met an ambition to meet it
+    view: bank.metric_ambition
+    column: mean_years_to_meet
+    grain: ambition x difficulty
+    unit: count

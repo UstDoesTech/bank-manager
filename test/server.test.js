@@ -648,6 +648,16 @@ test('analysis: the metric views agree with the game, leave out opted-out player
   assert((await q('SELECT count(*)::int n FROM bank.party_role WHERE game_id = $1', [a.id]))[0].n >= 1);
   const yr = (await q('SELECT letter, status, return_on_capital, peer_benchmark FROM bank.year_result WHERE game_id = $1', [a.id]));
   assert.strictEqual(yr.length, 1); assert.strictEqual(yr[0].status, 'done'); assert(/^(AAA|AA|A|BBB|BB|B|CCC|CC|D)$/.test(yr[0].letter));
+  // ambitions: one row per ambition for the finished year, with the target; the views answer "how did the player do against it"
+  const amb = await q('SELECT * FROM bank.ambition_result WHERE game_id = $1 ORDER BY ambition', [a.id]);
+  assert.strictEqual(amb.length, 10); assert(amb.every((r) => r.year === 2027 && Number(r.target) > 0 && Number(r.progress) >= 0 && Number(r.progress) <= 1 && (r.met ? Number(r.progress) === 1 && r.met_year === 2027 : r.met_year === null)), JSON.stringify(amb[0]));
+  const dep = amb.find((r) => r.ambition === 'deposits'); assert.strictEqual(Number(dep.target), 31300); assert.strictEqual(dep.unit, 'gbp_thousands'); assert(Math.abs(Number(dep.value) - pa.state.deposits) < 0.01, 'the stored value is where the player stood');
+  const mya = await q('SELECT * FROM bank.metric_ambition_year WHERE game_id = $1', [a.id]); assert.strictEqual(mya.length, 10); assert(mya.every((r) => r.difficulty === 'standard' && Number(r.shortfall) >= 0 && r.letter === yr[0].letter));
+  const mam = await q("SELECT * FROM bank.metric_ambition WHERE ambition = 'deposits' AND difficulty = 'standard'"); assert(mam.length === 1 && mam[0].games >= 1 && Number(mam[0].met_rate) >= 0 && Number(mam[0].met_rate) <= 1 && Number(mam[0].target) === 31300, JSON.stringify(mam));
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.ambition_result WHERE game_id = $1', [b.id]))[0].n, 0, 'a game that has not finished a year has no ambition rows yet');
+  assert.strictEqual((await verifyGame(pool, host, a.id)).ok, true, 'the stored ambitions agree with the replay');
+  await pool.query('DELETE FROM bank.ambition_result WHERE game_id = $1', [a.id]);
+  const broken = await verifyGame(pool, host, a.id); assert.strictEqual(broken.ok, false); assert(broken.problems.some((p) => /stored ambitions/.test(p)), 'the replay notices missing ambitions');
   assert((await q("SELECT count(*)::int n FROM bank.policy_setting WHERE game_id = $1 AND area IN ('operations', 'growth')", [b.id]))[0].n >= 3);
   assert((await q('SELECT count(*)::int n FROM bank.alert_month WHERE game_id = $1', [b.id]))[0].n >= 2, 'alerts are stored once operations has run');
   assert((await q('SELECT count(*)::int n FROM bank.product_month WHERE game_id = $1', [b.id]))[0].n >= 2);
@@ -689,7 +699,7 @@ test('analysis: the metric views agree with the game, leave out opted-out player
   await pool.query("UPDATE account.player SET analysis_opt_out = true WHERE lower(email) = 'coy@example.com'");
   const c = (await call('POST', '/api/games', {}, coy)).json; await play(coy, c.id, c.state, 1, 2);
   assert.strictEqual((await q('SELECT count(*)::int n FROM bank.decision WHERE game_id = $1', [c.id]))[0].n > 0, true);
-  for (const v of ['metric_month', 'metric_fraud_month', 'v_month_pl', 'v_position', 'v_decision_truth', '"case"', 'document'])
+  for (const v of ['metric_month', 'metric_ambition_year', 'metric_fraud_month', 'v_month_pl', 'v_position', 'v_decision_truth', '"case"', 'document'])
     assert.strictEqual((await q(`SELECT count(*)::int n FROM bank.${v} WHERE game_id = $1`, [c.id]))[0].n, 0, v + ' leaks an opted-out game');
   // and the training day is left out too
   const tut = (await call('POST', '/api/games', { tutorial: true }, cookie)).json; await play(cookie, tut.id, tut.state, 1, 1);

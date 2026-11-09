@@ -60,3 +60,15 @@ WHERE (yr.year * 12 + 11) - (ps.year * 12 + ps.month) BETWEEN 0 AND 14
 GROUP BY ps.area, ps.setting
 ORDER BY changes DESC
 LIMIT 20;
+
+-- 10. How did players perform against each target? The share who met each long-term ambition, how far the rest got, and how long it took,
+-- by level of difficulty.
+SELECT ambition_name, difficulty, games, met_rate, mean_progress, median_progress, mean_shortfall_unmet, mean_years_to_meet
+FROM bank.metric_ambition
+ORDER BY difficulty, met_rate DESC;
+
+-- 11. Who got furthest, year by year? Progress towards each target at the end of each year, with the year's rating.
+SELECT year, letter, ambition_name, round(avg(progress), 3) AS mean_progress, count(*) FILTER (WHERE met_this_year) AS met_this_year
+FROM bank.metric_ambition_year
+GROUP BY year, letter, ambition_name
+ORDER BY year, letter, mean_progress DESC;

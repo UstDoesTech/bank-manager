@@ -241,6 +241,17 @@ async function syncHouseholds(client, gid, at, households) {
       [gid, JSON.stringify(rows), at.year, at.month]);
 }
 
+// How the player did against each long-term ambition as the year ended: the value reached, the target, and whether it is met.
+async function syncAmbitions(client, gid, year, list) {
+  await client.query(
+    `INSERT INTO bank.ambition_result (game_id, year, ambition, ambition_name, unit, value, target, progress, met, met_year)
+     SELECT $1, $2, r.key, r.name, r.unit, r.value, r.target, r.progress, r.met, r.met_year
+     FROM json_to_recordset($3::json) AS r(key text, name text, unit text, value numeric, target numeric, progress numeric, met boolean, met_year int)
+     ON CONFLICT (game_id, year, ambition) DO NOTHING`,
+    [gid, year, JSON.stringify(list.map((a) => ({ key: a.key, name: a.name, unit: a.unit, value: Math.round(a.value * 1000) / 1000, target: Math.round(a.target * 1000) / 1000,
+      progress: a.done ? 1 : Math.round(a.pct * 10000) / 10000, met: !!a.done, met_year: a.done || null })))]);
+}
+
 // Writes everything one command produced. The caller holds the transaction.
 async function persist(client, game, seq, cmd, before, out) {
   const { state, result, entries, facts } = out;
@@ -285,6 +296,7 @@ async function persist(client, game, seq, cmd, before, out) {
   await syncBook(client, gid, before || { year: state.year, month: state.month }, state.loans || []);
   if (state.households && cmd.type === 'closeMonth') await syncHouseholds(client, gid, before, state.households);
   await syncFunding(client, gid, facts.instruments || []);
+  if (facts.ambitions && before) await syncAmbitions(client, gid, before.year, facts.ambitions);
   await syncAnalytics(client, gid, before || { year: state.year, month: state.month }, state, facts, cmd.type === 'closeMonth');
   if (state.growth && (cmd.type === 'closeMonth' || cmd.type === 'nextYear')) await syncGrowth(client, gid, before || { year: state.year, month: state.month }, state, cmd.type === 'closeMonth');
   if (state.ops && (cmd.type === 'closeMonth' || cmd.type === 'nextYear')) await syncOperations(client, gid, before || { year: state.year, month: state.month }, state, cmd.type === 'closeMonth');

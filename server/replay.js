@@ -82,6 +82,16 @@ async function verifyGame(pool, host, gameId) {
     if (state.ops.last.length && tm === 0) problems.push('no stored team months');
   }
 
+  if (state && state.amb) {
+    const rows = (await pool.query('SELECT year, ambition, met, met_year FROM bank.ambition_result WHERE game_id = $1 ORDER BY year', [gameId])).rows;
+    const years = new Set(rows.map((r) => r.year));
+    if (years.size !== state.amb.yrs.length) problems.push(`${years.size} years of stored ambitions, replay has ${state.amb.yrs.length}`);
+    for (const [k, y] of Object.entries(state.amb.done)) {
+      const r = rows.filter((x) => x.ambition === k).pop();
+      if (!r || !r.met || r.met_year !== y) problems.push(`ambition ${k} was met in ${y} in the replay but is not stored that way`);
+    }
+  }
+
   if (state && state.households) {
     const rows = (await pool.query('SELECT household_id, credit_score, year, month FROM bank.household_month WHERE game_id = $1 ORDER BY year, month', [gameId])).rows;
     for (const h of state.households) {

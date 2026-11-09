@@ -993,6 +993,7 @@ function newGame(seed, opts = {}){
   openLedger('opening');
   S.startCap = capital();
   S.stats.minCap = capRatio();
+  S.yr = { cap0: capRatio(), dec: [], mon: [] }; if (!S.scenario && !S.tutorial) S.amb = { cap0: S.startCap, yrs: [], done: {}, life: 0, lifeYear: 0 };
   buildMonth();
   welcomeMail();
   return S;
@@ -1011,7 +1012,7 @@ function nextYear(){
   if (typeof S.flags.od === 'number') S.flags.od -= 12;
   householdYear();
   S.year++; S.month = 0; S.over = null; S.history = []; S.divPaid = 0; S.injected = 0; S.rateSum = 0; if (S.lastCapCard != null) S.lastCapCard -= 12; S.mktY0 = S.mkt;
-  S.wmOffer = S.wm ? -1 : 1; S.news = [];
+  S.wmOffer = S.wm ? -1 : 1; S.news = []; if (!S.sim) S.yr = { cap0: capRatio(), dec: [], mon: [] };
   if (S.wm){ for (const k of ['houseAt','campAt','calm','cashUntil']) S.wm[k] -= 12; }
   const b = S.y0.base, u = S.y0.u;
   if (S.sim) S.path = S.simPath; else { const w = dif().path; S.path = wpick([['soft', (b > 4.5 ? 3 : 2) * w.soft], ['sticky', (b < 3 ? 3 : b > 5 ? 0.3 : 1.8) * w.sticky], ['downturn', (u > 6.5 ? 0.3 : b > 5 ? 2.5 : 1.4) * w.downturn], ['recovery', (u > 5 ? 4 : 0.4) * w.recovery]]); }
@@ -1317,8 +1318,8 @@ function inboxActions(){ return S.queue.filter(c => !c.phys); }
 function remaining(){ return S.queue.filter(c => !c.done).length; }
 function resolveCard(c, k){
   if (!c || c.done) return null;
-  begin(); res[c.kind](c, k); c.done = k; if (c.h && c.h.hh != null) hhOutcome(c, k);
-  S.qi = S.queue.filter(x => x.done).length;
+  begin(); const cap0 = capital() - (S.injected || 0); res[c.kind](c, k); c.done = k; if (c.h && c.h.hh != null) hhOutcome(c, k);
+  S.qi = S.queue.filter(x => x.done).length; logDecision(c, k, cap0);
   const o = OUT; OUT = null; c.out = o; return o;
 }
 function resolve(k){ return resolveCard(current(), k); }
@@ -1410,9 +1411,11 @@ function closeMonth(){
   rep.events = OUT.lines; OUT = null;
   S.last = { pl:S.pl, profit:rep.profit };
   S.history.push({ m, profit: capital() - S.startCap + (S.divPaid || 0) - (S.injected || 0), cap: cr, liq: lq, trust: S.trust, comp: S.comp });
+  logMonth(rep);
   S.month++;
   if (!S.over && S.month >= 12) S.over = 'done';
   boardMonth(rep); shareMonth();
+  if (S.over === 'done') ambitionYear();
   if (S.over) S.debrief = makeDebrief();
   evalGoals(S.history[S.history.length - 1], !!S.over);
   if (!S.over){ applyQueuedPolicy(); buildMonth(); }
@@ -2384,6 +2387,77 @@ function monthMoves(rep){
   }
   const drivers = plRows(rep.pl).filter(r => r[0] !== 'Asset sales').sort((x, y) => Math.abs(y[1]) - Math.abs(x[1])).slice(0, 3).map(r => ({ label:r[0], amt:r[1] }));
   return { moves, drivers };
+}
+
+/* ---- the year log, for the end-of-year replay, and the ambitions that run across years. They only read the game and never touch the random stream. ---- */
+const OPENING_DEPOSITS = 15650;
+const r1 = v => Math.round(v * 10) / 10;
+function yrLog(){ return S.yr || (S.yr = { cap0: capRatio(), dec: [], mon: [] }); }
+function logDecision(c, k, cap0){
+  if (S.sim) return;
+  const o = (c.opts || []).find(x => x.k === k);
+  yrLog().dec.push({ m: S.month, label: c.label || c.kind, who: c.who ? c.who.name : '', pick: o ? o.l : String(k), d: r1(capital() - (S.injected || 0) - cap0) });   // new money from shareholders is not the decision's own effect
+}
+function logMonth(rep){
+  if (S.sim) return;
+  const pl = {}; for (const key of Object.keys(rep.pl)) pl[key] = r1(rep.pl[key]);
+  const h = S.history[S.history.length - 1];
+  yrLog().mon.push({ m: rep.m, profit: r1(rep.profit), cap: Math.round(h.cap * 1e4) / 1e4, liq: Math.round(h.liq * 1e4) / 1e4, pl, ev: rep.events.slice(0, 4).map(e => ({ t: e.t, tone: e.tone })) });
+}
+const DRIVER_ADVICE = {
+  'Credit losses': 'Credit losses were the biggest drag. Look at who you lent to, and how the analyst view and the checks lined up with what happened.',
+  'Interest paid to savers': 'Paying savers cost you the most. Compare your saver rate with the market before the next year.',
+  'Bank of England and wholesale borrowing': 'Borrowing cost you the most. A stronger deposit base or earlier funding would have been cheaper.',
+  'Running costs': 'Running costs were the biggest drag. Check which upgrades and projects were worth what they cost.',
+  'Fraud, refunds & fines': 'Fraud, refunds and fines hurt most. Look at the cases you let through, and at your controls.',
+};
+function yearReplay(){
+  const Y = S.yr || { cap0: capRatio(), dec: [], mon: [] };
+  const months = Y.mon.map(r => { const rows = plRows(r.pl).filter(x => x[0] !== 'Asset sales').sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])); return { m: r.m, name: MONTHS[r.m], profit: r.profit, cap: r.cap, liq: r.liq, top: rows[0] ? { label: rows[0][0], amt: rows[0][1] } : null, events: r.ev }; });
+  const moments = [];
+  for (const d of Y.dec.filter(x => Math.abs(x.d) >= 5).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 3))
+    moments.push({ m: d.m, name: MONTHS[d.m], kind: 'decision', good: d.d > 0, amt: d.d, head: d.label + (d.who ? ' · ' + d.who : ''), text: `You chose "${d.pick}". Capital ${d.d > 0 ? 'rose' : 'fell'} by ${fmt(Math.abs(d.d))} straight away.` });
+  if (months.length > 1){
+    const lo = months.reduce((a, b) => b.profit < a.profit ? b : a), hi = months.reduce((a, b) => b.profit > a.profit ? b : a);
+    if (lo.profit < 0) moments.push({ m: lo.m, name: lo.name, kind: 'month', good: false, amt: lo.profit, head: lo.name + ' was your worst month', text: `The month lost ${fmt(-lo.profit)}.${lo.top ? ` The biggest item was ${lo.top.label.toLowerCase()}, at ${fmt(lo.top.amt, true)}.` : ''}` });
+    if (hi.profit > 0 && hi !== lo) moments.push({ m: hi.m, name: hi.name, kind: 'month', good: true, amt: hi.profit, head: hi.name + ' was your best month', text: `The month made ${fmt(hi.profit)}.${hi.top ? ` The biggest item was ${hi.top.label.toLowerCase()}, at ${fmt(hi.top.amt, true)}.` : ''}` });
+  }
+  moments.sort((a, b) => a.m - b.m);
+  const totals = {}; for (const r of Y.mon) for (const [label, amt] of plRows(r.pl)) if (label !== 'Asset sales') totals[label] = (totals[label] || 0) + amt;
+  const drag = Object.entries(totals).filter(([, v]) => v < 0).sort((a, b) => a[1] - b[1])[0];
+  const focus = drag ? (DRIVER_ADVICE[drag[0]] || `${drag[0]} cost you ${fmt(-drag[1])}, more than anything else.`) : null;
+  const lowCap = months.length ? months.reduce((a, b) => b.cap < a.cap ? b : a) : null;
+  return { year: S.year, months, moments: moments.slice(0, 5), lowCap: lowCap ? { name: lowCap.name, cap: lowCap.cap } : null, capStart: Y.cap0, capNow: capRatio(), profit: rating().profit, focus, decisions: Y.dec.length };
+}
+
+const AMBITIONS = [
+  { key: 'deposits', name: 'Double the deposit base', blurb: `Reach ${fmt(OPENING_DEPOSITS * 2)} of deposits.`, calc: () => ({ value: S.deposits, target: OPENING_DEPOSITS * 2, shown: `${fmt(S.deposits)} of ${fmt(OPENING_DEPOSITS * 2)}` }) },
+  { key: 'steady', name: 'Five good years', blurb: 'Be rated BBB or better five years in a row.', calc: A => { const n = streak(A, y => y.score >= 58); return { value: n, target: 5, shown: `${Math.min(5, n)} of 5 years` }; } },
+  { key: 'clean', name: 'Three clean years', blurb: 'Three years in a row with no capital breach, no emergency borrowing and the regulator content.', calc: A => { const n = streak(A, y => y.clean); return { value: n, target: 3, shown: `${Math.min(3, n)} of 3 years` }; } },
+  { key: 'trust', name: 'A bank people trust', blurb: 'Reach customer trust of 80.', calc: () => ({ value: S.trust, target: 80, shown: `${Math.round(S.trust)} of 80` }) },
+  { key: 'reserves', name: 'Build the reserves', blurb: 'Grow your capital to one and a half times what you started with.', calc: A => ({ value: capital(), target: A.cap0 * 1.5, shown: `${fmt(capital())} of ${fmt(A.cap0 * 1.5)}` }) },
+  { key: 'dividends', name: 'Reward the shareholders', blurb: 'Pay a dividend in three different years.', calc: A => { const n = A.yrs.filter(y => y.div).length; return { value: n, target: 3, shown: `${Math.min(3, n)} of 3 years` }; } },
+  { key: 'storm', name: 'Weather the storm', blurb: 'Come through a recession year rated BBB or better.', calc: A => { const n = A.yrs.filter(y => y.path === 'downturn' && y.score >= 58).length; return { value: n, target: 1, shown: n ? 'Done' : 'No recession survived yet' }; } },
+  { key: 'fraud', name: 'Fraud fighter', blurb: 'Stop 40 card frauds and scams over your career.', calc: A => { const n = A.life + (A.lifeYear === S.year ? 0 : S.stats.fraudStop + S.stats.scamStop); return { value: n, target: 40, shown: `${Math.min(40, n)} of 40` }; } },
+  { key: 'network', name: 'A bank across the county', blurb: 'Open three branches in the growth area.', calc: () => { const G = S.growth && growthOwned() ? S.growth : null, n = G ? GROWTH_TOWNS.filter(t => G.townState[t.key] === 2).length : 0; return { value: n, target: 3, shown: G ? `${n} of 3 branches` : 'Take over Growth first' }; } },
+  { key: 'board', name: "The board's favourite", blurb: 'Reach board confidence of 80.', calc: () => { const v = S.board ? S.board.conf : 0; return { value: v, target: 80, shown: S.board ? `${Math.round(v)} of 80` : 'The board is not watching yet' }; } },
+];
+const AMB_UNIT = { deposits:'gbp_thousands', steady:'years', clean:'years', trust:'score', reserves:'gbp_thousands', dividends:'years', storm:'years', fraud:'cases', network:'branches', board:'score' };
+function streak(A, ok){ let n = 0; for (let i = A.yrs.length - 1; i >= 0 && ok(A.yrs[i]); i--) n++; return n; }
+function ambitionBook(){ return S.amb || { cap0: S.startCap, yrs: [], done: {}, life: 0, lifeYear: 0 }; }
+function ambitionFacts(){
+  const A = ambitionBook();
+  return AMBITIONS.map(a => { const c = a.calc(A), done = A.done[a.key] || null; return { key: a.key, name: a.name, blurb: a.blurb, unit: AMB_UNIT[a.key], value: c.value, target: c.target, shown: done ? 'Done in ' + done : c.shown, pct: Math.max(0, Math.min(1, c.value / c.target)), done, fresh: done === S.year && S.over === 'done' }; });
+}
+// Called once as each year ends. Records the year, then ticks off any ambition that is now met.
+function ambitionYear(){
+  if (S.sim || S.tutorial || S.scenario) return;
+  const A = S.amb || (S.amb = { cap0: S.startCap, yrs: [], done: {}, life: 0, lifeYear: 0 });
+  if (A.yrs.some(y => y.year === S.year)) return;
+  const r = rating(), st = S.stats;
+  A.yrs.push({ year: S.year, score: Math.round(r.score), letter: r.letter, clean: st.capBreach === 0 && st.emergency === 0 && S.comp >= 70, div: S.divPaid > 0, path: S.path, profit: Math.round(r.profit) });
+  A.life += st.fraudStop + st.scamStop; A.lifeYear = S.year;
+  for (const a of AMBITIONS) if (!A.done[a.key]){ const c = a.calc(A); if (c.value >= c.target) A.done[a.key] = S.year; }
 }
 
 const DOCS = {
