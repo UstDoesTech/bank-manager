@@ -343,15 +343,16 @@ function register(app, { pool, host }) {
     if (body.households && !opts.tutorial && !opts.scenario) opts.households = true;
     if (body.meetings && !opts.tutorial && !opts.scenario) opts.meetings = true;
     if (body.chiefExecutive && !opts.tutorial && !opts.scenario) opts.chiefExecutive = true;
+    if ((body.difficulty === 'gentle' || body.difficulty === 'hard') && !opts.tutorial && !opts.scenario) opts.difficulty = body.difficulty;
     const seed = crypto.randomInt(1, 0x7fffffff);
     const cmd = { type: 'newGame', seed, opts };
     let out;
     try { out = host.apply(null, cmd); } catch (e) { throw new HttpError(422, 'bad_game', 'Could not start that game.'); }
     const game = await inTransaction(async (client) => {
       const g = (await client.query(
-        `INSERT INTO bank.game (player_key, mode, scenario, tutorial, seed, engine_version, in_analysis)
-         VALUES ($1, 'branch', $2, $3, $4, $5, $6) RETURNING id`,
-        [p.player_key, opts.scenario || null, !!opts.tutorial, seed, host.version, !p.analysis_opt_out])).rows[0];
+        `INSERT INTO bank.game (player_key, mode, scenario, tutorial, seed, engine_version, in_analysis, difficulty)
+         VALUES ($1, 'branch', $2, $3, $4, $5, $6, $7) RETURNING id`,
+        [p.player_key, opts.scenario || null, !!opts.tutorial, seed, host.version, !p.analysis_opt_out, opts.difficulty || 'standard'])).rows[0];
       await persist(client, g, 1, cmd, { year: out.state.year, month: out.state.month }, out);
       return g;
     });
@@ -361,7 +362,7 @@ function register(app, { pool, host }) {
 
   app.get('/api/games', auth, async (req) => {
     const { rows } = await pool.query(
-      `SELECT id, mode, scenario, tutorial, status, last_seq AS seq, created_at, updated_at
+      `SELECT id, mode, scenario, tutorial, difficulty, status, last_seq AS seq, created_at, updated_at
          FROM bank.game WHERE player_key = $1 ORDER BY updated_at DESC LIMIT 50`, [req.player.player_key]);
     return { games: rows };
   });

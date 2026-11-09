@@ -639,4 +639,17 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   { const rf = E.roomFacts(); assert.strictEqual(rf.seats.length, 4); assert(rf.seats.every(x => ['ok', 'watch', 'alarm'].includes(x.status))); assert(rf.gauges.length >= 3);
     assert.strictEqual(hashState(E.S) + JSON.stringify(E.S.rngState || ''), before, 'the meeting room never changes the game'); }
   const seen = new Set(); for (let y = 2027; y < 2040; y++) for (let m = 0; m < 12; m++){ E.S.year = y; E.S.month = m; seen.add(E.sceneFacts().weather); } assert(seen.size === 4, 'all four kinds of weather occur'); n += 10; }
+// 20. Difficulty: standard is the original game; gentle and hard change the economy, are stored with the game, and replay exactly
+{ const play = (seed, difficulty) => { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed, opts: { difficulty } });
+    for (let i = 0; i < 12; i++){ for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' }); } return E; };
+  const tot = {}; for (const d of ['gentle', 'standard', 'hard']){ tot[d] = { loss: 0, bad: 0 }; for (let sd = 1; sd <= 24; sd++){ const E = play(sd, d); tot[d].loss += E.S.stats.losses; tot[d].bad += E.S.path === 'downturn' || E.S.path === 'sticky' ? 1 : 0; } }
+  assert(tot.hard.loss > tot.standard.loss && tot.standard.loss > tot.gentle.loss, 'harder games lose more to bad credit: ' + JSON.stringify(tot));
+  assert(tot.hard.bad > tot.gentle.bad, 'harder games get more recessions and sticky inflation: ' + JSON.stringify(tot));
+  const std = loadEngine(src); std.dispatch({ type: 'newGame', seed: 5, opts: {} }); const std2 = play(5, 'standard');
+  const std3 = loadEngine(src); std3.dispatch({ type: 'newGame', seed: 5, opts: { difficulty: 'standard' } }); assert.strictEqual(std.S.diff, undefined, 'standard stores nothing, so old games and snapshots are unchanged');
+  assert.strictEqual(hashState(std.S), hashState(std3.S), 'asking for standard is the same as not asking');
+  const h1 = play(9, 'hard'), h2 = play(9, 'hard'); assert.strictEqual(hashState(h1.S), hashState(h2.S), 'a hard game replays exactly'); assert.strictEqual(h1.S.diff, 'hard');
+  const tut = loadEngine(src); tut.dispatch({ type: 'newGame', seed: 3, opts: { tutorial: true, difficulty: 'hard' } }); assert.strictEqual(tut.S.diff, undefined, 'the training day and scenarios ignore difficulty');
+  const bad = loadEngine(src); bad.dispatch({ type: 'newGame', seed: 3, opts: { difficulty: 'nightmare' } }); assert.strictEqual(bad.S.diff, undefined, 'an unknown level is ignored');
+  n += 8; }
 console.log('ok', n, 'checks');

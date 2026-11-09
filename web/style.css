@@ -311,6 +311,8 @@ table.ledger{width:100%;border-collapse:collapse;font-size:13.5px}
 .seg button{background:none;border:0;border-radius:8px;padding:8px;font-weight:700;font-size:13.5px;color:var(--muted)}
 .seg button[aria-pressed="true"]{background:var(--hall-3);color:var(--text)}
 .seg.three{grid-template-columns:repeat(3,1fr)}
+.lvl{display:grid;gap:6px}
+.lvl p{margin:0;font-size:13px}
 .advs{display:grid;gap:6px}
 .adv{border-left:3px solid var(--line);background:rgba(0,0,0,.22);border-radius:6px;padding:8px 10px}.adv p{margin:0;font-size:14px}
 .adv.warn{border-left-color:var(--warn)}.adv.alarm{border-left-color:var(--bad)}

@@ -442,6 +442,16 @@ test('web: the page is served, health check works, and form posts are refused', 
   assert.strictEqual(form.statusCode, 415);
 });
 
+test('difficulty: a level chosen at the start is stored with the game, replays exactly, and is ignored for the tutorial', async () => {
+  const cookie = await newPlayer('levels@example.com');
+  const hard = await call('POST', '/api/games', { difficulty: 'hard' }, cookie), std = await call('POST', '/api/games', {}, cookie), junk = await call('POST', '/api/games', { difficulty: 'nightmare' }, cookie), tut = await call('POST', '/api/games', { tutorial: true, difficulty: 'hard' }, cookie);
+  assert.strictEqual(hard.status, 201); assert.strictEqual(hard.json.state.diff, 'hard');
+  const lvl = async (id) => (await pool.query('SELECT difficulty FROM bank.game WHERE id = $1', [id])).rows[0].difficulty;
+  assert.strictEqual(await lvl(hard.json.id), 'hard'); assert.strictEqual(await lvl(std.json.id), 'standard'); assert.strictEqual(await lvl(junk.json.id), 'standard'); assert.strictEqual(await lvl(tut.json.id), 'standard');
+  assert.strictEqual((await verifyGame(pool, host, hard.json.id)).ok, true);
+  assert.strictEqual((await call('GET', '/api/games', undefined, cookie)).json.games.find((g) => g.id === hard.json.id).difficulty, 'hard');
+});
+
 test('literacy: every example analysis query runs', async () => {
   const sql = fs.readFileSync(path.join(__dirname, '..', 'db', 'analysis', 'literacy.sql'), 'utf8');
   const queries = sql.split(';').map((q) => q.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean);

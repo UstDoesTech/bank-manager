@@ -23,6 +23,17 @@ const full = k => '£' + Math.round(k * 1000).toLocaleString('en-GB');
 const pc = (x, d = 1) => (x * 100).toFixed(d) + '%';
 function annuity(L, rate, years){ const r = rate / 1200, n = years * 12; return L * r / (1 - Math.pow(1 + r, -n)); }
 
+/* ---- difficulty: a game option, stored with the game, so a replay plays the same. Standard is exactly the original tuning and takes the same random draws. ---- */
+const DIFFICULTY = {
+  gentle:   { name:'Gentle',   blurb:'Calmer markets, fewer crises, and a board that starts out on your side.',
+              loss:0.8, crash:0.4, extraLiq:0, board:70, path:{ soft:1.7, sticky:0.6, downturn:0.5, recovery:1.7 } },
+  standard: { name:'Standard', blurb:'The game as designed.',
+              loss:1, crash:1, extraLiq:0, board:60, path:{ soft:1, sticky:1, downturn:1, recovery:1 } },
+  hard:     { name:'Hard',     blurb:'More recessions and sticky inflation, bigger credit losses, an extra funding scare, and a board that is already wary.',
+              loss:1.3, crash:1.6, extraLiq:1, board:50, path:{ soft:0.6, sticky:1.5, downturn:1.8, recovery:0.6 } },
+};
+const dif = () => DIFFICULTY[(S && S.diff) || 'standard'];
+
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const PATHS = {
   soft:     { name:'a soft landing',      rate:[4,4,4,3.75,3.75,3.75,3.75,3.5,3.5,3.5,3.25,3.25], u:[0,0.3], h:[0,4] },
@@ -51,7 +62,7 @@ function inflation(m = S.month){ m = pidx(m); const p = P(); if (p.infArr) retur
 function hpiYr(m = S.month){ return hpi(m) / S.y0.h - 1; }
 function rateAt(m){ m = pidx(m); if (P().abs) return P().rate[m]; let d = P().rate[m] - 4; if ((d < 0 && S.y0.base < 2.5) || (d > 0 && S.y0.base > 5.5)) d /= 2; return clamp(Math.round((S.y0.base + d) * 4) / 4, 0.25, 6.5); }
 function collateral(l){ return l.prop * hpi() / (l.hpi0 || 1); }
-function uf(){ return Math.pow(unemp() / 4.3, 1.8) * (P().lossMult || 1); }
+function uf(){ return Math.pow(unemp() / 4.3, 1.8) * (P().lossMult || 1) * dif().loss; }
 function mkt(){ return Math.max(0.25, S.base - 1.5); }
 
 /* balance sheet */
@@ -971,7 +982,8 @@ function newGame(seed, opts = {}){
     lastTreasury:-9, prodOrder:[], prodUsed:[], sched:{}, y0:{ base:4, u:4.3, h:1 }, career:[], divPaid:0, wm:null, wmOffer:2, mkt:100, mktY0:100, mktHist:[100], lastMkt:0,
     stats: freshStats(), up:{}, news:[], tutorial: !!opts.tutorial, scenario: opts.scenario || null,
     engine:ENGINE_VERSION, progress:{ unlocked:['branch'] }, policy:systemPolicy(), ledger:{ bal:{}, n:0 } };
-  S.path = pick(['soft', 'sticky', 'downturn']);
+  if (DIFFICULTY[opts.difficulty] && opts.difficulty !== 'standard' && !opts.tutorial && !opts.scenario) S.diff = opts.difficulty;
+  S.path = S.diff ? wpick(['soft', 'sticky', 'downturn'].map(k => [k, dif().path[k]])) : pick(['soft', 'sticky', 'downturn']);
   if (opts.households && !opts.tutorial && !opts.scenario) S.households = makeCast();
   if (opts.meetings && !opts.tutorial && !opts.scenario) S.meet = true;
   if (opts.chiefExecutive && !opts.tutorial && !opts.scenario) S.progress.unlocked = ['branch'].concat(CE_AREAS);      // start straight in the Chief Executive role
@@ -986,7 +998,8 @@ function newGame(seed, opts = {}){
   return S;
 }
 function freshStats(){ return { customers:0, wrongNo:0, loans:0, lent:0, defaults:0, losses:0, fraudStop:0, fraudMiss:0, scamStop:0, scamMiss:0, sars:0, fines:0, boe:0, emergency:0, minCap:1, capBreach:0 }; }
-function makeSched(){ return { crash: chance(S.path === 'sticky' || S.path === 'downturn' ? 0.5 : 0.2) ? ri(2, 9) : -1, pep: ri(3, 10), prod:[1,3,5,7,9], liq: S.path === 'downturn' ? [ri(3, 5), ri(7, 10)] : [ri(3, 9)], out: S.flags.cyber && chance(0.5) ? -1 : ri(2, 10), sanc:[ri(1, 5), ri(6, 11)] }; }
+function makeSched(){ const sc = makeSched0(); if (dif().extraLiq) sc.liq.push(ri(1, 11)); return sc; }
+function makeSched0(){ return { crash: chance(Math.min(0.9, (S.path === 'sticky' || S.path === 'downturn' ? 0.5 : 0.2) * dif().crash)) ? ri(2, 9) : -1, pep: ri(3, 10), prod:[1,3,5,7,9], liq: S.path === 'downturn' ? [ri(3, 5), ri(7, 10)] : [ri(3, 9)], out: S.flags.cyber && chance(0.5) ? -1 : ri(2, 10), sanc:[ri(1, 5), ri(6, 11)] }; }
 function nextYear(){
   if (S.scenario) return;
   const r = rating();
@@ -1001,7 +1014,7 @@ function nextYear(){
   S.wmOffer = S.wm ? -1 : 1; S.news = [];
   if (S.wm){ for (const k of ['houseAt','campAt','calm','cashUntil']) S.wm[k] -= 12; }
   const b = S.y0.base, u = S.y0.u;
-  if (S.sim) S.path = S.simPath; else S.path = wpick([['soft', b > 4.5 ? 3 : 2], ['sticky', b < 3 ? 3 : b > 5 ? 0.3 : 1.8], ['downturn', u > 6.5 ? 0.3 : b > 5 ? 2.5 : 1.4], ['recovery', u > 5 ? 4 : 0.4]]);
+  if (S.sim) S.path = S.simPath; else { const w = dif().path; S.path = wpick([['soft', (b > 4.5 ? 3 : 2) * w.soft], ['sticky', (b < 3 ? 3 : b > 5 ? 0.3 : 1.8) * w.sticky], ['downturn', (u > 6.5 ? 0.3 : b > 5 ? 2.5 : 1.4) * w.downturn], ['recovery', (u > 5 ? 4 : 0.4) * w.recovery]]); }
   if (!S.prodOrder.includes('broker')) S.prodOrder = S.prodOrder.concat(shuffle(['broker','ggs']));
   S.startCap = capital();
   S.stats = freshStats(); S.stats.minCap = capRatio();
@@ -2131,7 +2144,7 @@ const BOARD_START = 60, BOARD_MID = 55, BOARD_SACK = 20;
 // The board only watches once the player has actually taken over an area, so being offered one and leaving it alone is safe.
 const boardActive = () => CE_AREAS.some(a => S.policy.owner[a] === 'player');
 function boardOf(){
-  if (!S.board) S.board = { conf: BOARD_START, hist: [], low: 0, q: { perf: 0, shock: 0, div: 0, warn: 0 }, divM: [], seen: { cb: S.stats.capBreach, em: S.stats.emergency, fi: S.stats.fines, dv: S.divPaid || 0 } };
+  if (!S.board) S.board = { conf: dif().board, hist: [], low: 0, q: { perf: 0, shock: 0, div: 0, warn: 0 }, divM: [], seen: { cb: S.stats.capBreach, em: S.stats.emergency, fi: S.stats.fines, dv: S.divPaid || 0 } };
   return S.board;
 }
 function boardBand(c){ return c >= 75 ? 'strong' : c >= 55 ? 'steady' : c >= 40 ? 'uneasy' : c >= BOARD_SACK ? 'losing patience' : 'ready to replace you'; }
@@ -2155,7 +2168,7 @@ function boardMonth(rep){
   if (S.month % 3 === 0) boardMeeting(r);
 }
 function boardMeeting(r){
-  const B = boardOf(), conf = Math.round(B.conf), prev = B.hist.length ? B.hist[B.hist.length - 1].conf : BOARD_START, q = B.q;
+  const B = boardOf(), conf = Math.round(B.conf), prev = B.hist.length ? B.hist[B.hist.length - 1].conf : dif().board, q = B.q;
   const reasons = [];
   if (q.perf > 1) reasons.push(`return on capital ahead of peer banks (${pc(r.roe * 12 / Math.max(1, S.month))} a year against ${pc(r.peer)})`);
   if (q.perf < -1) reasons.push(`return on capital behind peer banks (${pc(r.roe * 12 / Math.max(1, S.month))} a year against ${pc(r.peer)})`);

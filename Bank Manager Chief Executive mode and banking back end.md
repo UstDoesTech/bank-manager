@@ -89,6 +89,10 @@ The chief executive is judged by the board and by shareholders, and can be sacke
 - **The Fiscal Herald:** gains chief-executive stories: dividend cuts, share issues, swap losses, acquisitions and, at worst, "Counting House chief executive ousted".
 - **Rating:** keeps the existing letter scale, with the profit part judged against peer banks in the same economy.
 
+## Difficulty levels
+
+A new career can be played at Gentle, Standard (the original tuning) or Hard. The level is chosen on the title screen and is part of the game's opening options, so it is recorded with the game and replays exactly. It scales credit losses, the chance of a market crash, the mix of economic paths from year to year, one extra funding scare on Hard, and the board's starting confidence. The regulator's limits and the board's removal level do not change. Ratings are not adjusted; they are shown with the level they were earned at. The training day and the scenarios ignore the level.
+
 ## Financial literacy
 
 Bank Manager is strongest on how banks and money work and weakest on personal money management. Four changes now in the game close the biggest gaps against the standard literacy questions; two more are designed below.

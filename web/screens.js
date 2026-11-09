@@ -13,9 +13,9 @@ function startScenario(k){ startGame({ scenario:k }); }
 function endScreen(){
   const r = rating(), st = S.stats;
   const fail = endingText();
-  if (!S.scenario) try { const best = JSON.parse(localStorage.getItem('ch-best') || 'null'); if (!best || r.score > best.score) localStorage.setItem('ch-best', JSON.stringify({ score:r.score, letter:r.letter })); } catch (e) {}
+  if (!S.scenario) try { const best = JSON.parse(localStorage.getItem('ch-best') || 'null'); if (!best || r.score > best.score) localStorage.setItem('ch-best', JSON.stringify({ score:r.score, letter:r.letter, level:S.diff || 'standard' })); } catch (e) {}
   const sc = S.scenario ? SCENARIOS[S.scenario] : null, met = (S.goals || []).filter(g => g.ok).length;
-  overlay(`<div class="eyebrow">${sc ? `${esc(sc.name)} · ${sc.year}` : `${S.year} · year-end rating${S.career.length ? ` · year ${S.career.length + 1}` : ''}`}</div>
+  overlay(`<div class="eyebrow">${sc ? `${esc(sc.name)} · ${sc.year}` : `${S.year} · year-end rating${S.career.length ? ` · year ${S.career.length + 1}` : ''}${S.diff ? ` · ${DIFFICULTY[S.diff].name}` : ''}`}</div>
     ${sc ? `<h2>${met === S.goals.length ? 'Scenario complete' : `${met} of ${S.goals.length} goals met`}</h2><div style="display:grid;gap:6px">${goalsHTML()}</div><h3>Rating</h3>` : ''}
     <div class="rating">${r.letter}</div>
     <p>${fail ? esc(fail) : sc ? 'Profit is judged against what similar banks made in the same conditions.' : `The economy this year: ${P().name}.`}</p>

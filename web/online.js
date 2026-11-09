@@ -177,9 +177,13 @@ $('#cookieOk').onclick = acknowledgeCookie;
 function titleScreen(){
   const saved = load(), resumable = saved && (!saved.over || saved.over === 'done');
   let best = null; try { best = JSON.parse(localStorage.getItem('ch-best') || 'null'); } catch (e) {}
+  let level = 'standard'; try { const v = localStorage.getItem('bm-level'); if (DIFFICULTY[v]) level = v; } catch (e) {}
   overlay(`<p class="title-xl">Bank<br>Manager</p>
     <p>Run a small high-street bank. Serve customers, answer your inbox, and make money without failing your customers or the regulator.</p>
-    ${best ? `<p class="num" style="color:var(--brass);font-size:13px;margin:0">Best rating so far: ${esc(best.letter)}</p>` : ''}
+    ${best ? `<p class="num" style="color:var(--brass);font-size:13px;margin:0">Best rating so far: ${esc(best.letter)}${best.level && best.level !== 'standard' && DIFFICULTY[best.level] ? ' (' + esc(DIFFICULTY[best.level].name) + ')' : ''}</p>` : ''}
+    <div class="lvl"><span id="lvlLabel" class="eyebrow">Level for a new career</span>
+      <div class="seg three" role="group" aria-labelledby="lvlLabel">${Object.entries(DIFFICULTY).map(([k, d]) => `<button type="button" data-lvl="${k}" aria-pressed="${k === level}">${esc(d.name)}</button>`).join('')}</div>
+      <p class="dim" id="lvlNote" role="status">${esc(DIFFICULTY[level].blurb)}</p></div>
     <div class="rowbtn">
       ${resumable ? `<button type="button" class="btn primary" id="ovGo">${saved.scenario ? esc(SCENARIOS[saved.scenario].name) + ' · ' : ''}${saved.over ? `Year-end ${saved.year}` : `Continue · ${MONTHS[saved.month]} ${saved.year}`}</button>` : ''}
       <button type="button" class="btn ${resumable ? 'neutral' : 'primary'}" id="${best ? 'ovNew' : 'ovTrain'}">${best ? 'New career' : 'Start with a training day'}</button>
@@ -191,7 +195,8 @@ function titleScreen(){
 `);
   const g = $('#ovGo'); if (g) g.onclick = () => { S = saved; save(); play(); };
   $('#ovTrain').onclick = () => startGame({ tutorial:true });
-  $('#ovNew').onclick = () => startGame();
+  $('#ovNew').onclick = () => startGame(level === 'standard' ? {} : { difficulty: level });
+  $('#ov .lvl .seg').onclick = e => { const b = e.target.closest('[data-lvl]'); if (!b) return; level = b.dataset.lvl; try { localStorage.setItem('bm-level', level); } catch (x) {} document.querySelectorAll('#ov [data-lvl]').forEach(x => x.setAttribute('aria-pressed', x === b)); $('#lvlNote').textContent = DIFFICULTY[level].blurb; };
   $('#ovScen').onclick = scenarioPicker;
   const ac = $('#ovAcct'); if (ac) ac.onclick = () => accountScreen();
 }

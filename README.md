@@ -96,6 +96,27 @@ player cannot use. With Resend on, a real player's link is never stored in the o
 smoke test can read its own link. A failed send is logged with the address's domain only and does not fail the request, because sign-up must not
 reveal whether an address is registered; the player can use "Forgot password" for another link. Not yet tried against the real service.
 
+## Difficulty
+
+A new career can be played at **Gentle**, **Standard** (the original tuning) or **Hard**, chosen on the title screen. The level is a
+`difficulty` option on the `newGame` command, kept with the game (`S.diff`) and in `bank.game.difficulty` (also in `bank.v_game` for the
+analysis), so a replay plays the same game. Standard stores nothing and takes the same random draws as before, so old games and the golden
+snapshots are unchanged. The training day and the scenarios ignore it, and so does an unknown level.
+
+| | Gentle | Standard | Hard |
+|---|---|---|---|
+| Credit losses | ×0.8 | ×1 | ×1.3 |
+| Chance of a market crash in the year | ×0.4 | ×1 | ×1.6 |
+| Funding scares | as designed | as designed | one extra |
+| Economic path, soft landing or recovery | 1.7× as likely | as designed | 0.6× |
+| Economic path, sticky inflation | 0.6× | as designed | 1.5× |
+| Economic path, recession | 0.5× | as designed | 1.8× |
+| Board confidence at the start | 70 | 60 | 50 |
+
+The regulator's limits (10.5% capital, 10% liquidity) and the board's removal level (20) are the same at every level. The rating is not
+adjusted for level: the year-end screen and the title screen's best rating say which level it was earned at. The values are in `DIFFICULTY`
+in the engine, and a test plays 24 seeds at each level to check the order of losses and bad years.
+
 ## Executive team, early warnings and the stress test
 
 Once a player has been handed any Chief Executive area, the Policy tab opens three screens (Team, Settings, Stress test); none
