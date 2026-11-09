@@ -148,6 +148,7 @@ function menuScreen(msg, isErr){
       <button type="button" class="btn primary" id="menuResume">Resume</button>
       <button type="button" class="btn neutral" id="menuSave">Save game</button>
       <button type="button" class="btn neutral" id="menuSound">${Snd.on ? 'Sound on' : 'Sound off'}</button>
+      <button type="button" class="btn neutral" id="menuDisplay">Text size, theme and volume</button>
       ${Remote.available() ? '<button type="button" class="btn neutral" id="menuAcct">Account and recording</button>' : ''}
       <button type="button" class="btn neutral" id="menuExit">Save and exit to the title screen</button>
       ${signedIn ? `<button type="button" class="btn ${menuConfirm ? 'no' : 'link'}" id="menuOut">${menuConfirm ? 'Tap again to sign out' : 'Sign out'}</button>` : ''}
@@ -156,6 +157,7 @@ function menuScreen(msg, isErr){
   $('#menuResume').onclick = closeOverlay;
   $('#menuSave').onclick = () => { save(); Remote.flush(); const q = Remote.pendingCount(); menuScreen(q ? `Saved on this device. ${q} move${q === 1 ? '' : 's'} still to send to the server, and they will go when you are online.` : 'Saved' + (recording ? ' on this device and on the server.' : ' on this device.')); };
   $('#menuSound').onclick = () => { Snd.toggle(); menuScreen(); };
+  $('#menuDisplay').onclick = () => displayScreen(() => menuScreen());
   const ac = $('#menuAcct'); if (ac) ac.onclick = () => accountScreen();
   $('#menuExit').onclick = () => { save(); Remote.flush(); S = null; menuConfirm = false; Scene.setView('hall', true); titleScreen(); };
   const out = $('#menuOut'); if (out) out.onclick = async () => {
@@ -180,7 +182,7 @@ function titleScreen(){
   let level = 'standard'; try { const v = localStorage.getItem('bm-level'); if (DIFFICULTY[v]) level = v; } catch (e) {}
   overlay(`<p class="title-xl">Bank<br>Manager</p>
     <p>Run a small high-street bank. Serve customers, answer your inbox, and make money without failing your customers or the regulator.</p>
-    ${best ? `<p class="num" style="color:var(--brass);font-size:13px;margin:0">Best rating so far: ${esc(best.letter)}${best.level && best.level !== 'standard' && DIFFICULTY[best.level] ? ' (' + esc(DIFFICULTY[best.level].name) + ')' : ''}</p>` : ''}
+    ${best ? `<p class="num" style="color:var(--brass);font-size:calc(13px*var(--ts));margin:0">Best rating so far: ${esc(best.letter)}${best.level && best.level !== 'standard' && DIFFICULTY[best.level] ? ' (' + esc(DIFFICULTY[best.level].name) + ')' : ''}</p>` : ''}
     <div class="lvl"><span id="lvlLabel" class="eyebrow">Level for a new career</span>
       <div class="seg three" role="group" aria-labelledby="lvlLabel">${Object.entries(DIFFICULTY).map(([k, d]) => `<button type="button" data-lvl="${k}" aria-pressed="${k === level}">${esc(d.name)}</button>`).join('')}</div>
       <p class="dim" id="lvlNote" role="status">${esc(DIFFICULTY[level].blurb)}</p></div>
@@ -189,15 +191,17 @@ function titleScreen(){
       <button type="button" class="btn ${resumable ? 'neutral' : 'primary'}" id="${best ? 'ovNew' : 'ovTrain'}">${best ? 'New career' : 'Start with a training day'}</button>
       <button type="button" class="btn link" id="${best ? 'ovTrain' : 'ovNew'}">${best ? 'New career with a training day' : 'Skip the training'}</button>
       <button type="button" class="btn link" id="ovScen">Scenarios: 2008, 2020 and 2022 crises</button>
+      <button type="button" class="btn link" id="ovDisp">Text size, theme and volume</button>
       ${Remote.available() ? `<button type="button" class="btn link" id="ovAcct">${Remote.ready() ? (Remote.me().guest ? 'Playing as a guest · sign in to keep your games' : 'Recording as ' + esc(Remote.who())) : 'Sign in to save your games'}</button>` : ''}
     </div>
-    ${resumable ? '<p style="color:var(--muted);font-size:12.5px;margin:0">Starting something new replaces your saved game.</p>' : ''}
+    ${resumable ? '<p style="color:var(--muted);font-size:calc(12.5px*var(--ts));margin:0">Starting something new replaces your saved game.</p>' : ''}
 `);
   const g = $('#ovGo'); if (g) g.onclick = () => { S = saved; save(); play(); };
   $('#ovTrain').onclick = () => startGame({ tutorial:true });
   $('#ovNew').onclick = () => startGame(level === 'standard' ? {} : { difficulty: level });
   $('#ov .lvl .seg').onclick = e => { const b = e.target.closest('[data-lvl]'); if (!b) return; level = b.dataset.lvl; try { localStorage.setItem('bm-level', level); } catch (x) {} document.querySelectorAll('#ov [data-lvl]').forEach(x => x.setAttribute('aria-pressed', x === b)); $('#lvlNote').textContent = DIFFICULTY[level].blurb; };
   $('#ovScen').onclick = scenarioPicker;
+  $('#ovDisp').onclick = () => displayScreen(() => titleScreen());
   const ac = $('#ovAcct'); if (ac) ac.onclick = () => accountScreen();
 }
 

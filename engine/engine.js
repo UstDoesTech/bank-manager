@@ -2299,10 +2299,8 @@ function stressTest(overrides, months = 9, scenario = 'recession'){
   for (const k of ['startCap', 'lowCap', 'lowLiq', 'endCap', 'endLiq', 'capChange']) if (typeof r[k] === 'number') r[k] = Math.round(r[k] * 1e5) / 1e5;
   return r;
 }
-function runStress(overrides, scenario = 'recession'){
-  if (scenario !== 'recession' && scenario !== 'rates') throw new Error('unknown stress scenario');
-  if (!ceMode()) throw new Error('the stress test is part of the Chief Executive role');
-  if (S.over) throw new Error('the stress test needs a month to start from: begin the new year first');
+// Settings typed in but not saved, checked against the limits and against what the player has unlocked.
+function cleanOverrides(overrides){
   const ov = {};
   if (overrides){
     if (typeof overrides !== 'object' || Array.isArray(overrides)) throw new Error('bad overrides');
@@ -2314,6 +2312,40 @@ function runStress(overrides, scenario = 'recession'){
       ov[area] = values;
     }
   }
+  return ov;
+}
+// The Settings preview: the next few months on a copy of the bank, once on the settings as they are and once on settings typed in but not
+// saved. Both copies use the same random numbers, so the difference between them is the settings alone. Nothing happens outside the bank
+// (no shocks), cards that need a decision take their first allowed option, and nothing reaches the real game or its random stream.
+function previewRun(overrides, months){
+  const real = S, realOut = OUT, realSink = LEDGER_SINK, out = { gauges: [], profit: 0, failed: false, why: '' };
+  try {
+    S = JSON.parse(JSON.stringify(real)); OUT = null; LEDGER_SINK = null; S.sim = true;
+    S.sched = { crash: -1, pep: -1, prod: [], liq: [], out: -1, sanc: [] };
+    for (const [area, values] of Object.entries(overrides)){ Object.assign(S.policy[area], values); S.policy.owner[area] = 'player'; if (area === 'treasury') syncGilts(); }
+    const cap0 = capital() + (S.divPaid || 0);
+    for (let i = 0; i < months && !S.over; i++){
+      for (let c; (c = S.queue.find(x => !x.done));){ const o = c.opts.find(optionAllowed) || c.opts[0]; resolveCard(c, o.k); }
+      archiveMonth(); closeMonth();
+    }
+    out.gauges = dashboardFacts().gauges.map(g => ({ ...g }));
+    out.profit = Math.round((capital() + (S.divPaid || 0) - cap0) * 10) / 10;
+    if (S.over && S.over !== 'done'){ out.failed = true; out.why = S.over === 'capital' ? 'capital would fall below the level at which the regulator closes a bank' : S.over === 'licence' ? 'the regulator would withdraw the licence' : 'the bank would fail'; }
+  } finally { S = real; OUT = realOut; LEDGER_SINK = realSink; }
+  return out;
+}
+function previewPolicy(overrides, months = 6){
+  if (S.over || S.tutorial || S.scenario) throw new Error('there is nothing to preview now');
+  const ov = cleanOverrides(overrides), n = Math.max(1, Math.min(months, 12 - S.month));
+  if (S.month >= 12) throw new Error('begin the new year first');
+  const now = dashboardFacts().gauges.map(g => ({ ...g }));
+  return { months: n, changed: Object.keys(ov).length > 0, now, keep: previewRun({}, n), change: previewRun(ov, n) };
+}
+function runStress(overrides, scenario = 'recession'){
+  if (scenario !== 'recession' && scenario !== 'rates') throw new Error('unknown stress scenario');
+  if (!ceMode()) throw new Error('the stress test is part of the Chief Executive role');
+  if (S.over) throw new Error('the stress test needs a month to start from: begin the new year first');
+  const ov = cleanOverrides(overrides);
   S.stress = { month: S.month, year: S.year, scenario, custom: Object.keys(ov).length > 0, ...stressTest(ov, 9, scenario) };
   return S.stress;
 }

@@ -38,11 +38,11 @@ const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&':'&amp;', '<':'&lt;', 
 
 /* ---------- Sound (synthesised, no files) ---------- */
 const Snd = (() => {
-  let ctx = null, on = true; try { on = localStorage.getItem('bm-sound') !== '0'; } catch (e) {}
-  function ac(){ if (!ctx){ try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } } if (ctx.state === 'suspended') ctx.resume().catch(() => {}); return ctx; }
-  function out(v){ const g = ctx.createGain(); g.gain.value = v; g.connect(ctx.destination); return g; }
+  let ctx = null, master = null, on = true, vol = 0.8; try { on = localStorage.getItem('bm-sound') !== '0'; const v = parseFloat(localStorage.getItem('bm-volume')); if (isFinite(v)) vol = Math.min(1, Math.max(0, v)); } catch (e) {}
+  function ac(){ if (!ctx){ try { ctx = new (window.AudioContext || window.webkitAudioContext)(); master = ctx.createGain(); master.gain.value = vol; master.connect(ctx.destination); } catch (e) { ctx = null; return null; } } if (ctx.state === 'suspended') ctx.resume().catch(() => {}); return ctx; }
+  function out(v){ const g = ctx.createGain(); g.gain.value = v; g.connect(master); return g; }
   function noise(dur, decay){ const b = ctx.createBuffer(1, Math.max(1, ctx.sampleRate * dur | 0), ctx.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, decay); const n = ctx.createBufferSource(); n.buffer = b; return n; }
-  function tone(f, at, dur, type, vol, slide){ const o = ctx.createOscillator(), g = ctx.createGain(); o.type = type; o.frequency.setValueAtTime(f, at); if (slide) o.frequency.exponentialRampToValueAtTime(slide, at + dur); g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(vol, at + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, at + dur); o.connect(g); g.connect(ctx.destination); o.start(at); o.stop(at + dur + 0.05); }
+  function tone(f, at, dur, type, vol, slide){ const o = ctx.createOscillator(), g = ctx.createGain(); o.type = type; o.frequency.setValueAtTime(f, at); if (slide) o.frequency.exponentialRampToValueAtTime(slide, at + dur); g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(vol, at + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, at + dur); o.connect(g); g.connect(master); o.start(at); o.stop(at + dur + 0.05); }
   const fx = {
     stamp(){ const t = ctx.currentTime, n = noise(0.09, 3), f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1100; n.connect(f); f.connect(out(0.8)); n.start(t); tone(120, t, 0.16, 'sine', 0.55, 50); },
     paper(){ const t = ctx.currentTime, n = noise(0.28, 1.2), f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 2600; f.Q.value = 0.6; n.connect(f); f.connect(out(0.22)); n.start(t); },
@@ -58,8 +58,44 @@ const Snd = (() => {
     play(k, delay){ if (!on || !ac()) return; const go = () => { try { fx[k](); } catch (e) {} }; delay ? setTimeout(go, delay) : go(); },
     toggle(){ on = !on; try { localStorage.setItem('bm-sound', on ? '1' : '0'); } catch (e) {} if (on) ac(); return on; },
     get on(){ return on; },
+    get volume(){ return vol; },
+    set volume(x){ vol = Math.min(1, Math.max(0, +x || 0)); try { localStorage.setItem('bm-volume', String(vol)); } catch (e) {} if (master) master.gain.value = vol; },
   };
 })();
+/* ---------- Display settings: text size and theme. Kept on this device only; they never touch the game. ---------- */
+const Display = (() => {
+  const KEY = 'bm-display', v = { ts: 'normal', theme: 'system' };
+  try { const s = JSON.parse(localStorage.getItem(KEY) || '{}'); if (['normal', 'large', 'larger'].includes(s.ts)) v.ts = s.ts; if (['system', 'dark', 'light'].includes(s.theme)) v.theme = s.theme; } catch (e) {}
+  const mq = window.matchMedia ? matchMedia('(prefers-color-scheme: light)') : null;
+  function apply(){
+    const root = document.documentElement;
+    if (v.ts === 'normal') delete root.dataset.ts; else root.dataset.ts = v.ts;
+    root.dataset.theme = v.theme === 'light' || (v.theme === 'system' && mq && mq.matches) ? 'light' : 'dark';
+    if (typeof Scene !== 'undefined' && Scene.themeChanged) Scene.themeChanged();
+  }
+  if (mq && mq.addEventListener) mq.addEventListener('change', apply);
+  apply();
+  return { get ts(){ return v.ts; }, get theme(){ return v.theme; }, set(k, x){ v[k] = x; try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) {} apply(); } };
+})();
+function displayScreen(back){
+  const seg = (id, label, key, cur, items) => `<div class="lvl"><span id="${id}" class="eyebrow">${label}</span><div class="seg three" role="group" aria-labelledby="${id}">${items.map(([k, t]) => `<button type="button" data-${key}="${k}" aria-pressed="${k === cur}">${t}</button>`).join('')}</div></div>`;
+  overlay(`<div class="eyebrow">This device</div><h2>Display and sound</h2><p class="dim">These are kept on this device only and do not change the game.</p>
+    <div class="acct">
+      ${seg('dsTs', 'Text size', 'ts', Display.ts, [['normal', 'Normal'], ['large', 'Large'], ['larger', 'Larger']])}
+      ${seg('dsTh', 'Theme', 'th', Display.theme, [['system', 'Same as device'], ['dark', 'Dark'], ['light', 'Light']])}
+      <div class="lvl"><label for="dsVol" class="eyebrow">Volume <output id="dsVolOut" for="dsVol">${Math.round(Snd.volume * 100)}%</output></label><input type="range" id="dsVol" min="0" max="100" step="5" value="${Math.round(Snd.volume * 100)}"></div>
+      <button type="button" class="btn neutral" id="dsSnd" aria-pressed="${Snd.on}">${Snd.on ? 'Sound on' : 'Sound off'}</button>
+      <button type="button" class="btn primary" id="dsBack">Back</button>
+    </div>`);
+  const press = (sel, x) => document.querySelectorAll(sel).forEach(b => b.setAttribute('aria-pressed', b === x));
+  $('#ov').querySelector('[aria-labelledby="dsTs"]').onclick = e => { const b = e.target.closest('[data-ts]'); if (!b) return; Display.set('ts', b.dataset.ts); press('#ov [data-ts]', b); };
+  $('#ov').querySelector('[aria-labelledby="dsTh"]').onclick = e => { const b = e.target.closest('[data-th]'); if (!b) return; Display.set('theme', b.dataset.th); press('#ov [data-th]', b); };
+  $('#dsVol').oninput = e => { Snd.volume = e.target.value / 100; $('#dsVolOut').textContent = e.target.value + '%'; };
+  $('#dsVol').onchange = () => { if (Snd.on) Snd.play('coin'); };
+  $('#dsSnd').onclick = () => { Snd.toggle(); const b = $('#dsSnd'); b.textContent = Snd.on ? 'Sound on' : 'Sound off'; b.setAttribute('aria-pressed', Snd.on); sndBtn(); };
+  $('#dsBack').onclick = back || closeOverlay;
+}
+
 const SPK = on => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor" stroke="none"/>${on ? '<path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>' : '<path d="M17 9l5 6M22 9l-5 6"/>'}</svg>`;
 function sndBtn(){ const row = $('#sndRow'); if (row) row.textContent = Snd.on ? 'Sound on' : 'Sound off'; const b = $('#sndBtn'); if (!b) return; b.innerHTML = SPK(Snd.on); b.setAttribute('aria-pressed', Snd.on); b.setAttribute('aria-label', Snd.on ? 'Sound on' : 'Sound off'); }
 document.addEventListener('pointerdown', () => Snd.unlock(), { once:true });
@@ -150,7 +186,7 @@ function renderCounter(instant){
   if (!c){
     bubble(null); Scene.setView('hall', instant);
     const act = inboxActions().filter(x => !x.done).length;
-    box.style.height = ''; box.innerHTML = `<div class="empty"><h3>Counter closed</h3><p>${act ? `No one waiting. ${act} message${act > 1 ? 's' : ''} in your inbox need${act > 1 ? '' : 's'} a reply.` : `No one waiting. ${MONTHS[S.month]}'s work is done.`}</p></div>`;
+    box.style.height = ''; box.innerHTML = `<div class="empty"><h2>Counter closed</h2><p>${act ? `No one waiting. ${act} message${act > 1 ? 's' : ''} in your inbox need${act > 1 ? '' : 's'} a reply.` : `No one waiting. ${MONTHS[S.month]}'s work is done.`}</p></div>`;
     tray.innerHTML = `<button type="button" class="btn primary served" id="deskCont">${act ? 'Go to inbox' : `Close the books for ${MONTHS[S.month]}`}</button>`;
     $('#deskCont').onclick = cont; return;
   }
@@ -262,11 +298,11 @@ function closeBooks(){
   const kpi = { nim: nii * 12 / assets(), ci: inc > 0 ? -L.costs / inc : -1, cor: -L.losses * 12 / Math.max(1, S.legacy + loanSum()) };
   const nNew = rep.events.length + (rep.next ? 1 : 0), bad = rep.events.filter(e => e.tone === 'bad').length;
   overlay(`<div class="eyebrow">Month ${prevMonth + 1} of 12 · ${prevYear}</div><h2>${MONTHS[prevMonth]} accounts</h2>
-    <div><div class="big" style="color:${rep.profit >= 0 ? 'var(--good)' : 'var(--bad)'}">${fmt(rep.profit, true)}</div><div style="color:var(--muted);font-size:13px">Profit this month · ${fmt(m.profit, true)} for the year</div></div>
+    <div><div class="big" style="color:${rep.profit >= 0 ? 'var(--good)' : 'var(--bad)'}">${fmt(rep.profit, true)}</div><div style="color:var(--muted);font-size:calc(13px*var(--ts))">Profit this month · ${fmt(m.profit, true)} for the year</div></div>
     <div class="grid2"><div class="stat"><span>Capital ratio</span><b style="color:${m.cap < MIN_CAP ? 'var(--bad)' : 'var(--text)'}">${pc(m.cap)}</b></div><div class="stat"><span>Liquidity</span><b style="color:${m.liq < MIN_LIQ ? 'var(--bad)' : 'var(--text)'}">${pc(m.liq, 0)}</b></div><div class="stat"><span>Customers</span><b>${Math.round(m.trust)}/100</b></div><div class="stat"><span>Regulator</span><b>${regStatus()[0]}</b></div></div>
     ${mm.moves.length ? `<div class="moves" aria-label="What moved this month">${mm.moves.map(v => `<span class="mv ${v.good ? 'good' : 'bad'}"><span aria-hidden="true">${v.up ? '▲' : '▼'}</span> ${esc(v.label)} ${esc(v.text)}</span>`).join('')}</div>` : ''}
     ${mm.drivers.length ? `<ul class="drivers" aria-label="Biggest items this month">${mm.drivers.map(d => `<li><span>${esc(d.label)}</span><b class="num" style="color:${d.amt < 0 ? 'var(--bad)' : 'var(--good)'}">${fmt(d.amt, true)}</b></li>`).join('')}</ul>` : ''}
-    <p style="color:var(--muted);font-size:14px">${nNew} new message${nNew === 1 ? '' : 's'} in your inbox${bad ? `, ${bad} with bad news` : ''}.</p>
+    <p style="color:var(--muted);font-size:calc(14px*var(--ts))">${nNew} new message${nNew === 1 ? '' : 's'} in your inbox${bad ? `, ${bad} with bad news` : ''}.</p>
     <details class="more"><summary>Full accounts</summary>
       <table class="ledger">${rows.map(r => `<tr><td>${r[0]}</td><td style="color:${r[1] < 0 ? 'var(--bad)' : 'var(--text)'}">${fmt(r[1], true)}</td></tr>`).join('')}<tr class="tot"><td>Profit</td><td>${fmt(rep.profit, true)}</td></tr></table>
       <div class="grid3"><div class="stat"><span>${termBtn('Margin', 'Net interest margin')}</span><b>${pc(kpi.nim, 2)}</b></div><div class="stat"><span>${termBtn('Cost/income', 'Cost/income')}</span><b style="color:${kpi.ci > 0.8 || kpi.ci < 0 ? 'var(--bad)' : 'var(--text)'}">${kpi.ci < 0 ? 'n/a' : pc(kpi.ci, 0)}</b></div><div class="stat"><span>${termBtn('Cost of risk', 'Cost of risk')}</span><b>${pc(kpi.cor, 2)}</b></div></div>
@@ -310,7 +346,7 @@ const bankFoot = () => `<div class="rowbtn two stickyfoot"><button type="button"
 function branchPanel(msg){
   const mo = upMonthly();
   overlay(`${bankTop('branch')}<div class="eyebrow">${MONTHS[Math.min(S.month, 11)]} ${S.year} · cash ${fmt(S.cash)}</div><h2>Your branch</h2>
-    <p style="color:var(--muted);font-size:14px">Spend money now to earn more later. One-off costs hit this month's profit; monthly costs go on your running costs.</p>
+    <p style="color:var(--muted);font-size:calc(14px*var(--ts))">Spend money now to earn more later. One-off costs hit this month's profit; monthly costs go on your running costs.</p>
     ${msg ? `<div class="coach" style="border-left-color:var(--good);background:rgba(113,212,156,.08)"><b style="color:var(--good)">Done</b>${msg}</div>` : ''}
     <div class="ups">${UPGRADES.map(u => { const own = owned(u.key), can = S.cash >= u.cost && !S.over; return `<div class="upg${own ? ' own' : ''}"><b>${esc(u.name)}</b><p>${esc(u.blurb)}</p><span class="eff">${esc(u.effect)}</span><span class="price">${u.cost ? fmt(u.cost) + ' once' : 'No set-up cost'}${u.monthly ? ` · ${u.monthly > 0 ? fmt(u.monthly) + '/month' : 'saves ' + fmt(-u.monthly) + '/month'}` : ''}</span><button type="button" class="btn ${own ? 'neutral' : 'go'}" data-up="${u.key}" ${own || !can ? 'disabled' : ''}>${own ? 'Owned' : can ? 'Buy' : 'Can\'t afford'}</button></div>`; }).join('')}</div>
     <table class="ledger"><tr><td>Monthly cost of upgrades</td><td>${mo >= 0 ? fmt(mo) : '−' + fmt(-mo)}</td></tr><tr><td>Counters open</td><td>${owned('cashier') ? 2 : 1}</td></tr></table>

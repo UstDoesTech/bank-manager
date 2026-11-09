@@ -2,8 +2,8 @@
 function goalsHTML(){ return (S.goals || []).map(g => `<div class="goal ${g.ok === true ? 'ok' : g.ok === false ? 'no' : 'wait'}"><i>${g.ok === true ? '✓' : g.ok === false ? '✗' : '•'}</i><span>${esc(g.label)}</span></div>`).join(''); }
 function scenarioPicker(){
   overlay(`<div class="eyebrow">Scenario mode</div><h2>Pick a crisis</h2>
-    <p style="color:var(--muted);font-size:14px">One year, set goals. Each is modelled on a real period in banking history.</p>
-    ${Object.entries(SCENARIOS).map(([k, sc]) => `<div class="scen"><span class="era">${esc(sc.era)} · ${sc.year}</span><h3>${esc(sc.name)}</h3><p style="margin:0;font-size:14px">${esc(sc.blurb)}</p><ul>${sc.goals.map(g => `<li>${esc(g.label)}</li>`).join('')}</ul><button type="button" class="btn primary" data-sc="${k}">Play ${esc(sc.name.replace(/^The /, 'the '))}</button></div>`).join('')}
+    <p style="color:var(--muted);font-size:calc(14px*var(--ts))">One year, set goals. Each is modelled on a real period in banking history.</p>
+    ${Object.entries(SCENARIOS).map(([k, sc]) => `<div class="scen"><span class="era">${esc(sc.era)} · ${sc.year}</span><h3>${esc(sc.name)}</h3><p style="margin:0;font-size:calc(14px*var(--ts))">${esc(sc.blurb)}</p><ul>${sc.goals.map(g => `<li>${esc(g.label)}</li>`).join('')}</ul><button type="button" class="btn primary" data-sc="${k}">Play ${esc(sc.name.replace(/^The /, 'the '))}</button></div>`).join('')}
     <button type="button" class="btn neutral" id="ovGo">Back</button>`);
   $('#ovGo').onclick = titleScreen;
   $('#ov .panel').onclick = e => { const b = e.target.closest('[data-sc]'); if (b) startScenario(b.dataset.sc); };
@@ -25,7 +25,7 @@ function endScreen(){
       <div class="stat"><span>Customer trust</span><b>${Math.round(S.trust)}/100</b></div>
       <div class="stat"><span>Regulator</span><b>${regStatus()[0]}</b></div>
     </div>
-    ${S.board ? `<p style="color:var(--muted);font-size:14px">The board's confidence in you: ${Math.round(S.board.conf)} (${esc(boardBand(S.board.conf))}).</p>` : ''}
+    ${S.board ? `<p style="color:var(--muted);font-size:calc(14px*var(--ts))">The board's confidence in you: ${Math.round(S.board.conf)} (${esc(boardBand(S.board.conf))}).</p>` : ''}
     ${ambitionsYearEnd()}
     <details class="more"><summary>The year in numbers</summary>
     <table class="ledger">
@@ -39,10 +39,10 @@ function endScreen(){
       ${S.wm ? `<tr><td>Client assets managed</td><td>${fmt(aum())}</td></tr>` : ''}
       <tr><td>Lowest capital ratio</td><td>${pc(st.minCap)}</td></tr>
     </table>
-    <p style="color:var(--muted);font-size:13px">Default rates in this game run at about three times real-world levels, and a year is squeezed into twelve short months, so things move faster and go wrong more often than they would in life.</p>
+    <p style="color:var(--muted);font-size:calc(13px*var(--ts))">Default rates in this game run at about three times real-world levels, and a year is squeezed into twelve short months, so things move faster and go wrong more often than they would in life.</p>
     ${S.career.length ? `<h3>Earlier years</h3><table class="ledger">${S.career.map(c => `<tr><td>${c.year} · ${esc(c.letter)}</td><td>${fmt(c.profit, true)}</td></tr>`).join('')}</table>` : ''}
     </details>
-    ${fail ? '' : `<p style="color:var(--muted);font-size:14px">${S.loans.length} loans, ${fmt(giltBook())} of gilts and ${fmt(S.deposits)} of deposits carry into ${S.year + 1}, along with your customers' trust and the regulator's memory.</p>`}
+    ${fail ? '' : `<p style="color:var(--muted);font-size:calc(14px*var(--ts))">${S.loans.length} loans, ${fmt(giltBook())} of gilts and ${fmt(S.deposits)} of deposits carry into ${S.year + 1}, along with your customers' trust and the regulator's memory.</p>`}
 
     <div class="rowbtn">${fail || S.scenario ? '' : `<button type="button" class="btn primary" id="ovGo">Continue into ${S.year + 1}</button>`}${S.debrief && S.debrief.length ? '<button type="button" class="btn neutral" id="ovDebrief">Notes from the executive team</button>' : ''}${S.yr && S.yr.mon.length > 1 ? '<button type="button" class="btn neutral" id="ovReplay">Replay the year</button>' : ''}<button type="button" class="btn link" id="ovPaper">Read The Fiscal Herald again</button>${S.scenario ? `<button type="button" class="btn primary" id="ovRetry">Try ${esc(SCENARIOS[S.scenario].name.replace(/^The /, 'the '))} again</button><button type="button" class="btn neutral" id="ovMenu">Main menu</button>` : `<button type="button" class="btn ${fail ? 'primary' : 'neutral'}" id="ovNew">Start a new bank</button>`}</div>`);
   const go = $('#ovGo'); if (go) go.onclick = () => { dispatch({ type:"nextYear" }); save(); play(); };
@@ -130,9 +130,9 @@ function booksPanel(){
       <div class="stat"><span>${termBtn('Capital ratio', 'Capital ratio')}</span><b>${pc(capRatio())}</b></div>
       <div class="stat"><span>${termBtn('Liquidity', 'Liquidity')}</span><b>${pc(liqRatio())}</b></div>
       <div class="stat"><span>Savings rate</span><b>${S.savRate.toFixed(2)}%</b></div>
-      <div class="stat"><span>Net interest margin</span>${nim == null ? '<b style="font-size:13px;font-weight:600;color:var(--muted)">after month end</b>' : '<b>' + pc(nim, 2) + '</b>'}</div>
+      <div class="stat"><span>Net interest margin</span>${nim == null ? '<b style="font-size:calc(13px*var(--ts));font-weight:600;color:var(--muted)">after month end</b>' : '<b>' + pc(nim, 2) + '</b>'}</div>
     </div>
-    <p style="color:var(--muted);font-size:13px">Capital ratio = capital ÷ ${fmt(rwa())} risk-weighted assets. Mortgages count at 35–50%, other loans at 100%, gilts and reserves at zero.</p>
+    <p style="color:var(--muted);font-size:calc(13px*var(--ts))">Capital ratio = capital ÷ ${fmt(rwa())} risk-weighted assets. Mortgages count at 35–50%, other loans at 100%, gilts and reserves at zero.</p>
     ${bankFoot()}`);
   $('#ovGo').onclick = closeOverlay; bankWire(); tabSel('bank');
 }
@@ -382,6 +382,27 @@ function pendingBlock(){
   const lines = q.map(e => `<p class="dim"><b>${esc(titles[e.area])}:</b> ${e.release ? 'back to the executive team' : esc(Object.entries(e.values).map(([k, v]) => k + ' ' + v).join(', '))}</p>`).join('');
   return `<div class="note"><div class="eyebrow">Waiting for next month</div>${lines}<button type="button" class="btn link" id="plCancel">Withdraw these changes</button></div>`;
 }
+/* Settings preview: what the next few months look like on the typed settings and on the saved ones, in the same gauges as the Team screen. */
+function typedChanges(){
+  const ov = {}; document.querySelectorAll('#ov input[data-key]').forEach(i => { const v = parseFloat(i.value), a = i.dataset.area, k = i.dataset.key; if (isFinite(v) && v !== S.policy[a][k]) (ov[a] = ov[a] || {})[k] = v; });
+  return ov;
+}
+function previewHTML(ov){
+  if (!Object.keys(ov).length) return '<h3>Preview</h3><p class="dim">Change a value above to see what it would do over the next few months, before you save it.</p>';
+  let P; try { P = previewPolicy(ov); } catch (e) { return `<h3>Preview</h3><p class="dim">${esc(/bad value/.test(e.message) ? 'One of the values is outside its limits, so there is nothing to preview yet.' : e.message)}</p>`; }
+  const keep = Object.fromEntries(P.keep.gauges.map(g => [g.key, g])), pts = (g, k) => { const d = g.key === 'trust' || g.key === 'board' ? g.value - k.value : (g.value - k.value) * 100; return (d > 0.05 ? '+' : d < -0.05 ? '−' : '') + (Math.abs(d) < 0.05 ? 'no change' : Math.abs(d).toFixed(1) + ' points'); };
+  const dp = P.change.profit - P.keep.profit;
+  return `<h3>Preview</h3><p class="dim">The next ${P.months} month${P.months === 1 ? '' : 's'} with nothing unusual happening, on these settings. Both runs use the same luck, so the difference is down to the settings.${S.meet ? ' Saved settings take effect at the start of next month.' : ''}</p>
+    ${P.change.failed ? `<div class="adv alarm"><p><b>On these settings ${esc(P.change.why)}.</b></p></div>` : ''}
+    <div class="gauges">${P.change.gauges.map(g => `<div class="pv">${gaugeHTML(g)}<span class="pvd">${esc(pts(g, keep[g.key]))} against ${esc(keep[g.key].shown)} on your saved settings</span></div>`).join('')}</div>
+    <p class="dim">Profit over the period: ${fmt(P.change.profit, true)} on these settings, ${fmt(P.keep.profit, true)} on your saved ones${Math.abs(dp) >= 0.5 ? ` (${fmt(dp, true)})` : ''}.</p>`;
+}
+function wirePreview(){
+  const box = $('#plPrev'); if (!box) return; let t = null;
+  const draw = () => { box.innerHTML = previewHTML(typedChanges()); };
+  draw();
+  $('#ov').oninput = e => { if (!e.target.matches('input[data-key]')) return; clearTimeout(t); t = setTimeout(() => { if (document.body.contains(box)) draw(); }, 350); };      // one handler, replaced each time the screen opens
+}
 function policyScreen(msg, isErr){
   const sys = systemPolicy(), note = '<div class="msg' + (isErr ? ' err' : '') + '" role="status">' + esc(msg || '') + '</div>';
   const blocks = Object.keys(POLICY_FIELDS).map(area => {
@@ -391,10 +412,11 @@ function policyScreen(msg, isErr){
       '<label>' + r[1] + ' <span class="dim">(' + r[2] + '; executive team: ' + sys[area][r[0]] + ')</span><input type="number" step="' + r[3] + '" data-area="' + area + '" data-key="' + r[0] + '" value="' + policyAfterMeeting(area)[r[0]] + '">' + (r[4] ? '<span class="dim">' + r[4] + '</span>' : '') + '</label>').join('');
   }).join('');
   overlay(execTop('settings') + '<div class="eyebrow">Chief Executive</div><h2>Policy</h2><div class="acct">' + stressLine() + pendingBlock() + (quietLeft() > 0 ? '<p class="dim">Quiet months: nothing outside the bank will go wrong for ' + (quietLeft() - 1) + ' more month' + (quietLeft() === 2 ? '' : 's') + ' after this one.</p>' : '') + blocks + note +
+    '<div id="plPrev" class="prev" aria-live="polite"></div>' +
     '<div class="stickyfoot cols"><button type="button" class="btn primary full" id="plSave">Save changes</button><select id="plScn" aria-label="Stress test scenario"><option value="recession">Recession</option><option value="rates">Rate shock</option></select><button type="button" class="btn neutral" id="plTest">Stress test these settings first</button><button type="button" class="btn neutral full" id="plReset">Go back to the executive team values</button><button type="button" class="btn link" id="plBack">Close</button></div></div>');
-  tabSel('policy'); execWire();
+  tabSel('policy'); execWire(); wirePreview();
   $('#plTest').onclick = () => {
-    const ov = {}; document.querySelectorAll('#ov input[data-key]').forEach(i => { const v = parseFloat(i.value), a = i.dataset.area, k = i.dataset.key; if (isFinite(v) && v !== S.policy[a][k]) (ov[a] = ov[a] || {})[k] = v; });
+    const ov = typedChanges();
     try { dispatch({ type: 'stress', overrides: ov, scenario: $('#plScn').value }); save(); stressScreen(Object.keys(ov).length ? 'Run on the settings you typed in. They are not saved yet.' : 'You have not changed anything, so this ran on your saved settings.'); } catch (e) { policyScreen(e.message, true); }
   };
   const send = (area, values) => { try { dispatch({ type: 'setPolicy', area, values }); return null; } catch (e) { return e.message; } };

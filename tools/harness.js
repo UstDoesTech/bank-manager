@@ -7,7 +7,7 @@ function loadEngine(src){
     '...(typeof portfolio==="function"?{portfolio,loanRW,loanSum,rwa,policyVerdict,systemPolicy,quietLeft,giltMV,giltBook,mkt}:{}),' +
     '...(typeof ledgerCheck==="function"?{ledgerCheck,setSink:f=>{LEDGER_SINK=f}}:{}),' +
     '...(typeof mortgageRisk==="function"?{mortgageRisk,LEVELS,UPGRADES,owned,capRatio,SCENARIOS}:{}),' +
-    '...(typeof dispatch==="function"?{dispatch}:{}),...(typeof sceneFacts==="function"?{sceneFacts,dashboardFacts,monthMoves,plRows,roomFacts,yearReplay,ambitionFacts,AMBITIONS,rivalFacts,RIVALS}:{})}', ctx);
+    '...(typeof dispatch==="function"?{dispatch}:{}),...(typeof sceneFacts==="function"?{sceneFacts,dashboardFacts,monthMoves,plRows,roomFacts,yearReplay,ambitionFacts,AMBITIONS,rivalFacts,RIVALS,previewPolicy}:{})}', ctx);
   return ctx.E;
 }
 // small independent PRNG so bot choices never touch the game's own random stream

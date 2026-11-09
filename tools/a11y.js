@@ -15,6 +15,7 @@ const SCREENS = [
   ['counter', () => { closeOverlay(); setView('counter'); }],
   ['inbox', () => { closeOverlay(); setView('inbox'); }],
   ['inbox-open', () => { closeOverlay(); setView('inbox'); const m = document.querySelector('#mlist button, #mlist [data-k]'); if (m) m.click(); }],
+  ['display', () => displayScreen()],
   ['bank-branch', () => branchPanel()],
   ['bank-books', () => booksPanel()],
   ['household', () => { try { householdScreen(); } catch (e) {} }],
@@ -29,6 +30,7 @@ const SCREENS = [
   ['debrief', () => { try { debriefScreen(); } catch (e) {} }],
   ['team', () => { S.progress.unlocked.push('pricing', 'credit', 'treasury', 'funding', 'capital', 'operations', 'growth'); closeOverlay(); dispatch({ type: 'nextYear' }); for (let m = 0; m < 4; m++) { play(); dispatch({ type: 'closeMonth' }); } closeOverlay(); hud(); teamScreen(); }],
   ['settings', () => policyScreen()],
+  ['settings-preview', () => { policyScreen(); const i = document.querySelector('input[data-key="liquidityTarget"]'); if (i) { i.value = '0.4'; i.dispatchEvent(new Event('input', { bubbles: true })); } }],
   ['stress', () => stressScreen()],
   ['stress-result', () => { dispatch({ type: 'stress', scenario: 'recession' }); stressScreen(); }],
 ];
@@ -36,19 +38,20 @@ const SCREENS = [
   const b = await chromium.launch({ executablePath: E, headless: true, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
   let total = 0; const seen = new Map();
   for (const [size, vp] of [['phone', { width: 390, height: 844 }], ['desktop', { width: 1280, height: 800 }]]) {
-    for (const scheme of ['dark']) {
+    for (const [scheme, ts] of [['dark', 'normal'], ['light', 'normal'], ['dark', 'larger']]) {
       const page = await (await b.newContext({ viewport: vp, colorScheme: scheme })).newPage(); const errs = [];
       page.on('pageerror', e => errs.push(e.message));
       await page.goto('file:///' + path.resolve(root, 'Bank Manager.html').replace(/\\/g, '/')); await page.waitForSelector('#ovTrain'); await page.click('#ovTrain'); await page.waitForTimeout(1000);
-      await page.addScriptTag({ content: AXE });
+      await page.addScriptTag({ content: AXE }); await page.evaluate(([t, s]) => { Display.set('theme', t); Display.set('ts', s); }, [scheme, ts]);
       for (const [name, fn] of SCREENS) {
         try { await page.evaluate(fn); } catch (e) { console.log(size, scheme, name, 'SETUP', e.message.split('\n')[0]); continue; }
         await page.waitForTimeout(900);
+        await page.evaluate(() => Promise.allSettled(document.getAnimations().filter(x => x.effect && x.effect.getComputedTiming().iterations !== Infinity).map(x => x.finished)));   // a screen caught mid-fade has the wrong colours
         // a sticky footer covers whatever sits under it until the player scrolls, so check the screen scrolled to its end
         await page.evaluate(() => document.querySelectorAll('#ov, #ov .panel').forEach(e => { e.scrollTop = e.scrollHeight; }));
         const r = await page.evaluate(async tags => { const x = await axe.run(document, { runOnly: { type: 'tag', values: tags } }); return { v: x.violations.map(v => ({ id: v.id, impact: v.impact, n: v.nodes.length, t: v.nodes.slice(0, 2).map(n => n.target.join(' ') + ' :: ' + (n.any[0] || n.all[0] || n.none[0] || {}).message) })), inc: x.incomplete.map(v => v.id) }; }, TAGS);
-        total++; if (r.v.length) { r.v.forEach(v => { const k = v.id + '|' + name; if (!seen.has(k)) seen.set(k, []); seen.get(k).push(size + '/' + scheme); console.log(size, scheme, name, v.impact, v.id, v.n, JSON.stringify(v.t).slice(0, 260)); }); }
-        if (r.inc.length) console.log('   (needs review)', size, scheme, name, [...new Set(r.inc)].join(','));
+        total++; if (r.v.length) { r.v.forEach(v => { const k = v.id + '|' + name; if (!seen.has(k)) seen.set(k, []); seen.get(k).push(size + '/' + scheme); console.log(size, scheme + '/' + ts, name, v.impact, v.id, v.n, JSON.stringify(v.t).slice(0, 260)); }); }
+        if (r.inc.length) console.log('   (needs review)', size, scheme + '/' + ts, name, [...new Set(r.inc)].join(','));
       }
       if (errs.length) console.log(size, scheme, 'page errors', errs.slice(0, 3));
       await page.close();

@@ -167,6 +167,28 @@ the server turn on for a new career), so a game started without it, and every ol
   metrics on them and queries 12 and 13 in `db/analysis/metrics.sql` answer "does beating the rivals pay". `server/replay.js` checks the
   stored months and rivals against the replay.
 
+## Display, sound and the Settings preview
+
+**Display and sound** (title screen, and the game menu under "Text size, theme and volume"). Three settings kept in the browser on that
+device only; none of them reach the game, the save or the server.
+- *Text size*: Normal, Large (115%) or Larger (130%). Every font size in the stylesheet and the screens is multiplied by `--ts`, set from
+  `data-ts` on the page, so type grows without zooming the layout. Sizes inside the 3D hall's own pictures are not scaled.
+- *Theme*: Same as device (follows the device's light or dark setting), Dark or Light. The light theme re-colours the page's chrome (`html[data-theme="light"]`
+  in `web/style.css`); the 3D hall, the counter desk and what sits on it keep their dark look, as they are the physical scene.
+- *Volume*: a master volume for every sound, on top of the existing on/off.
+
+`tools/a11y.js` audits every screen in dark, light and dark with larger text, at phone and desktop width (132 runs).
+
+**Settings preview.** On the Settings screen, typing a new value shows what the next few months look like before it is saved, in the same
+gauges as the Team screen (capital ratio, liquidity, customer trust and, once the board is watching, board confidence), with the change
+against the saved settings and the profit over the period. `previewPolicy()` runs the bank forward on two copies of the game, one on the
+saved settings and one on the typed ones, using the same random numbers, so the difference is the settings alone. It assumes nothing unusual
+happens outside the bank, stops at the end of the year (at most six months), and never touches the real game or its random stream; it is
+not a command, so the server never sees it. The stress test remains the way to see how settings cope with a recession.
+
+**Small phones.** Below 400px wide the customer's line above the hall becomes a one-line strip, so it no longer hides the hall on a
+320px screen.
+
 ## Executive team, early warnings and the stress test
 
 Once a player has been handed any Chief Executive area, the Policy tab opens three screens (Team, Settings, Stress test); none

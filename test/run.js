@@ -688,4 +688,18 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   assert(lead.S.deposits > lag.S.deposits, 'paying savers more than the rivals draws money in');
   assert.strictEqual(mk({ tutorial: true, rivals: true }).S.rivals, undefined, 'the training day has no rivals');
   n += 13; }
+// 23. Settings preview: the next months on a copy, with and without the typed settings, on the same random numbers; never touches the game
+{ const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 52, opts: { chiefExecutive: true } });
+  for (let i = 0; i < 2; i++){ for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' }); }
+  const before = hashState(E.S) + JSON.stringify(E.S.rngState || '');
+  const none = E.previewPolicy({}); assert.strictEqual(none.changed, false); assert.deepStrictEqual(none.keep, none.change, 'with nothing changed the two runs are identical'); assert.strictEqual(none.months, 6);
+  const liq = E.previewPolicy({ treasury: { liquidityTarget: 0.5 } }); const g = k => x => x.gauges.find(y => y.key === k);
+  assert(liq.changed && g('liq')(liq.change).value > g('liq')(liq.keep).value, 'a higher cash target gives a higher liquidity ratio');
+  assert(liq.change.profit !== liq.keep.profit, 'and costs or earns something different'); assert(liq.now.length >= 3 && liq.change.gauges.every(x => ['ok', 'watch', 'alarm'].includes(x.status)));
+  assert.deepStrictEqual(E.previewPolicy({ treasury: { liquidityTarget: 0.5 } }), liq, 'the same question gets the same answer');
+  assert.strictEqual(hashState(E.S) + JSON.stringify(E.S.rngState || ''), before, 'a preview never changes the game or its random numbers');
+  assert.throws(() => E.previewPolicy({ treasury: { liquidityTarget: 5 } }), /bad value/); assert.throws(() => E.previewPolicy({ nonsense: { a: 1 } }), /not unlocked/);
+  E.S.month = 11; assert.strictEqual(E.previewPolicy({}).months, 1, 'a preview stops at the end of the year'); E.S.month = 2;
+  const T = loadEngine(src); T.dispatch({ type: 'newGame', seed: 3, opts: { tutorial: true } }); assert.throws(() => T.previewPolicy({}), /nothing to preview/);
+  n += 11; }
 console.log('ok', n, 'checks');

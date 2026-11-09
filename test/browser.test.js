@@ -315,3 +315,30 @@ test('the game menu: pause, save, sound, exit to the title and back, with Escape
   assert.deepStrictEqual(errors, []);
   await ctx.close();
 });
+
+test('display settings: text size, theme and volume apply at once, are kept across a reload, and the hall still shows on a 320px screen', { skip: !EDGE && 'no Edge/Chrome found' }, async () => {
+  const ctx = await browser.newContext({ viewport: { width: 320, height: 568 }, colorScheme: 'dark' }); const page = await ctx.newPage();
+  const errors = []; page.on('pageerror', (e) => errors.push(e.message));
+  const url = 'file:///' + require('path').resolve(__dirname, '..', 'Bank Manager.html').replace(/\\/g, '/');
+  await page.goto(url); await page.waitForSelector('#ovTrain');
+  assert.strictEqual(await page.evaluate(() => document.documentElement.dataset.theme), 'dark', 'with the default "same as device" a dark device gets the dark theme');
+  await page.click('#ovDisp'); await page.waitForSelector('#dsBack');
+  const base = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector('#ov .dim')).fontSize));
+  await page.click('#ov [data-ts="larger"]'); await page.click('#ov [data-th="light"]'); await page.fill('#dsVol', '35'); await page.dispatchEvent('#dsVol', 'input');
+  assert.strictEqual(await page.evaluate(() => document.documentElement.dataset.ts), 'larger');
+  assert.strictEqual(await page.evaluate(() => document.documentElement.dataset.theme), 'light');
+  assert.strictEqual(await page.getAttribute('#ov [data-ts="larger"]', 'aria-pressed'), 'true'); assert.strictEqual(await page.getAttribute('#ov [data-ts="normal"]', 'aria-pressed'), 'false');
+  assert.strictEqual(await page.textContent('#dsVolOut'), '35%');
+  const bigger = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector('#ov .dim')).fontSize));
+  assert(bigger > base * 1.2, `larger text is bigger: ${base} to ${bigger}`);
+  await page.reload(); await page.waitForSelector('#ovTrain');
+  assert.strictEqual(await page.evaluate(() => [document.documentElement.dataset.ts, document.documentElement.dataset.theme, Snd.volume].join(' ')), 'larger light 0.35', 'the settings come back after a reload');
+  // the game does not know about any of it: a new game's state has nothing from these settings
+  await page.click('#ovTrain'); await page.waitForTimeout(800);
+  assert.strictEqual(await page.evaluate(() => JSON.stringify(S).includes('larger') || JSON.stringify(S).includes('light')), false);
+  // a customer is speaking: on a screen this small the line is one strip, not a block over the hall
+  await page.evaluate(() => { Display.set('ts', 'normal'); closeOverlay(); });
+  const bubble = await page.evaluate(() => { const b = document.querySelector('#bubble'); if (!b || b.hidden || getComputedStyle(b).display === 'none') return null; const r = b.getBoundingClientRect(), st = document.querySelector('#stage').getBoundingClientRect(); return { h: r.height, stage: st.height, w: r.width }; });
+  if (bubble) assert(bubble.h < bubble.stage * 0.4, `the bubble covers less than 40% of the hall: ${JSON.stringify(bubble)}`);
+  assert.deepStrictEqual(errors, []); await ctx.close();
+});

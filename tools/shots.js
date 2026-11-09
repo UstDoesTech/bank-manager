@@ -33,6 +33,7 @@ const sizes = { phone: { width: 390, height: 844 }, desktop: { width: 1280, heig
     await shot('07-executive-team');
     await page.evaluate(() => stressScreen()); await shot('08-stress');
     await page.evaluate(() => policyScreen()); await shot('09-settings');
+    await page.evaluate(() => { const i = document.querySelector('input[data-key="liquidityTarget"]'); if (i) { i.value = '0.4'; i.dispatchEvent(new Event('input', { bubbles: true })); } }); await page.waitForTimeout(600); await shot('09b-settings-preview');
     await page.evaluate(() => menuScreen()); await shot('10-menu');
     if (errors.length) console.error(name, 'page errors:', errors);
     await page.close();
