@@ -1,6 +1,7 @@
 /* ================= UI ================= */
 const TERMS = {
   'Profit':'Your capital now minus your capital at the start of the year.',
+  'Expected credit loss':'Money set aside for loans that may not be repaid, booked when you lend rather than when a borrower stops paying (the IFRS 9 rule). It rises for new loans, for loans in their riskier second year and for loans behind on payments, and falls as loans are repaid or written off.',
   'Capital ratio':'Your own money as a share of risk-weighted loans. Below 10.5% the regulator intervenes; below 8% they close you.',
   'Liquidity':'Cash and gilts you could use tomorrow, as a share of deposits. Keep it above 10%.',
   'Customer trust':'How customers rate your treatment of them. Trust brings in deposits; lose it and they leave.',
@@ -121,6 +122,7 @@ function hud(flash){
   $('#policyBtn').hidden = !(S.progress && S.progress.unlocked.some(a => POLICY_LIMITS[a]));
   const nq = counterQueue().length, ni = inboxActions().filter(c => !c.done).length;        // the badge counts what needs a reply, not every unread message
   $('#nCounter').textContent = nq ? String(nq) : ''; $('#nInbox').textContent = ni ? String(ni) : '';
+  const ck = $('#clock'); if (ck){ ck.hidden = !S.clock || S.over; if (S.clock){ const f = Math.max(0, S.clock.left) / S.clock.cap; ck.querySelector('b').style.width = Math.round(f * 100) + '%'; ck.classList.toggle('low', f < 0.25); ck.querySelector('em').textContent = `${Math.max(0, Math.round(S.clock.left))} min left`; ck.setAttribute('aria-label', `Counter time: ${Math.max(0, Math.round(S.clock.left))} of ${S.clock.cap} minutes left${S.clock.walked ? `, ${S.clock.walked} walked out` : ''}`); } }
   $('#contBtn').textContent = S.over ? 'Year end' : (remaining() || served) ? 'Continue' : weekLeft() ? 'End week' : 'End month';
   lastM = m;
 }
@@ -160,15 +162,16 @@ function docHTML(c, d, i){
   const ref = `No. ${c.ref}`;
   if (d.s === 'id'){
     const h = c.who.hue || 0.5, born = S.year - (c.who.age || 40);
-    const photo = photoHTML(c.who);
+    const photo = photoHTML(idWho(c));
     return `<header class="dh">${esc(d.t)}<span>UK · ${String(c.ref).padStart(4, '0')}${String(c.id).padStart(5, '0')}</span></header><dl class="db">${photo}<div class="idf"><div class="f"><dt>Name</dt><dd>${esc(c.who.name)}</dd></div><div class="f"><dt>Born</dt><dd>${born}</dd></div>${d.rows.map(fieldHTML).join('')}</div></dl>`;
   }
   const who = i === 0 ? `<div class="who-row"><strong>${nameHTML(c)}${c.who.age ? ', ' + c.who.age : ''}</strong><span>${esc(c.who.sub)}</span></div>` : '';
   return `<header class="dh">${esc(d.t)}<span>${d.s === 'note' ? '' : ref}</span></header><dl class="db">${who}${d.rows.map(fieldHTML).join('')}</dl>`;
 }
+const idWho = c => c.idLook ? Object.assign({}, c.who, { look: c.idLook }) : c.who;
 function idStrip(c, d){
   const h = c.who.hue || 0.5, born = S.year - (c.who.age || 40);
-  const photo = photoHTML(c.who);
+  const photo = photoHTML(idWho(c));
   return `<div class="idstrip">${photo}<dl class="db"><div class="f"><dt>${esc(d.t)}</dt><dd>UK ${String(c.ref).padStart(4, '0')}${String(c.id).padStart(5, '0')}</dd></div><div class="f"><dt>Born</dt><dd>${born}</dd></div>${d.rows.map(fieldHTML).join('')}</dl></div>`;
 }
 function layDocs(c, mark){
@@ -218,13 +221,15 @@ function renderCounter(instant){
   }
   busy = false;
   layDocs(c); bubble(c);
-  tray.innerHTML = c.opts.map((o, i) => { const ok = optionAllowed(o); return `<button type="button" class="act ${o.s}" data-i="${i}" ${ok ? '' : 'disabled'}>${esc(o.l)}${o.sub || !ok ? `<small>${ok ? esc(o.sub) : esc(o.why || 'Not enough cash')}</small>` : ''}</button>`; }).join('');
+  tray.innerHTML = c.opts.map((o, i) => { const ok = optionAllowed(o), tm = S.clock ? `<small class="tm">About ${timeCost(c, o.k)} minutes</small>` : ''; return `<button type="button" class="act ${o.s}" data-i="${i}" ${ok ? '' : 'disabled'}>${esc(o.l)}${o.sub || !ok ? `<small>${ok ? esc(o.sub) : esc(o.why || 'Not enough cash')}</small>` : ''}${tm}</button>`; }).join('');
   tray.onclick = e => { const b = e.target.closest('.act'); if (b && !b.disabled) stampIt(c, +b.dataset.i); };
 }
 function stampIt(c, i){
   if (busy) return; busy = true;
-  const o = c.opts[i], before = metrics();
+  const o = c.opts[i], before = metrics(), wasWalked = new Set(S.queue.filter(x => x.done === 'walked').map(x => x.id));
   const out = dispatch({ type:"resolve", id:c.id, k:o.k });
+  const left = S.queue.filter(x => x.done === 'walked' && !wasWalked.has(x.id));
+  if (left.length){ const b = $('#wkban'); b.innerHTML = `<b>Out of time at the counter</b><span>${left.length === 1 ? `${esc(left[0].who.name)} gave up waiting and left` : `${left.length} people gave up waiting and left: ${esc(left.map(x => first(x.who.name)).join(', '))}`}</span>`; b.hidden = false; clearTimeout(endWeek.t); endWeek.t = setTimeout(() => { b.hidden = true; }, 3600); Snd.play('bad', 900); }
   Snd.unlock();
   $('#docs').scrollTop = 0;
   const md = $('#mainDoc'); if (md){ const pr = document.createElement('div'); pr.className = 'press'; md.appendChild(pr); setTimeout(() => pr.remove(), 700); const mk = document.createElement('div'); mk.className = 'mark st-' + o.s; mk.style.animationDelay = reduce ? '0s' : '.25s'; mk.textContent = o.st || 'DONE'; md.appendChild(mk); }
@@ -270,15 +275,16 @@ function renderMsg(it){
   } else if (c && c.done){
     const o = c.opts.find(x => x.k === c.done), out = c.out || { lines:[], chips:[] };
     const nxt = inboxActions().find(x => !x.done);
-    tail = `<div class="reply"><b>You replied: ${esc(o ? o.l : 'Done')}</b>${out.lines.map(l => `<p>${esc(l.t)}</p>`).join('')}${out.cust ? `<div class="cust"><b>For the customer</b>${esc(out.cust)}</div>` : ''}${out.chips.length ? `<div class="chips">${out.chips.map(ch => `<span class="chip ${ch.c}">${esc(ch.t)}</span>`).join('')}</div>` : ''}</div>
+    tail = `<div class="reply"><b>${c.staff ? `Your team decided, by your standing instructions: ${esc(o ? o.l : 'Done')}` : `You replied: ${esc(o ? o.l : 'Done')}`}</b>${out.lines.map(l => `<p>${esc(l.t)}</p>`).join('')}${out.cust ? `<div class="cust"><b>For the customer</b>${esc(out.cust)}</div>` : ''}${out.chips.length ? `<div class="chips">${out.chips.map(ch => `<span class="chip ${ch.c}">${esc(ch.t)}</span>`).join('')}</div>` : ''}</div>
       <button type="button" class="btn ${nxt ? 'primary' : 'neutral'}" id="msgNext">${nxt ? 'Next message needing a reply' : counterQueue().length ? 'Back to the counter' : 'Back to inbox'}</button>`;
   } else if (m && m.reply){
     tail = `<div class="reply"><b>You replied: ${esc(m.reply.label)}</b>${m.reply.lines.map(t => `<p>${esc(t)}</p>`).join('')}</div>`;
   }
   const body = c ? c.note : m.body;
+  const mwho = m && m.who ? `<div class="mwho">${photoHTML(m.who)}<div><p><b>${esc(m.who.name)}</b>, ${m.who.age}</p>${m.dec ? `<p>Your decision in ${MONTHS[m.dec.m]}${m.dec.y !== S.year ? ' ' + m.dec.y : ''}: ${esc(m.dec.label)}, ${esc(m.dec.pick)}</p>` : ''}</div></div>` : '';
   $('#mview').innerHTML = `<article class="msg"><button type="button" class="back" id="msgBack">‹ Inbox</button>
     <div class="mmeta">${avatar(it.from)}<div><strong>${esc(it.from)}</strong><br>To: you · ${esc(it.when)} ${S.year}</div></div>
-    <h2>${esc(it.subject)}</h2>${cust}<p>${esc(body)}</p>${fields}${c && c.coach && !c.done ? `<div class="coach"><b>Your trainer</b>${esc(c.coach)}</div>` : ''}${tail}</article>`;
+    <h2>${esc(it.subject)}</h2>${cust}${mwho}<p>${esc(body)}</p>${fields}${c && c.coach && !c.done ? `<div class="coach"><b>Your trainer</b>${esc(c.coach)}</div>` : ''}${tail}</article>`;
   $('#msgBack').onclick = () => { openKey = null; $('#app').dataset.msg = ''; renderInbox(); };
   const rp = $('#replies'); if (rp) rp.onclick = e => { const b = e.target.closest('.btn'); if (b && !b.disabled) replyMsg(c, +b.dataset.i); };
   const nx = $('#msgNext'); if (nx) nx.onclick = () => { const n = inboxActions().find(x => !x.done); if (n) openMsg('c' + n.id); else if (counterQueue().length) setView('counter'); else { openKey = null; $('#app').dataset.msg = ''; renderInbox(); } };
@@ -330,6 +336,8 @@ function closeBooks(){
     <div class="grid2"><div class="stat"><span>Capital ratio</span><b style="color:${m.cap < MIN_CAP ? 'var(--bad)' : 'var(--text)'}">${pc(m.cap)}</b></div><div class="stat"><span>Liquidity</span><b style="color:${m.liq < MIN_LIQ ? 'var(--bad)' : 'var(--text)'}">${pc(m.liq, 0)}</b></div><div class="stat"><span>Customers</span><b>${Math.round(m.trust)}/100</b></div><div class="stat"><span>Regulator</span><b>${regStatus()[0]}</b></div></div>
     ${mm.moves.length ? `<div class="moves" aria-label="What moved this month">${mm.moves.map(v => `<span class="mv ${v.good ? 'good' : 'bad'}"><span aria-hidden="true">${v.up ? '▲' : '▼'}</span> ${esc(v.label)} ${esc(v.text)}</span>`).join('')}</div>` : ''}
     ${mm.drivers.length ? `<ul class="drivers" aria-label="Biggest items this month">${mm.drivers.map(d => `<li><span>${esc(d.label)}</span><b class="num" style="color:${d.amt < 0 ? 'var(--bad)' : 'var(--good)'}">${fmt(d.amt, true)}</b></li>`).join('')}</ul>` : ''}
+    ${callsHTML(prevMonth, prevYear)}
+    ${S.depth && S.depth.risk ? `<p style="color:var(--muted);font-size:calc(14px*var(--ts))">${termBtn('Held against expected losses', 'Expected credit loss')}: ${fmt(S.provision || 0)}. This changes as loans are made, age and fall behind, and goes into the month's losses.</p>` : ''}
     <p style="color:var(--muted);font-size:calc(14px*var(--ts))">${nNew} new message${nNew === 1 ? '' : 's'} in your inbox${bad ? `, ${bad} with bad news` : ''}.</p>
     <details class="more"><summary>Full accounts</summary>
       <table class="ledger">${rows.map(r => `<tr><td>${r[0]}</td><td style="color:${r[1] < 0 ? 'var(--bad)' : 'var(--text)'}">${fmt(r[1], true)}</td></tr>`).join('')}<tr class="tot"><td>Profit</td><td>${fmt(rep.profit, true)}</td></tr></table>
@@ -337,6 +345,18 @@ function closeBooks(){
     </details>
     <button type="button" class="btn primary" id="ovGo">${S.over ? 'Read The Fiscal Herald' : `Open ${MONTHS[S.month]}`}</button>`);
   $('#ovGo').onclick = () => { if (S.over) herald(); else { closeOverlay(); Scene.boards(); setView('inbox'); } };
+}
+
+// The month's decisions by kind of case, judged on what the bank knew afterwards. Shown at month end when the game's calls option is on.
+function callsHTML(m, y){
+  if (!(S.depth && S.depth.calls)) return '';
+  const rows = callsFacts(m, y); if (!rows.length) return '';
+  const tot = rows.reduce((t, r) => ({ right: t.right + r.right, wrong: t.wrong + r.wrong }), { right: 0, wrong: 0 }), mis = rows.flatMap(r => r.mistakes.map(x => `${r.label}: ${x}`)).slice(0, 4);
+  return `<details class="more"${tot.wrong ? ' open' : ''}><summary>Your calls this month: ${tot.right} right, ${tot.wrong} wrong</summary>
+    <table class="calls"><tr><th scope="col">Case</th><th scope="col">Right</th><th scope="col">Wrong</th><th scope="col">Team</th><th scope="col">Walked out</th></tr>
+    ${rows.map(r => `<tr><td>${esc(r.label)}</td><td>${r.right}</td><td class="${r.wrong ? 'wrong' : ''}">${r.wrong}</td><td>${r.staff}</td><td>${r.walked}</td></tr>`).join('')}</table>
+    ${mis.length ? `<p style="margin:8px 0 0">Worth another look:</p><ul class="mistakes">${mis.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    <p style="color:var(--muted);font-size:calc(13px*var(--ts));margin:6px 0 0">Judged on what the bank learned afterwards, which you could not always see at the time.</p></details>`;
 }
 
 /* ---------- The Fiscal Herald ---------- */
@@ -371,14 +391,22 @@ function herald(){
 function bankTop(which){ const rv = rivalsLive(), n = 2 + (S.amb ? 1 : 0) + (rv ? 1 : 0); return `<div class="seg${n === 3 ? ' three' : n === 4 ? ' four' : ''}" role="group" aria-label="Section"><button type="button" data-seg="books" aria-pressed="${which === 'books'}">Books</button><button type="button" data-seg="branch" aria-pressed="${which === 'branch'}">Branch</button>${S.amb ? `<button type="button" data-seg="goals" aria-pressed="${which === 'goals'}">Goals</button>` : ''}${rv ? `<button type="button" data-seg="rivals" aria-pressed="${which === 'rivals'}">Rivals</button>` : ''}</div>`; }
 function bankWire(){ const sg = $('#ov .seg'); if (sg) sg.onclick = e => { const b = e.target.closest('[data-seg]'); if (!b) return; b.dataset.seg === 'branch' ? branchPanel() : b.dataset.seg === 'goals' ? goalsPanel() : b.dataset.seg === 'rivals' ? rivalsPanel() : booksPanel(); }; const sr = $('#sndRow'); if (sr){ sr.onclick = () => { Snd.toggle(); sndBtn(); if (Snd.on) Snd.play('click'); }; sndBtn(); } }
 const bankFoot = () => `<div class="rowbtn two stickyfoot"><button type="button" class="btn neutral" id="sndRow">Sound</button><button type="button" class="btn primary" id="ovGo">Back</button></div>`;
+function rulesHTML(){
+  if (!(S.depth && S.depth.staff)) return '';
+  const R = S.rules || {}, sel = (k, label) => `<label>${label}<select name="${k}">${RULES[k].map((t, i) => `<option value="${i}"${(R[k] || 0) === i ? ' selected' : ''}${k === 'fraud' && i === 2 && !owned('fraudModel') ? ' disabled' : ''}>${esc(t)}${k === 'fraud' && i === 2 && !owned('fraudModel') ? ' (needs the fraud model)' : ''}</option>`).join('')}</select></label>`;
+  return `<h3>Standing instructions</h3><p style="color:var(--muted);font-size:calc(14px*var(--ts))">Let your team decide routine inbox cases by your rules, so you can spend your time on the people at the counter. They go by what the papers show and now and then get one wrong. New rules apply from the next week's cases.</p>
+    <form class="rules" id="rulesForm" onsubmit="return false">${sel('fraud', 'Card fraud alerts')}${sel('limits', 'Credit limit requests')}${sel('complaints', 'Complaints')}</form>`;
+}
 function branchPanel(msg){
   const mo = upMonthly();
   overlay(`${bankTop('branch')}<div class="eyebrow">${MONTHS[Math.min(S.month, 11)]} ${S.year} · cash ${fmt(S.cash)}</div><h2>Your branch</h2>
     <p style="color:var(--muted);font-size:calc(14px*var(--ts))">Spend money now to earn more later. One-off costs hit this month's profit; monthly costs go on your running costs.</p>
     ${msg ? `<div class="coach" style="border-left-color:var(--good);background:rgba(113,212,156,.08)"><b style="color:var(--good)">Done</b>${msg}</div>` : ''}
     <div class="ups">${UPGRADES.map(u => { const own = owned(u.key), can = S.cash >= u.cost && !S.over; return `<div class="upg${own ? ' own' : ''}"><b>${esc(u.name)}</b><p>${esc(u.blurb)}</p><span class="eff">${esc(u.effect)}</span><span class="price">${u.cost ? fmt(u.cost) + ' once' : 'No set-up cost'}${u.monthly ? ` · ${u.monthly > 0 ? fmt(u.monthly) + '/month' : 'saves ' + fmt(-u.monthly) + '/month'}` : ''}</span><button type="button" class="btn ${own ? 'neutral' : 'go'}" data-up="${u.key}" ${own || !can ? 'disabled' : ''}>${own ? 'Owned' : can ? 'Buy' : 'Can\'t afford'}</button></div>`; }).join('')}</div>
+    ${rulesHTML()}
     <table class="ledger"><tr><td>Monthly cost of upgrades</td><td>${mo >= 0 ? fmt(mo) : '−' + fmt(-mo)}</td></tr><tr><td>Counters open</td><td>${owned('cashier') ? 2 : 1}</td></tr></table>
     ${bankFoot()}`);
   $('#ovGo').onclick = closeOverlay; bankWire(); tabSel('bank');
+  const rs = $('#rulesForm'); if (rs) rs.onchange = e => { const sel = e.target.closest('select'); if (!sel) return; try { dispatch({ type:'setRules', rules:{ [sel.name]: +sel.value } }); save(); Snd.play('click'); } catch (err) { branchPanel(esc(err.message)); } };
   $('#ov .ups').onclick = e => { const b = e.target.closest('[data-up]'); if (!b || b.disabled) return; const out = dispatch({ type:"buy", key:b.dataset.up }); if (!out) return; Snd.play('stamp'); Snd.play('coin', 200); Scene.sync(); hud(true); save(); branchPanel(`${UPGRADES.find(u => u.key === b.dataset.up).name} bought.`); };
 }

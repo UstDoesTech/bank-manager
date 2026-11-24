@@ -7,7 +7,7 @@ const vm = require('vm'), fs = require('fs'), path = require('path');
 function createHost(enginePath = path.join(__dirname, '..', 'engine', 'engine.js')) {
   const src = fs.readFileSync(enginePath, 'utf8');
   const ctx = vm.createContext({ console, Date });
-  vm.runInContext(src + ';LEDGER_STRICT = true; this.E = { dispatch, ENGINE_VERSION, settingsFacts, ambitionFacts, capRatio, liqRatio, metrics, rating, portfolio, maturityLadder, swapMTM, fundingInstruments, sharePrice, bookPerShare, riskFacts, giltRows, marketFacts, ' +
+  vm.runInContext(src + ';LEDGER_STRICT = true; this.E = { dispatch, ENGINE_VERSION, settingsFacts, isoWeek, challengeSeed, CHALLENGE_OPTS, ambitionFacts, capRatio, liqRatio, metrics, rating, portfolio, maturityLadder, swapMTM, fundingInstruments, sharePrice, bookPerShare, riskFacts, giltRows, marketFacts, ' +
     'get S(){ return S }, set S(v){ S = v }, setSink(f){ LEDGER_SINK = f } };', ctx);
   const E = ctx.E;
 
@@ -37,7 +37,7 @@ function createHost(enginePath = path.join(__dirname, '..', 'engine', 'engine.js
       E.S = null;
     }
   }
-  return { apply, version: E.ENGINE_VERSION };
+  return { apply, version: E.ENGINE_VERSION, isoWeek: (ms) => E.isoWeek(ms), challengeSeed: (w) => E.challengeSeed(w), challengeOpts: () => Object.assign({}, E.CHALLENGE_OPTS) };
 }
 
 module.exports = { createHost };

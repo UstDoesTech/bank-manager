@@ -45,7 +45,7 @@ password.
 ## Tests
 
 ```
-npm test                  # engine: 929 checks, no database needed (golden games, replay, ledger)
+npm test                  # engine: 960 checks, no database needed (golden games, replay, ledger)
 docker compose up -d db   # the next two need Postgres
 npm run test:server       # API, accounts, ledger, replay, rollback, privacy (throwaway database per run)
 npm run test:browser      # the real page in Edge/Chrome against the real server, including going offline
@@ -308,6 +308,61 @@ Realism costs a little: over 24 seeds, careful play earns 140 a year with accoun
 earns only part of a month's interest in its first month.
 
 The new views read raw tables, so they are for the owner, not the read-only analysis role.
+
+## Depth: risk, time, faces and a town
+
+One more option, `opts.depth` (`S.depth`), on for a new career started from the page. It has eight parts, each of which can be switched
+off on its own (`depth: { clock: false }`); `depth: true` turns them all on. The training day and the scenarios never have it. A game
+started without it, and every older game, plays and replays exactly as before: the golden snapshots are unchanged, and so is every game
+on the weekly, cast and accounts options.
+
+- **risk: expected credit losses.** Money is set aside for loans that may not be repaid when a loan is made, not when the borrower stops
+  paying (IFRS 9 in spirit): a performing loan carries its one-year chance of default times the loss if it defaults, a loan behind
+  carries most of the loss (`eclOf()`). At each month end the allowance is trued up to the sum over the book (`provisionMonth()`).
+  Defaults follow a loan's age: few in the first three months, most in the second year (`season()`), so a book grown fast looks good
+  for a while and then does not. The allowance is a contra-asset (ledger account `provision`), shown at month end, on the year-end
+  card and in the Herald. Similar banks are judged with provisions too, so the peer benchmark drops a little.
+- **clock: time at the counter.** Each week has 40 minutes at the counter (50 a month at a time, half as much again with the second
+  cashier). Every option shows roughly how long it takes; checks, documents and a chatty or flustered customer take longer, a brisk one
+  less. When the time runs out, everyone still waiting gives up and leaves, and customer trust falls (`clockSpend()`). A hardship case
+  that walks out comes back next month.
+- **ids: the photo on the ID.** The face on the ID is not always the face at the counter. Most bad applicants show someone else's ID; a
+  genuine customer's photo may be years old (other hair, no glasses); an impostor carries the real customer's ID; and a money mule turned
+  away before may come back with a new name and the same face (`idCheck()`, `S.cast.mules`).
+- **staff: standing instructions.** In the Branch tab the player can let the team decide card fraud alerts (block on two or more warning
+  signs, or on a fraud model score of 70 and over), limit requests (a plan for anyone in persistent debt) and small complaints
+  (refund £200 or less). The team decides from what the papers show, and gets about one in twenty wrong. The `setRules` command; the
+  rules are settings (`area = 'rules'`); the team's decisions are stored with `decided_by = 'staff'`, so `metric_decision_accuracy` shows
+  the player's accuracy and the team's side by side.
+- **town: stories that link the regulars.** Each year has one or two arcs: a local employer closes and some regulars lose their jobs
+  (they come in for help, their pay falls and their loans get riskier), a courier-fraud ring works through older customers (police warn
+  you first), or a new hospital wing brings nurses and paramedics to open accounts. Some regulars work for another regular's business
+  and are paid less when it falls behind. A power of attorney case is about one of the bank's own older customers.
+- **ramp: a gradual start.** The first month has three kinds of everyday visit; two more arrive each month until all are in play.
+- **overdraft: arranged overdrafts** (with accounts). A student, a new business or someone asking for a gambling block can have an
+  arranged overdraft on their current account. An over-spender spends into it; interest is charged on what is used (19.9%, 12.5% for a
+  business, nothing for a student or under a charges freeze), and a write-off is the overdrawn balance itself. An overdrawn account shows
+  as a negative deposit balance.
+- **calls: your calls this month.** Each decision is judged against what the bank learned afterwards, by the same rules as
+  `v_decision_truth` (`judgeCall()`). Month end shows the month's calls by kind of case, right and wrong, decided by the team or walked
+  out, with up to four to look at again (`callsFacts()`). A consequence that arrives months later shows the customer's face and the
+  decision that led to it.
+
+**The weekly challenge.** Everyone who plays in the same ISO week plays the same bank: the seed is a hash of the week
+(`challengeSeed('2026-W48')`) and the options are fixed (`CHALLENGE_OPTS`: weekly, the cast, accounts, depth, standard level). The title
+screen has a **Weekly challenge** button. `GET /api/challenge` gives the week and seed; `POST /api/games { challenge: true }` starts it
+(the server picks the week, the seed and the options, whatever else is asked for, and stores `game.challenge`);
+`GET /api/challenge/leaderboard` lists the best first-year rating of each player that week, named only as "Banker" and four letters
+from a hash of their key. Offline, the page plays the same challenge without a leaderboard.
+
+Migration `021_depth.sql`: the `provision` ledger account; `game.depth` and `game.challenge`; decisions keyed by card as well as
+command (one command can now carry the team's decisions and the walk-outs, `decided_by` 'staff' or 'clock'); `v_position` assets net of
+the allowance, with `provision_pence`; `v_decision_truth` judges payments in branch and complaints too.
+
+Balance, 24 seeds over two years, with weeks, the cast and accounts: careful play earns 76 a year with depth against 140 without (25 of 48
+years rated AAA), the noisy player 27, and the greedy player, who approves every loan, now loses 89 a year where it made 164: provisions
+catch a book grown on risky loans before the defaults do. Time ran out in about 40% of weeks, with about one customer in ten weeks
+walking out.
 
 ## Display, sound and the Settings preview
 

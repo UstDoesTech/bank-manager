@@ -30,6 +30,7 @@ const Remote = (() => {
     if ((cmd.type === 'resolve' || cmd.type === 'buy') && !out) return;      // the engine refused it
     const c = { type: cmd.type }; if (cmd.type === 'resolve'){ c.id = cmd.id; c.k = cmd.k; } if (cmd.type === 'buy') c.key = cmd.key;
     if (cmd.type === 'setPolicy'){ c.area = cmd.area; if (cmd.release) c.release = true; else c.values = cmd.values; }
+    if (cmd.type === 'setRules') c.rules = cmd.rules;
     if (cmd.type === 'stress'){ if (cmd.overrides) c.overrides = cmd.overrides; if (cmd.scenario && cmd.scenario !== 'recession') c.scenario = cmd.scenario; }
     rec.pending.push(c); store(); flush();
   }
@@ -86,14 +87,32 @@ async function offerLiteracy(){
 }
 
 async function startGame(opts = {}){
-  if (!opts.tutorial && !opts.scenario && opts.households === undefined) opts = Object.assign({}, opts, { households: true, meetings: true, rivals: true, weeks: opts.weeks !== false, accounts: true });
+  if (!opts.tutorial && !opts.scenario && !opts.challenge && opts.households === undefined) opts = Object.assign({}, opts, { households: true, meetings: true, rivals: true, weeks: opts.weeks !== false, accounts: true, depth: true });
   if (opts.weeks === false) delete opts.weeks;
   if (opts.characters === undefined) opts = Object.assign({}, opts, { characters: true });
   clearSave(); Remote.drop(); acknowledgeCookie();
   let seed = null;
   await Remote.guest();
-  if (Remote.ready()){ await literacyCheck('before'); const g = await Remote.create(opts); if (g) seed = g.seed; }
+  if (opts.challenge){                     // this week's seed and options: the same for everyone, online or not
+    const week = isoWeek(Date.now()); opts = Object.assign({}, CHALLENGE_OPTS, { challenge: week }); seed = challengeSeed(week);
+  }
+  if (Remote.ready()){ await literacyCheck('before'); const g = await Remote.create(S_CHALLENGE(opts)); if (g){ seed = g.seed; if (g.challenge) opts.challenge = g.challenge; } }      // the server's week, should the clocks disagree at midnight on Sunday
   dispatch({ type:'newGame', seed, opts }); save(); play();
+}
+const S_CHALLENGE = o => o.challenge ? { challenge: true } : o;      // the server picks the week and seed itself
+
+/* ---------- The weekly challenge ---------- */
+async function challengeScreen(){
+  const week = isoWeek(Date.now()), wk = +week.slice(6);
+  let board = null;
+  if (Remote.available()) try { const r = await Remote.api('GET', '/api/challenge/leaderboard'); if (r.ok) board = r.json; } catch (e) {}
+  overlay(`<div class="eyebrow">Week ${wk} · ${week.slice(0, 4)}</div><h2>The weekly challenge</h2>
+    <p>Everyone who plays this week runs the same bank: the same customers, the same economy, the same surprises. Play one year and see how your rating compares. A new challenge starts every Monday.</p>
+    <p style="color:var(--muted);font-size:calc(14px*var(--ts))">Weekly turns, standard level, with everything switched on. Starting it replaces your saved game.</p>
+    ${board ? board.top.length ? `<h3>This week so far · ${board.players} player${board.players === 1 ? '' : 's'}</h3><table class="ledger">${board.top.map(r => `<tr${r.you ? ' class="tot"' : ''}><td>${r.rank}. ${esc(r.name)}${r.you ? ' (you)' : ''}</td><td>${esc(r.letter)} · ${fmt(r.profitPence / 100000, true)}</td></tr>`).join('')}</table>` : '<p style="color:var(--muted)">No one has finished this week\'s year yet.</p>' : Remote.available() ? '' : '<p style="color:var(--muted)">The leaderboard needs the game server. You can still play the challenge here.</p>'}
+    <div class="rowbtn"><button type="button" class="btn primary" id="chGo">Play this week's challenge</button><button type="button" class="btn link" id="chBack">Back</button></div>`);
+  $('#chGo').onclick = () => startGame({ challenge: true });
+  $('#chBack').onclick = titleScreen;
 }
 
 function accountScreen(msg, isErr){
@@ -197,6 +216,7 @@ function titleScreen(){
       ${resumable ? `<button type="button" class="btn primary" id="ovGo">${saved.scenario ? esc(SCENARIOS[saved.scenario].name) + ' · ' : ''}${saved.over ? `Year-end ${saved.year}` : `Continue · ${MONTHS[saved.month]} ${saved.year}`}</button>` : ''}
       <button type="button" class="btn ${resumable ? 'neutral' : 'primary'}" id="${best ? 'ovNew' : 'ovTrain'}">${best ? 'New career' : 'Start with a training day'}</button>
       <button type="button" class="btn link" id="${best ? 'ovTrain' : 'ovNew'}">${best ? 'New career with a training day' : 'Skip the training'}</button>
+      <button type="button" class="btn link" id="ovChal">The weekly challenge</button>
       <button type="button" class="btn link" id="ovScen">Scenarios: 2008, 2020 and 2022 crises</button>
       <button type="button" class="btn link" id="ovDisp">Text size, theme and volume</button>
       ${Remote.available() ? `<button type="button" class="btn link" id="ovAcct">${Remote.ready() ? (Remote.me().guest ? 'Playing as a guest · sign in to keep your games' : 'Recording as ' + esc(Remote.who())) : 'Sign in to save your games'}</button>` : ''}
@@ -209,6 +229,7 @@ function titleScreen(){
   $('#ov .pace .seg').onclick = e => { const b = e.target.closest('[data-pace]'); if (!b) return; pace = b.dataset.pace; try { localStorage.setItem('bm-pace', pace); } catch (x) {} document.querySelectorAll('#ov [data-pace]').forEach(x => x.setAttribute('aria-pressed', x === b)); $('#paceNote').textContent = PACE[pace][1]; };
   $('#ov .lvl .seg').onclick = e => { const b = e.target.closest('[data-lvl]'); if (!b) return; level = b.dataset.lvl; try { localStorage.setItem('bm-level', level); } catch (x) {} document.querySelectorAll('#ov [data-lvl]').forEach(x => x.setAttribute('aria-pressed', x === b)); $('#lvlNote').textContent = DIFFICULTY[level].blurb; };
   $('#ovScen').onclick = scenarioPicker;
+  $('#ovChal').onclick = challengeScreen;
   $('#ovDisp').onclick = () => displayScreen(() => titleScreen());
   const ac = $('#ovAcct'); if (ac) ac.onclick = () => accountScreen();
 }
