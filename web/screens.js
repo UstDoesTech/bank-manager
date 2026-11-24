@@ -147,7 +147,17 @@ function overlay(html){ Scene.setPaused(false); $('#pop').hidden = true; if (typ
 function closeOverlay(){ Scene.setPaused(false); menuConfirm = false; $('#pop').hidden = true; if (typeof view !== 'undefined') tabSel(); $('#ov').hidden = true; $('#ov').innerHTML = ''; if (ovReturn && ovReturn.isConnected){ try { ovReturn.focus({ preventScroll:true }); } catch (e) {} } ovReturn = null; }
 
 /* recurring customers: the household behind a name, with the month's budget, the credit score over time and what has happened to them */
-function nameHTML(c){ return c.h && c.h.hh != null && S.households ? '<button type="button" class="hhlink" data-hh="' + c.h.hh + '">' + esc(c.who.name) + '</button>' : esc(c.who.name); }
+function nameHTML(c){
+  if (c.h && c.h.hh != null && S.households) return '<button type="button" class="hhlink" data-hh="' + c.h.hh + '">' + esc(c.who.name) + '</button>';
+  if (c.who && c.who.reg && S.cast) return '<button type="button" class="hhlink" data-reg="' + c.who.reg + '">' + esc(c.who.name) + '</button>';
+  return esc(c.who.name);
+}
+// A regular: their photo, manner, how long they have banked with you and the last few things that happened.
+function regularCard(r){
+  const who = { name: r.name, age: S.year - r.born, hue: r.hue, look: r.look, sub: r.job || '' }, mn = mannerOf(who);
+  return '<div class="note reg-card" id="reg' + r.id + '"><div class="ph-sm">' + photoHTML(who) + '</div><div><div class="eyebrow">' + esc(r.job || 'Customer') + ', ' + who.age + (mn ? ' · ' + esc(mn.name.toLowerCase()) : '') + '</div><p><b>' + esc(r.name) + '</b> · first served ' + MONTHS[r.since[1]].slice(0, 3) + ' ' + r.since[0] + (r.gone ? ' · has left the bank' : '') + '</p>' +
+    (r.notes.length ? '<ul>' + r.notes.slice().reverse().map(n => '<li>' + MONTHS[n.m].slice(0, 3) + ' ' + n.y + (n.w ? ', ' + esc(n.w) : '') + ': ' + esc(n.t) + '</li>').join('') + '</ul>' : '') + '</div></div>';
+}
 function householdCard(h){
   const last = h.hist[h.hist.length - 1];
   let bar = '<p class="dim">No months yet.</p>', line = '';
@@ -162,12 +172,15 @@ function householdCard(h){
     '<p class="dim">Emergency fund: ' + (fundM >= 0 ? fundM.toFixed(1) + ' months of spending' : 'overdrawn') + ' · credit score ' + Math.round(h.score) + ' / 999' + (h.loanId ? ' · has a loan with you' : '') + '</p>' + line +
     (h.notes.length ? '<p class="dim">' + h.notes.slice(-3).reverse().map(n => esc(n.t)).join(' ') + '</p>' : '') + '</div>';
 }
-function householdScreen(focus){
-  const list = S.households.slice().sort((a, b) => (a.id === focus ? -1 : b.id === focus ? 1 : a.id - b.id));
-  overlay('<div class="eyebrow">Your regular customers</div><h2>Households</h2><p class="dim">The same people come back year after year. What you decide for them shows up in their money.</p>' + list.map(householdCard).join('') + '<div class="rowbtn"><button type="button" class="btn primary" id="hhBack">Close</button></div>');
+function householdScreen(focus, regFocus){
+  const list = (S.households || []).slice().sort((a, b) => (a.id === focus ? -1 : b.id === focus ? 1 : a.id - b.id));
+  const regs = S.cast ? S.cast.regs.slice().sort((a, b) => (a.id === regFocus ? -1 : b.id === regFocus ? 1 : b.last - a.last)) : [];
+  const regHTML = regs.length ? '<h3>Regulars</h3><p class="dim">People you have served before. They come back with new needs, and remember how you treated them.</p><div class="regs">' + regs.slice(0, 30).map(regularCard).join('') + '</div>' : '';
+  const hhHTML = list.length ? '<h2>Households</h2><p class="dim">The same people come back year after year. What you decide for them shows up in their money.</p>' + list.map(householdCard).join('') : '';
+  overlay('<div class="eyebrow">Your regular customers</div>' + (regFocus != null ? regHTML + hhHTML : hhHTML + regHTML) + '<div class="rowbtn"><button type="button" class="btn primary" id="hhBack">Close</button></div>');
   $('#hhBack').onclick = closeOverlay;
 }
-document.addEventListener('click', e => { const b = e.target.closest('.hhlink'); if (b && S && S.households) householdScreen(+b.dataset.hh); });
+document.addEventListener('click', e => { const b = e.target.closest('.hhlink'); if (!b || !S) return; if (b.dataset.reg) householdScreen(null, +b.dataset.reg); else if (S.households) householdScreen(+b.dataset.hh); });
 $('#hhBtn').onclick = () => householdScreen();
 
 /* policy: the pricing and credit rules. Everyone starts on the executive team's; an area becomes editable when the board hands it over. */

@@ -30,6 +30,7 @@ function oracle(c, E, wealth){
     case 'wmClient': return first(c, E.LEVELS[h.suit]);
     case 'wmMarket': return first(c, 'call');
     case 'wmVuln':   return first(c, h.scam ? 'refuse' : 'pay');
+    case 'visit':    return first(c, h.best);
     default:         return c.opts[0].k;
   }
 }

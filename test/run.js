@@ -702,4 +702,91 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   E.S.month = 11; assert.strictEqual(E.previewPolicy({}).months, 1, 'a preview stops at the end of the year'); E.S.month = 2;
   const T = loadEngine(src); T.dispatch({ type: 'newGame', seed: 3, opts: { tutorial: true } }); assert.throws(() => T.previewPolicy({}), /nothing to preview/);
   n += 11; }
+// 24. The cast (characters option): a person still takes exactly four random numbers; names are large, cohort-aware and never
+//     repeated among people the player can meet again; looks are pure and consistent; regulars come back with their history.
+{ const CH = { households: true, meetings: true, rivals: true, characters: true };
+  // four numbers per person, with or without the cast
+  { const A = loadEngine(src), B = loadEngine(src); A.dispatch({ type: 'newGame', seed: 31, opts: { characters: true } }); B.dispatch({ type: 'newGame', seed: 31 });
+    B.S.rs = A.S.rs; A.castPerson(20, 60); B.person(20, 60); assert.strictEqual(A.S.rs, B.S.rs, 'castPerson must take the same random numbers as person'); n++; }
+  // names: no repeats among the last 300 people, the households and the regulars; many heritages; first names follow the birth decade
+  { const a = play(loadEngine(src), 5, 'careful', 3, CH), C = a.S.cast;
+    assert.strictEqual(new Set(C.recent).size, C.recent.length, 'a name was used twice'); n++;
+    const live = C.regs.map(r => r.name).concat(a.S.households.map(h => h.name)); assert.strictEqual(new Set(live).size, live.length, 'two regulars share a name'); n++;
+    assert(C.regs.length > 20 && C.regs.length <= 60, 'regulars kept and capped: ' + C.regs.length); n++;
+    const firsts = new Set(C.recent.map(x => x.split(' ')[0])), surs = new Set(C.recent.map(x => x.split(' ')[1]));
+    assert(firsts.size > 150 && surs.size > 120, 'name variety: ' + firsts.size + ' first names, ' + surs.size + ' surnames'); n++;
+    assert(C.recent.every(x => x.split(' ').length === 2), 'names are a first name and a surname'); n++; }
+  { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 9, opts: { characters: true } });
+    const old = [], young = [], heritages = new Set(), seen = [];
+    for (let i = 0; i < 1500; i++){ const p = i % 2 ? E.castPerson(80, 92) : E.castPerson(18, 22); (i % 2 ? old : young).push(p.name.split(' ')[0]); heritages.add(p.look.g); seen.push(p.name);
+      const A = E.appearance(Object.assign({ sub: '' }, p));
+      if (A.hat === 'hijab') assert.strictEqual(A.p, 'f'); if (A.beard) assert.strictEqual(A.p, 'm'); assert(A.ht > 0.85 && A.ht < 1.1);
+      assert.strictEqual(JSON.stringify(E.appearance(Object.assign({ sub: '' }, p))), JSON.stringify(A), 'appearance is pure'); }
+    assert(!young.some(x => ['Doreen', 'Mavis', 'Winifred', 'Norman', 'Albert'].includes(x)) && !old.some(x => ['Poppy', 'Theo', 'Alfie', 'Freddie', 'Evie'].includes(x)), 'first names follow the birth decade'); n++;
+    assert(heritages.size >= 8, 'heritages: ' + [...heritages]); n++;
+    for (let i = 0; i + 300 <= seen.length; i += 50) assert.strictEqual(new Set(seen.slice(i, i + 300)).size, 300, 'no name repeats within 300 people'); n++;
+    assert.strictEqual(E.appearance({ name: 'X Y', age: 30, hue: 0.4, sub: 'Nurse', look: E.castPerson(30, 30).look }).outfit, 'scrubs', 'work clothes follow the job'); n++; }
+  // regulars come back: a returning customer keeps their name, look and age, the note says when you first served them, and an impostor
+  // using a regular's name does not have their face
+  { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 12, opts: Object.assign({ weeks: true }, CH) });
+    let back = 0, imp = 0;
+    while (!E.S.over){
+      for (;;){ for (const c of E.S.queue.filter(c => !c.done && c.who && c.who.reg)){ const r = E.S.cast.regs.find(x => x.id === c.who.reg);
+          if (!r) continue; back++; assert.strictEqual(c.who.name, r.name); assert.strictEqual(c.who.age, E.S.year - r.born); assert(/^You first served/.test(c.note), 'note on a regular');
+          if (c.who.claim){ imp++; assert.notStrictEqual(JSON.stringify(c.who.look), JSON.stringify(r.look), 'an impostor has someone else\'s face'); } else assert.strictEqual(JSON.stringify(c.who.look), JSON.stringify(r.look)); }
+        for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k });
+        if (E.S.wk < 3) E.dispatch({ type: 'nextWeek' }); else break; }
+      E.dispatch({ type: 'closeMonth' }); }
+    assert(back > 25, 'regulars came back: ' + back); n++;
+    assert(E.S.cast.regs.some(r => r.notes.length >= 2), 'regulars keep a history'); n++; }
+  // manner matters: proud customers take a smaller mortgage offer less often than anxious ones
+  { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 40, opts: { characters: true } }); const base = JSON.stringify(E.S);
+    const take = (t) => { let k = 0, tried = 0; for (let i = 0; tried < 300 && i < 5000; i++){ E.S = JSON.parse(base); E.S.rs = (77 + i * 104729) | 0;
+        const c = E.gen.mortgage(); if (!c.opts.some(o => o.k === 'less')) continue; tried++; c.who.look.t = t; E.S.queue.push(c); const l0 = E.S.loans.length; E.resolveCard(c, 'less'); if (E.S.loans.length > l0) k++; } return k; };
+    const proud = take('proud'), anxious = take('anxious'); assert(anxious > proud * 1.5, 'manner changes behaviour: anxious ' + anxious + ', proud ' + proud); n++; }
+  // a game with the cast replays exactly
+  { const a = play(loadEngine(src), 23, 'noisy25', 2, CH), R = loadEngine(src); for (const cmd of a.cmds) R.dispatch(cmd);
+    assert.strictEqual(hashState(R.S, []), hashState(a.S, []), 'replay with the cast'); n++; }
+  // every visit answers: under each hidden truth the best answer is worth more (trust, regulator, money, later consequences at their odds)
+  { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 3, opts: { characters: true, weeks: true } }); const base = JSON.stringify(E.S);
+    for (const v of Object.keys(E.VISITS)){ const tot = {};
+      for (let i = 0; i < 80; i++){ E.S = JSON.parse(base); E.S.rs = (1000 + i * 7919) | 0; const c = E.gen.visit({ v }); E.S.queue.push(c); const snap = JSON.stringify(E.S);
+        for (const o of c.opts){ E.S = JSON.parse(snap); const cc = E.S.queue.find(x => x.id === c.id), t0 = E.S.trust, c0 = E.S.comp, k0 = E.capital(), p0 = E.S.pending.length, d0 = E.S.deposits;
+          E.resolveCard(cc, o.k); let sc = E.S.trust - t0 + E.S.comp - c0 + (E.capital() - k0) * 1.5 + (E.S.deposits - d0) * 0.03;
+          for (const p of E.S.pending.slice(p0)){ const q = p.p == null ? 1 : p.p; sc += ((p.trust || 0) + (p.comp || 0) + (p.cash || 0) * 1.5) * q; }
+          const key = cc.h.best + '|' + o.k; (tot[key] = tot[key] || [0, 0]); tot[key][0] += sc; tot[key][1]++; } }
+      for (const best of new Set(Object.keys(tot).map(k => k.split('|')[0]))){ const avg = k => tot[best + '|' + k][0] / tot[best + '|' + k][1];
+        for (const k of Object.keys(tot).filter(x => x.startsWith(best + '|')).map(x => x.split('|')[1])) if (k !== best) assert(avg(best) > avg(k), `${v}: when ${best} is right it should beat ${k}: ${avg(best).toFixed(2)} vs ${avg(k).toFixed(2)}`); }
+      n++; } }
+}
+// 25. Weekly turns (weeks option): four weeks to a month, a nextWeek command, the month closes only after week four, more customers,
+//     the same economy; the stress test and the preview step through the weeks on their copy; a replay rebuilds the game.
+{ const WK = { households: true, meetings: true, rivals: true, characters: true, weeks: true }, MO = { households: true, meetings: true, rivals: true, characters: true };
+  { const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 4, opts: WK });
+    assert.strictEqual(E.S.wk, 0); assert.throws(() => E.dispatch({ type: 'closeMonth' }), /weeks to run/); n++;
+    const sizes = [];
+    for (let w = 0; w < 4; w++){ for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); sizes.push(E.S.queue.length); if (w < 3) E.dispatch({ type: 'nextWeek' }); }
+    assert.throws(() => E.dispatch({ type: 'nextWeek' }), /last week/); n++;
+    assert(sizes[3] > sizes[0] && E.S.queue.every(c => (c.wk || 0) <= 3), 'each week adds customers: ' + sizes); n++;
+    const m0 = E.S.month; E.dispatch({ type: 'closeMonth' }); assert.strictEqual(E.S.month, m0 + 1); assert.strictEqual(E.S.wk, 0); n++;
+    const M = loadEngine(src); M.dispatch({ type: 'newGame', seed: 4, opts: MO }); assert.throws(() => M.dispatch({ type: 'nextWeek' }), /no weeks/); n++;
+    const T = loadEngine(src); T.dispatch({ type: 'newGame', seed: 4, opts: { tutorial: true, weeks: true } }); assert(!T.S.weeks, 'no weeks on the training day'); n++; }
+  // some of the month's events wait for a later week
+  { let later = 0; for (const seed of [2, 3, 5, 7]){ const E = loadEngine(src); E.dispatch({ type: 'newGame', seed, opts: WK });
+      for (let m = 0; m < 12 && !E.S.over; m++){ for (let w = 0; w < 4; w++){ for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); if (w < 3) E.dispatch({ type: 'nextWeek' }); }
+        later += E.S.queue.filter(c => c.wk > 0 && ['product', 'liqshock', 'outage', 'sanctions', 'treasury'].includes(c.kind)).length; E.dispatch({ type: 'closeMonth' }); } }
+    assert(later > 5, 'events spread over the weeks: ' + later); n++; }
+  // more decisions, the same economy: careful play earns about what it earns a month at a time, with a similar loan book
+  { const run = (opts) => { let p = 0, d = 0, l = 0, yrs = 0; for (let seed = 1; seed <= 12; seed++){ const E = loadEngine(src), a = play(E, seed, 'careful', 2, opts);
+        d += a.cmds.filter(c => c.type === 'resolve').length; l += a.S.loans.length; for (const c of a.S.career) { p += c.profit; yrs++; } if (a.S.over){ p += E.rating().profit; yrs++; } } return { p: p / yrs, d: d / yrs, l: l / 12 }; };
+    const wk = run(WK), mo = run(MO);
+    assert(wk.d > mo.d * 2.2, 'weekly play has more decisions: ' + wk.d + ' vs ' + mo.d); n++;
+    assert(wk.p > mo.p * 0.75 && wk.p < mo.p * 1.35, 'weekly profit near monthly: ' + wk.p.toFixed(0) + ' vs ' + mo.p.toFixed(0)); n++;
+    assert(wk.l > mo.l * 0.7 && wk.l < mo.l * 1.4, 'weekly loan book near monthly: ' + wk.l + ' vs ' + mo.l); n++; }
+  // replay, and the stress test and preview on a weekly game touch nothing
+  { const a = play(loadEngine(src), 17, 'noisy10', 2, WK), R = loadEngine(src); for (const cmd of a.cmds) R.dispatch(cmd);
+    assert.strictEqual(hashState(R.S, []), hashState(a.S, []), 'weekly replay'); n++;
+    const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 8, opts: Object.assign({ chiefExecutive: true }, WK) }); E.dispatch({ type: 'nextWeek' });
+    const before = hashState(E.S, []); const r = E.stressTest({}, 9); assert(r.ran >= 1, 'the stress test ran'); E.previewPolicy({}, 3); assert.strictEqual(hashState(E.S, []), before, 'the copy touched the game'); n++; }
+}
 console.log('ok', n, 'checks');

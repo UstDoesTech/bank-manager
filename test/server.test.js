@@ -60,11 +60,14 @@ async function play(cookie, gameId, startState, startSeq, months) {
     seq++; state = r.json.state; results.push(command); return r.json;
   };
   for (let m = 0; m < months && !state.over; m++) {
-    for (let c; (c = state.queue.find((x) => !x.done));) {
-      const opts = c.opts.filter((o) => !(o.cash && state.cash < o.cash));
-      local.S = state;                                    // the bot's helpers read the engine's current state
-      let k = oracle(c, local, false); if (!opts.some((o) => o.k === k)) k = opts[0].k;
-      await send({ type: 'resolve', id: c.id, k });
+    for (;;) {
+      for (let c; (c = state.queue.find((x) => !x.done));) {
+        const opts = c.opts.filter((o) => !(o.cash && state.cash < o.cash));
+        local.S = state;                                    // the bot's helpers read the engine's current state
+        let k = oracle(c, local, false); if (!opts.some((o) => o.k === k)) k = opts[0].k;
+        await send({ type: 'resolve', id: c.id, k });
+      }
+      if (state.weeks && state.wk < 3) await send({ type: 'nextWeek' }); else break;    // a weekly game has four weeks to a month
     }
     await send({ type: 'closeMonth' });
   }
@@ -285,6 +288,26 @@ test('households: a game started with them records the cast and each month, and 
   // tutorials and scenarios never get a cast, whatever the request says
   const tut = await call('POST', '/api/games', { households: true, tutorial: true }, cookie);
   assert.strictEqual(tut.json.state.households, undefined);
+});
+
+test('weeks and the cast: a weekly game steps through four weeks, cannot close a month early, and the replay agrees', async () => {
+  const cookie = await newPlayer('wen@example.com');
+  const g = await call('POST', '/api/games', { households: true, weeks: true, characters: true }, cookie);
+  assert.strictEqual(g.status, 201); assert.strictEqual(g.json.state.weeks, true); assert.strictEqual(g.json.state.wk, 0); assert(g.json.state.cast, 'the cast is on');
+  const id = g.json.id, post = (seq, command) => call('POST', `/api/games/${id}/commands`, { seq, command }, cookie);
+  assert.strictEqual((await post(2, { type: 'closeMonth' })).json.error, 'weeks_left');
+  const played = await play(cookie, id, g.json.state, 1, 2);
+  assert.strictEqual(played.state.month, 2); assert.strictEqual(played.commands.filter((c) => c.type === 'nextWeek').length, 6);
+  assert(played.state.cast.regs.length > 0, 'customers became regulars');
+  const v = await verifyGame(pool, host, id); assert.strictEqual(v.ok, true, JSON.stringify(v));
+  const weeks = (await pool.query('SELECT week, count(*)::int n FROM bank.decision WHERE game_id = $1 GROUP BY week ORDER BY week', [id])).rows;
+  assert.deepStrictEqual(weeks.map((r) => r.week), [0, 1, 2, 3], 'each decision keeps its week');
+  const visits = (await pool.query("SELECT count(*)::int n, count(*) FILTER (WHERE consistent)::int ok FROM bank.v_decision_truth WHERE game_id = $1 AND kind = 'visit'", [id])).rows[0];
+  assert(visits.n > 0 && visits.ok === visits.n, 'the careful player chose the best answer on every visit: ' + JSON.stringify(visits));
+  // a monthly game has no weeks, and a training day never gets them
+  const m = (await call('POST', '/api/games', { characters: true }, cookie)).json;
+  assert.strictEqual((await call('POST', `/api/games/${m.id}/commands`, { seq: 2, command: { type: 'nextWeek' } }, cookie)).json.error, 'no_weeks');
+  const t = await call('POST', '/api/games', { tutorial: true, weeks: true }, cookie); assert.strictEqual(t.json.state.weeks, undefined);
 });
 
 test('literacy: five questions before the first game and one more after each year, scored on the server', async () => {

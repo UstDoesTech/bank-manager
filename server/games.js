@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const { HttpError } = require('./auth');
 
 const PENCE_PER_K = 1e5;                  // the engine counts £ thousands; the database counts pence
-const COMMANDS = new Set(['newGame', 'resolve', 'closeMonth', 'nextYear', 'buy', 'read', 'setPolicy', 'stress', 'resign']);
+const COMMANDS = new Set(['newGame', 'resolve', 'nextWeek', 'closeMonth', 'nextYear', 'buy', 'read', 'setPolicy', 'stress', 'resign']);
 
 // Converts one engine journal entry to whole pence. Rounding each line can leave the entry off by a penny or two,
 // so the difference goes on the largest line and the stored entry sums to exactly zero.
@@ -30,8 +30,13 @@ function validate(state, cmd) {
     const o = c.opts.find((x) => x.k === cmd.k);
     if (!o) throw new HttpError(422, 'no_such_option', 'That is not one of the options.');
     if (o.cash && state.cash < o.cash) throw new HttpError(422, 'cannot_afford', 'The bank cannot afford that.');
+  } else if (cmd.type === 'nextWeek') {
+    if (state.over) throw new HttpError(409, 'game_over', 'The year is over.');
+    if (!state.weeks) throw new HttpError(409, 'no_weeks', 'This game is played a month at a time.');
+    if ((state.wk || 0) >= 3) throw new HttpError(409, 'last_week', 'This is the last week of the month.');
   } else if (cmd.type === 'closeMonth') {
     if (state.over) throw new HttpError(409, 'game_over', 'The year is over.');
+    if (state.weeks && (state.wk || 0) < 3) throw new HttpError(409, 'weeks_left', 'The month still has weeks to run.');
   } else if (cmd.type === 'nextYear') {
     if (state.over !== 'done') throw new HttpError(409, 'year_not_finished', 'The year is not finished.');
   } else if (cmd.type === 'buy') {
@@ -290,10 +295,10 @@ async function persist(client, game, seq, cmd, before, out) {
   if (cmd.type === 'resolve') {
     const card = before.card;
     await client.query(
-      `INSERT INTO bank.decision (game_id, command_seq, card_id, kind, year, month, options, chosen, truth, shown)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      `INSERT INTO bank.decision (game_id, command_seq, card_id, kind, year, month, options, chosen, truth, shown, week)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [gid, seq, card.id, card.kind, before.year, before.month,
-        JSON.stringify(card.opts.map((o) => ({ k: o.k, l: o.l }))), cmd.k, JSON.stringify(card.h || {}), JSON.stringify((card.fields || []).map((f) => ({ l: f.l, v: f.v })))]);
+        JSON.stringify(card.opts.map((o) => ({ k: o.k, l: o.l }))), cmd.k, JSON.stringify(card.h || {}), JSON.stringify((card.fields || []).map((f) => ({ l: f.l, v: f.v }))), before.weeks ? (card.wk || 0) : null]);
     for (const l of (result && result.lines) || [])
       await client.query('INSERT INTO bank.event (game_id, command_seq, year, month, kind, tone, text) VALUES ($1, $2, $3, $4, $5, $6, $7)',
         [gid, seq, before.year, before.month, 'outcome', l.tone || '', l.t]);
@@ -376,6 +381,8 @@ function register(app, { pool, host }) {
     if (body.meetings && !opts.tutorial && !opts.scenario) opts.meetings = true;
     if (body.chiefExecutive && !opts.tutorial && !opts.scenario) opts.chiefExecutive = true;
     if (body.rivals && !opts.tutorial && !opts.scenario) opts.rivals = true;
+    if (body.weeks && !opts.tutorial && !opts.scenario) opts.weeks = true;
+    if (body.characters) opts.characters = true;
     if ((body.difficulty === 'gentle' || body.difficulty === 'hard') && !opts.tutorial && !opts.scenario) opts.difficulty = body.difficulty;
     const seed = crypto.randomInt(1, 0x7fffffff);
     const cmd = { type: 'newGame', seed, opts };
@@ -427,7 +434,7 @@ function register(app, { pool, host }) {
       const state = (await client.query('SELECT state FROM bank.game_state WHERE game_id = $1', [g.id])).rows[0].state;
       validate(state, cmd);
       const card = cmd.type === 'resolve' ? state.queue.find((x) => x.id === cmd.id) : null;
-      const before = { year: state.year, month: state.month, card };
+      const before = { year: state.year, month: state.month, card, weeks: !!state.weeks };
       let out;
       try { out = host.apply(state, cmd); } catch (e) { req.log.error(e); throw new HttpError(422, 'engine_error', 'The engine could not apply that command.'); }
       if (cmd.type === 'buy' && !out.result) throw new HttpError(422, 'cannot_buy', 'That cannot be bought now.');

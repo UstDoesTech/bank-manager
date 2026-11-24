@@ -248,18 +248,64 @@ const Scene = (() => {
     longBack: new T.BoxGeometry(0.27, 0.34, 0.09), bun: new T.SphereGeometry(0.062, 12, 10), curl: new T.SphereGeometry(0.052, 8, 6),
     lens: new T.TorusGeometry(0.031, 0.005, 6, 18), bridge: new T.BoxGeometry(0.03, 0.006, 0.006),
     shirt: new T.BoxGeometry(0.1, 0.17, 0.01), tie: new T.BoxGeometry(0.036, 0.24, 0.012), scarf: new T.TorusGeometry(0.075, 0.035, 8, 16), badge: new T.BoxGeometry(0.06, 0.035, 0.01),
+    // for the cast: beards, hats, headscarves, skirts, work clothes, sticks and bags
+    beard: new T.SphereGeometry(0.135, 18, 10, 0, Math.PI * 2, Math.PI * 0.6, Math.PI * 0.4), tache: new T.BoxGeometry(0.07, 0.016, 0.014), goatee: new T.SphereGeometry(0.032, 10, 8),
+    hijab: new T.SphereGeometry(0.165, 24, 16, Math.PI * 0.5 + 0.62, Math.PI * 2 - 1.24, 0, Math.PI * 0.8), drape: new T.CylinderGeometry(0.15, 0.25, 0.24, 18, 1, true),
+    band: new T.TorusGeometry(0.152, 0.03, 8, 24), brim: new T.BoxGeometry(0.2, 0.012, 0.1), flat: new T.CylinderGeometry(0.155, 0.16, 0.045, 18),
+    skirt: new T.LatheGeometry([[0.17, 0.9], [0.21, 0.75], [0.27, 0.46], [0.26, 0.44]].map(([r, y]) => new T.Vector2(r, y)), 18),
+    vis: new T.TorusGeometry(0.19, 0.012, 6, 24), hood: new T.TorusGeometry(0.1, 0.045, 8, 16, Math.PI), strip: new T.BoxGeometry(0.035, 0.5, 0.012), lanyard: new T.BoxGeometry(0.012, 0.22, 0.006),
+    stick: new T.CylinderGeometry(0.014, 0.014, 0.86, 6), handbag: new T.BoxGeometry(0.2, 0.15, 0.07), pack: new T.BoxGeometry(0.26, 0.32, 0.12), strand: new T.BoxGeometry(0.045, 0.32, 0.04),
   };
+  // Hair, beard, headwear and clothes for a member of the cast, from appearance() in the engine.
+  function dress(o, A, P){
+    const { body, head, hair, legs, armP } = P;
+    const cap = geo => { const c = new T.Mesh(geo, hair); c.rotation.x = -0.38; c.position.set(0, 0.005, -0.008); c.castShadow = true; head.add(c); return c; };
+    const covered = A.hat === 'hijab' || A.hat === 'turban';
+    if (!covered){
+      const st = A.hairStyle;
+      if (st === 'short' || st === 'crop' || st === 'pixie') cap(G.capShort).scale.setScalar(st === 'crop' ? 0.98 : 1);
+      if (st === 'long'){ cap(G.capFull); const b = new T.Mesh(G.longBack, hair); b.position.set(0, -0.11, -0.085); head.add(b); }
+      if (st === 'bob'){ cap(G.capFull); const b = new T.Mesh(G.longBack, hair); b.scale.set(1.08, 0.55, 1); b.position.set(0, -0.04, -0.075); head.add(b); }
+      if (st === 'bun'){ cap(G.capShort); const b = new T.Mesh(G.bun, hair); b.position.set(0, 0.1, -0.12); head.add(b); }
+      if (st === 'ponytail'){ cap(G.capShort); const b = new T.Mesh(G.bun, hair); b.scale.set(0.7, 0.7, 0.7); b.position.set(0, 0.02, -0.15); head.add(b); const t = new T.Mesh(G.strand, hair); t.position.set(0, -0.12, -0.16); head.add(t); }
+      if (st === 'braids'){ cap(G.capFull); for (const x of [-0.07, 0, 0.07]){ const t = new T.Mesh(G.strand, hair); t.position.set(x, -0.15, -0.1); t.scale.y = 1.25; head.add(t); } }
+      if (st === 'curly'){ cap(G.capFull).scale.setScalar(1.06); for (let i = 0; i < 9; i++){ const a = i / 9 * Math.PI * 2; const c = new T.Mesh(G.curl, hair); c.position.set(Math.cos(a) * 0.13, 0.07 + Math.sin(i * 2.1) * 0.02, Math.sin(a) * 0.12 - 0.02); head.add(c); } }
+      if (st === 'bald' || st === 'receding'){ head.add(new T.Mesh(G.sides, hair)); if (st === 'receding'){ const c = cap(G.capShort); c.rotation.x = -0.95; c.scale.setScalar(0.97); } }
+    }
+    const hm = mat(A.hatCol, 0.9);
+    if (A.hat === 'hijab'){ const s = new T.Mesh(G.hijab, hm); s.position.set(0, 0.005, -0.004); head.add(s); const d = new T.Mesh(G.drape, hm); d.position.y = 1.43; body.add(d); }
+    if (A.hat === 'turban'){ const t = cap(G.capFull); t.material = hm; t.scale.set(1.12, 0.92, 1.12); const b = new T.Mesh(G.band, hm); b.rotation.x = Math.PI / 2 - 0.3; b.position.set(0, 0.06, -0.01); head.add(b); }
+    if (A.hat === 'beanie'){ const t = cap(G.capFull); t.material = hm; t.scale.setScalar(1.08); const b = new T.Mesh(G.band, hm); b.rotation.x = Math.PI / 2 - 0.38; b.position.set(0, 0.035, -0.01); b.scale.setScalar(0.98); head.add(b); }
+    if (A.hat === 'flatcap' || A.hat === 'cap'){ const t = A.hat === 'cap' ? cap(G.capShort) : new T.Mesh(G.flat, hm); t.material = hm; if (A.hat === 'flatcap'){ t.position.set(0, 0.1, -0.01); t.rotation.x = 0.18; head.add(t); } else t.scale.setScalar(1.06); const br = new T.Mesh(G.brim, hm); br.position.set(0, A.hat === 'cap' ? 0.085 : 0.095, 0.13); br.rotation.x = 0.15; head.add(br); }
+    if (A.beard){ const bm = mat(A.hair, 0.95);
+      if (A.beard === 'full' || A.beard === 'short'){ const b = new T.Mesh(G.beard, bm); b.position.set(0, -0.02, 0.004); b.scale.set(1, A.beard === 'full' ? 1.05 : 0.9, 1.02); head.add(b); }
+      if (A.beard === 'tache' || A.beard === 'goatee'){ const t = new T.Mesh(G.tache, bm); t.position.set(0, -0.048, 0.137); head.add(t); }
+      if (A.beard === 'goatee'){ const t = new T.Mesh(G.goatee, bm); t.position.set(0, -0.1, 0.118); head.add(t); } }
+    if (A.specs){ const fm = mat([0x1a1410, 0x6b4a2a, 0x9a9a9a][Math.floor((o.hue || 0) * 7) % 3], 0.4); for (const sx of [-1, 1]){ const l = new T.Mesh(G.lens, fm); l.position.set(sx * 0.049, 0.022, 0.15); head.add(l); } const br = new T.Mesh(G.bridge, fm); br.position.set(0, 0.026, 0.152); head.add(br); }
+    // clothes
+    if (A.skirt){ const s = new T.Mesh(G.skirt, legs); s.castShadow = true; body.add(s); }
+    if (A.outfit === 'suit'){ const sh = new T.Mesh(G.shirt, mat(0xf2f0ea)); sh.position.set(0, 1.35, 0.135); body.add(sh); if (A.p !== 'f'){ const tie = new T.Mesh(G.tie, mat([0x7a2f3f, 0x22324f, 0x2c5a3a][Math.floor((o.hue || 0) * 11) % 3], 0.5)); tie.position.set(0, 1.25, 0.142); body.add(tie); } }
+    if (A.outfit === 'hivis') for (const y of [1.02, 1.22]){ const v = new T.Mesh(G.vis, mat(0xd8d8d8, 0.3)); v.rotation.x = Math.PI / 2; v.position.y = y; v.scale.set(1, 0.74, 1); body.add(v); }
+    if (A.outfit === 'hoodie'){ const hd = new T.Mesh(G.hood, P.top); hd.position.set(0, 1.45, -0.1); hd.rotation.set(0, 0, Math.PI); body.add(hd); }
+    if (A.outfit === 'cardigan'){ const st = new T.Mesh(G.strip, mat(0xe8e0cc)); st.position.set(0, 1.12, 0.14); body.add(st); }
+    if (A.outfit === 'jumper' || A.outfit === 'scrubs'){ const ly = new T.Mesh(G.lanyard, mat(A.outfit === 'scrubs' ? 0x2c8a5a : 0x3b62a8)); ly.position.set(0.04, 1.32, 0.15); ly.rotation.z = 0.25; body.add(ly); const bd = new T.Mesh(G.badge, mat(0xf2f0ea)); bd.position.set(0.07, 1.2, 0.15); body.add(bd); }
+    if (A.stick){ const s = new T.Mesh(G.stick, mat(0x5b3a22, 0.6)); s.position.set(0, -1.02, 0.04); armP[1].add(s); }
+    if (A.bag === 1){ const b = new T.Mesh(G.handbag, mat([0x7a2f3f, 0x2b2b2b, 0x8a5a3b, 0xd9ab4f][Math.floor((o.hue || 0) * 13) % 4], 0.55)); b.position.set(0, -0.68, 0.02); armP[0].add(b); }
+    if (A.bag === 2){ const b = new T.Mesh(G.pack, mat([0x2b2b2b, 0x22324f, 0x7a2f3f][Math.floor((o.hue || 0) * 17) % 3], 0.8)); b.position.set(0, 1.18, -0.2); body.add(b); }
+  }
   function makePerson(o){
     const h = o.hue != null ? o.hue : Math.random(), age = o.age || 38, staff = !!o.staff;
+    const A = !staff && o.who && typeof appearance === 'function' ? appearance(o.who) : null;      // the cast's look, when the game has one
     let sd = Math.floor(h * 1e6) % 2147483646 + 1; const rnd = () => (sd = sd * 16807 % 2147483647) / 2147483647;
     const pk = a => a[Math.floor(rnd() * a.length)];
-    const skinHex = SKIN[Math.floor(h * 131) % SKIN.length], skin = mat(skinHex, 0.6);
-    const top = mat(staff ? 0x22324f : CLOTHES[Math.floor(h * 997) % CLOTHES.length]), legs = mat(staff ? 0x1b2433 : pk(TROUSERS)), shoeM = mat(0x1a1410, 0.5);
-    const grey = age > 62 || (age > 48 && rnd() < 0.35), hairHex = grey ? pk(HAIR_O) : pk(HAIR_Y), hair = mat(hairHex, 0.85);
+    const skinHex = A ? A.skin : SKIN[Math.floor(h * 131) % SKIN.length], skin = mat(skinHex, 0.6);
+    const top = mat(staff ? 0x22324f : A ? A.top : CLOTHES[Math.floor(h * 997) % CLOTHES.length]), legs = mat(staff ? 0x1b2433 : A ? A.legs : pk(TROUSERS)), shoeM = mat(0x1a1410, 0.5);
+    const grey = A ? A.hair >= 0x8e8a84 && [0xb9b2a5, 0xdcd8d0, 0x8e8a84, 0xf0ede6].includes(A.hair) : age > 62 || (age > 48 && rnd() < 0.35), hairHex = A ? A.hair : grey ? pk(HAIR_O) : pk(HAIR_Y), hair = mat(hairHex, 0.85);
     const g = new T.Group(), body = new T.Group(); g.add(body);
     const legP = [];
     for (const sx of [-0.095, 0.095]){ const p = new T.Group(); p.position.set(sx, 0.86, 0); const l = new T.Mesh(G.leg, legs); l.position.y = -0.41; l.castShadow = true; p.add(l); const sh = new T.Mesh(G.shoe, shoeM); sh.position.set(0, -0.82, 0.04); sh.castShadow = true; p.add(sh); body.add(p); legP.push(p); }
     const torso = new T.Mesh(G.torso, top); torso.scale.z = 0.72; torso.castShadow = true; body.add(torso);
+    if (A){ const bw = [0.88, 1, 1.15][A.build] * (A.p === 'f' ? 0.95 : 1); torso.scale.x = bw; torso.scale.z = 0.72 * bw; }
     const armP = [];
     for (const sx of [-1, 1]){ const p = new T.Group(); p.position.set(sx * 0.215, 1.38, 0); p.rotation.z = sx * 0.1; const a = new T.Mesh(G.arm, top); a.position.y = -0.29; a.castShadow = true; p.add(a); const hd = new T.Mesh(G.hand, skin); hd.position.y = -0.6; p.add(hd); body.add(p); armP.push(p); }
     const neck = new T.Mesh(G.neck, skin); neck.position.y = 1.5; body.add(neck);
@@ -276,6 +322,8 @@ const Scene = (() => {
     const mS = new T.Mesh(G.mouthC, lip); mS.rotation.z = Math.PI; mS.scale.y = 0.6; mS.position.set(0, -0.045, 0.126); head.add(mS);
     const mF = new T.Mesh(G.mouthC, lip); mF.scale.y = 0.55; mF.position.set(0, -0.083, 0.124); head.add(mF);
     // hair
+    if (A){ dress(o, A, { g, body, head, hair, legs, top, skin, armP, staff }); }
+    else {
     let style = pk(['short', 'short', 'crop', 'long', 'long', 'bun', 'curly', 'bald']);
     if (age > 58 && rnd() < 0.35) style = 'bald';
     if (staff) style = h > 9.5 ? 'bun' : 'short';
@@ -289,10 +337,14 @@ const Scene = (() => {
     // clothing details
     if (staff || rnd() < 0.3){ const sh = new T.Mesh(G.shirt, mat(0xf2f0ea)); sh.position.set(0, 1.35, 0.135); body.add(sh); const tie = new T.Mesh(G.tie, mat(staff ? 0xc99a3e : pk([0x7a2f3f, 0x22324f, 0x2c5a3a]), 0.5)); tie.position.set(0, 1.25, 0.142); body.add(tie); }
     if (staff){ const bd = new T.Mesh(G.badge, brass); bd.position.set(0.1, 1.32, 0.14); body.add(bd); }
-    if (o.winter && !staff && rnd() < 0.55){ const sc = new T.Mesh(G.scarf, mat(pk(SCARF), 0.95)); sc.rotation.x = Math.PI / 2; sc.position.y = 1.47; sc.scale.set(1.1, 1, 1); body.add(sc); }
+    }
+    if (o.winter && !staff && rnd() < 0.55 && !(A && A.hat === 'hijab')){ const sc = new T.Mesh(G.scarf, mat(pk(SCARF), 0.95)); sc.rotation.x = Math.PI / 2; sc.position.y = 1.47; sc.scale.set(1.1, 1, 1); body.add(sc); }
     if (age > 68) body.rotation.x = 0.07;
+    if (A && A.temper === 'proud') body.rotation.x = -0.035;
+    if (A && A.temper === 'anxious') body.rotation.x = Math.max(body.rotation.x, 0.05);
     g.scale.setScalar(staff ? 1.0 : 1.04);
-    g.userData = { t: new T.Vector3(), via:null, phase: rnd() * 6, speed: 2.4, legP, armP, head, eyes, brows, mouth:{ n:mN, s:mS, f:mF }, blink: 1 + rnd() * 4, look: 0, lookT: rnd() * 3, wait: 0, waitMax: 1, react: null, front:false };
+    if (A) g.scale.y = 1.04 * A.ht;
+    g.userData = { t: new T.Vector3(), via:null, phase: rnd() * 6, speed: 2.4, legP, armP, head, eyes, brows, mouth:{ n:mN, s:mS, f:mF }, blink: 1 + rnd() * 4, look: 0, lookT: rnd() * 3, wait: 0, waitMax: 1, react: null, front:false, temper: A ? A.temper : null, pace: A ? ({ brisk: 3.1, flustered: 2.1, chatty: 2.2, calm: 2.3 }[A.temper] || 2.4) * (A.stick ? 0.7 : 1) : 2.4 };
     setFace(g, 'neutral');
     scene.add(g); return g;
   }
@@ -513,7 +565,7 @@ const Scene = (() => {
     },
     boards(){
       atmosphere(); lounge.visible = !!S.wm; drawMarket(); drawWindow(); drawPosters();
-      drawBoard(bCal, String(S.year), MONTHS[Math.min(S.month, 11)].slice(0, 3).toUpperCase(), `MONTH ${Math.min(S.month + 1, 12)} OF 12`);
+      drawBoard(bCal, String(S.year), MONTHS[Math.min(S.month, 11)].slice(0, 3).toUpperCase(), S.weeks && !S.over ? `WEEK ${S.wk + 1} OF 4 · MONTH ${Math.min(S.month + 1, 12)}` : `MONTH ${Math.min(S.month + 1, 12)} OF 12`);
       drawBoard(bRate, 'BANK RATE', S.base.toFixed(2) + '%', `SAVERS ${S.savRate.toFixed(2)}%`);
       drawSign();
     },
@@ -526,9 +578,10 @@ const Scene = (() => {
       const winter = [10, 11, 0, 1].includes(S.month);
       upcoming.forEach((c, slot) => {
         let p = people.get(pkey(c)); const q = QUEUE[slot];
-        if (!p){ p = makePerson({ hue:c.who.hue, age:c.who.age, winter }); if (instant) p.position.set(q[0], 0, q[1]); else { p.position.copy(ENTRY); p.userData.via = LANE_IN.clone(); } people.set(pkey(c), p); }
-        p.userData.t.set(q[0], 0, q[1]); p.userData.speed = 2.4; p.userData.front = slot === 0;
-        setFace(p, slot === 0 && WORRIED[c.kind] ? 'worried' : 'neutral');
+        if (!p){ p = makePerson({ hue:c.who.hue, age:c.who.age, winter, who:c.who }); if (instant) p.position.set(q[0], 0, q[1]); else { p.position.copy(ENTRY); p.userData.via = LANE_IN.clone(); } people.set(pkey(c), p); }
+        p.userData.t.set(q[0], 0, q[1]); p.userData.speed = p.userData.pace || 2.4; p.userData.front = slot === 0;
+        const tm = p.userData.temper;
+        setFace(p, slot === 0 && (WORRIED[c.kind] || tm === 'anxious' || tm === 'flustered') ? 'worried' : tm === 'cheerful' || tm === 'chatty' ? 'smile' : tm === 'brisk' && slot > 1 ? 'frown' : 'neutral');
       });
       alarmOn = S.queue.some(c => !c.done && ['fraud','aml','sanctions','liqshock','outage','funding','capital'].includes(c.kind));
     },

@@ -45,7 +45,7 @@ password.
 ## Tests
 
 ```
-npm test                  # engine: 497 checks, no database needed (golden games, replay, ledger)
+npm test                  # engine: 902 checks, no database needed (golden games, replay, ledger)
 docker compose up -d db   # the next two need Postgres
 npm run test:server       # API, accounts, ledger, replay, rollback, privacy (throwaway database per run)
 npm run test:browser      # the real page in Edge/Chrome against the real server, including going offline
@@ -184,6 +184,57 @@ The 3D hall itself is not compared; the layout around it is.
 
 **When a change is deliberate**, run `npm run visual:update`, look at the changed images (`git diff --stat test/visual`, or open them) and
 commit them with the change. To approve a new platform, run it there once and commit that folder. The check is part of `npm run test:all`.
+
+## Weekly turns and the cast
+
+Two game options, both on for a new career started from the page (the title screen has a **Turns** choice: Weekly or Monthly). A game started
+without them, and every older game, plays and replays exactly as before: the golden snapshots are unchanged.
+
+**Weekly turns** (`opts.weeks`, `S.weeks`, `S.wk`). A month runs as four weeks. Week one opens with the month's events and four customers;
+each later week (the `nextWeek` command) brings four more, one more with the extra cashier, and some of the month's events (a product idea,
+a liquidity scare, an outage, a sanctions hit, the treasurer, an acquisition) wait for the week they were due (`S.wkHold`). The economy, the
+accounts and every month-end rule are unchanged, and the month still closes once: `closeMonth` is refused until week four, and the server
+refuses it too (`weeks_left`). About 230 decisions a year instead of 85. Most of the extra slots are everyday visits (below), so lending
+and the wealth desk grow far less than the number of customers. Over 24 seeds and two years, profit a year against the same games played a
+month at a time: careful 156 against 148, greedy 163 against 178, noisy 244 against 255, the wealth bot 285 against 231. The stress test and
+the Settings preview step through the weeks on their copy. The training day and the scenarios have no weeks.
+
+**The cast** (`opts.characters`, `S.cast`). People get names from large pools by heritage (British, with Scottish, Welsh and Irish
+families; South Asian; West African; Caribbean; Polish and Romanian; Chinese and Vietnamese; Southern European; Turkish, Somali and Middle
+Eastern) and by birth decade, so an 85-year-old is a Doreen or a Kenneth and a 19-year-old an Isla or an Alfie. A Polish surname takes its
+women's form, and a Sikh woman is a Kaur. No two people the player can meet again share a full name (the last 300 people, every household,
+every regular and every borrower). A person still takes exactly four numbers from the random stream, as before; everything else about them
+is hashed from those numbers (`castPerson()`, `drawName()`, `makeLook()`).
+- **Looks.** Each person has a look: build, height, skin tone, hair style and colour (going grey with age), beard, glasses, a headscarf,
+  turban, flat cap, cap or beanie, a skirt, a walking stick or a bag, and clothes from their job: scrubs for a nurse, hi-vis for an
+  electrician, a suit for an accountant, a hoodie for a student, a cardigan for a retiree (`appearance()`). The 3D hall and the photo on
+  the ID document draw it.
+- **Manner.** Calm, chatty, anxious, brisk, proud, cheerful, wary or flustered, shown on the papers under "At the counter", and in how they
+  walk and look in the queue. It changes what they do: a proud customer is less likely to take a smaller mortgage offer or sign a personal
+  guarantee, a wary one shops around, an anxious one accepts a counter-offer, a brisk or flustered one is less likely to come back with
+  documents (`TEMPER_FX`, `fx()`).
+- **Motives.** Each customer has a reason for coming in, from their age and what they are asking for ("Has rented for nine years and is
+  tired of moving every lease"). They are chosen by hash, never from the hidden truth, so they give nothing away.
+- **Regulars** (`S.cast.regs`, at most 60). Anyone the bank has served joins the regulars, with a line on what happened each time. Fraud
+  alerts, payments, limit requests, complaints, visits and some loan applications come back from regulars, with their name, face and age
+  and a note on when you first served them and what happened last time. An impostor trying to take over a regular's account has their name
+  but not their face. The Customers panel lists them beside the households.
+- **More variety.** Seven more money-laundering patterns and six more complaints, picked with the same single random draw.
+
+**Everyday visits** (`gen.visit`, `VISITS`): a bereavement (release a small estate or ask for probate), a power of attorney (check with the
+Office of the Public Guardian when the signs point to abuse), a couple opening a joint account (speak to the customer alone when one partner
+answers every question), a switcher asking you to match a bonus, a request for a gambling block, savings advice (a fixed bond only for money
+not needed soon), a student overdraft, a new business, someone about to close everything, and someone locked out of online banking (call
+the number on file when the signs point to a takeover). Each has a hidden truth the papers only hint at, and a test checks that under each
+truth the best answer is worth more than the others, counting later consequences at their odds. They are most of a weekly game's extra
+customers and a few a month with the cast alone.
+
+**On the server.** `POST /api/games` accepts `weeks` and `characters`; the command API accepts `nextWeek`. Migration 016 adds the week to
+each decision (`bank.decision.week`) and scores a visit as consistent when the best answer was chosen (`bank.v_decision_truth`). The cast
+and the regulars are part of the stored state, so the replay checks them.
+
+**Screenshot baselines.** The title screen has a new control, so the approved Windows images for the title change: run
+`npm run visual:update` on Windows and review them.
 
 ## Display, sound and the Settings preview
 

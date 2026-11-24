@@ -7,7 +7,7 @@ function loadEngine(src){
     '...(typeof portfolio==="function"?{portfolio,loanRW,loanSum,rwa,policyVerdict,systemPolicy,quietLeft,giltMV,giltBook,mkt}:{}),' +
     '...(typeof ledgerCheck==="function"?{ledgerCheck,setSink:f=>{LEDGER_SINK=f}}:{}),' +
     '...(typeof mortgageRisk==="function"?{mortgageRisk,LEVELS,UPGRADES,owned,capRatio,SCENARIOS}:{}),' +
-    '...(typeof dispatch==="function"?{dispatch}:{}),...(typeof sceneFacts==="function"?{sceneFacts,dashboardFacts,monthMoves,plRows,roomFacts,yearReplay,ambitionFacts,AMBITIONS,rivalFacts,RIVALS,previewPolicy}:{})}', ctx);
+    '...(typeof dispatch==="function"?{dispatch}:{}),...(typeof castPerson==="function"?{castPerson,appearance,mannerOf,VISITS,gen,res,resolveCard,regFind,nextWeek,capital,stressTest,person}:{}),...(typeof sceneFacts==="function"?{sceneFacts,dashboardFacts,monthMoves,plRows,roomFacts,yearReplay,ambitionFacts,AMBITIONS,rivalFacts,RIVALS,previewPolicy}:{})}', ctx);
   return ctx.E;
 }
 // small independent PRNG so bot choices never touch the game's own random stream
@@ -37,12 +37,15 @@ function play(E, seed, policy, years = 2, opts = {}, setup = null){
   if (setup) setup(run, E);
   for (let y = 0; y < years; y++){
     while (!E.S.over){
+      for (;;){
       let c; while ((c = E.current())){
         const o = c.opts.filter(o => !(o.cash && E.S.cash < o.cash));
         let k;
         if (POLICIES[policy]) k = o[Math.min(o.length - 1, POLICIES[policy](c, r))].k;
         else { k = BOTS[policy].choose(c, E, r); if (!o.some(x => x.k === k)) k = o[0].k; }
         run({ type: 'resolve', id: c.id, k });
+      }
+      if (E.S.weeks && E.S.wk < 3 && !E.S.over) run({ type: 'nextWeek' }); else break;
       }
       if (BOTS[policy] && BOTS[policy].month) BOTS[policy].month(E, run, r);
       run({ type: 'closeMonth' });
