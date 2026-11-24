@@ -339,15 +339,19 @@ async function syncSettings(client, gid, seq, state, was, now) {
   const old = new Map(was.map((r) => [key(r), r])), cur = new Map(now.map((r) => [key(r), r]));
   const y = state.year, m = Math.min(state.month, 11);
   const fresh = seq === 1 || !(await client.query('SELECT 1 FROM bank.setting_version WHERE game_id = $1 LIMIT 1', [gid])).rows.length;   // a game recorded before settings were kept gets them all now
-  for (const [k, r] of cur) {
-    if (!fresh && same(old.get(k), r)) continue;
-    await client.query('UPDATE bank.setting_version SET to_seq = $5 WHERE game_id = $1 AND area = $2 AND setting = $3 AND to_seq IS NULL AND from_seq <> $4', [gid, r.area, r.setting, seq, seq]);
+  const changed = [...cur.values()].filter((r) => fresh || !same(old.get(key(r)), r));
+  const gone = [...old.keys()].filter((k) => !cur.has(k)).map((k) => old.get(k));
+  const closing = changed.concat(gone).map((r) => ({ area: r.area, setting: r.setting }));
+  if (closing.length && !fresh)
     await client.query(
-      `INSERT INTO bank.setting_version (game_id, area, setting, from_seq, from_year, from_month, value, value_text, owner) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      `UPDATE bank.setting_version v SET to_seq = $2 FROM json_to_recordset($3::json) AS r(area text, setting text)
+        WHERE v.game_id = $1 AND v.area = r.area AND v.setting = r.setting AND v.to_seq IS NULL AND v.from_seq <> $2`, [gid, seq, JSON.stringify(closing)]);
+  if (changed.length)
+    await client.query(
+      `INSERT INTO bank.setting_version (game_id, area, setting, from_seq, from_year, from_month, value, value_text, owner)
+       SELECT $1, r.area, r.setting, $2, $3, $4, r.value, r.text, r.owner FROM json_to_recordset($5::json) AS r(area text, setting text, value numeric, text text, owner text)
        ON CONFLICT (game_id, area, setting, from_seq) DO UPDATE SET value = EXCLUDED.value, value_text = EXCLUDED.value_text, owner = EXCLUDED.owner`,
-      [gid, r.area, r.setting, seq, y, m, r.value, r.text, r.owner]);
-  }
-  for (const [k, r] of old) if (!cur.has(k)) await client.query('UPDATE bank.setting_version SET to_seq = $4 WHERE game_id = $1 AND area = $2 AND setting = $3 AND to_seq IS NULL', [gid, r.area, r.setting, seq]);
+      [gid, seq, y, m, JSON.stringify(changed)]);
 }
 // One customer file: a loan booked by a decision belongs to that decision's person and customer; a loan booked by the lending
 // desk is matched to the regular customer of the same name. A customer who opened their account at this command gets a KYC status.

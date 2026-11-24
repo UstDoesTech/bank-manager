@@ -86,6 +86,7 @@ test('the page: sign up, confirm, accept the notice, play online and offline, an
   await waitFor(async () => (await pool.query('SELECT 1 FROM bank.game')).rows.length === 1, 'game on the server');
   const gameId = (await pool.query('SELECT id FROM bank.game')).rows[0].id;
   const seed = (await pool.query('SELECT seed FROM bank.game WHERE id = $1', [gameId])).rows[0].seed;
+  await page.waitForFunction(() => S && S.seed);                       // the server row exists before the page has started its own game
   assert.strictEqual(await page.evaluate(() => S.seed), seed, 'the page uses the seed the server chose');
 
   const playMonth = () => page.evaluate(() => {
