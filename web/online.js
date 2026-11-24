@@ -86,7 +86,9 @@ async function offerLiteracy(){
 }
 
 async function startGame(opts = {}){
-  if (!opts.tutorial && !opts.scenario && opts.households === undefined) opts = Object.assign({}, opts, { households: true, meetings: true, rivals: true });
+  if (!opts.tutorial && !opts.scenario && opts.households === undefined) opts = Object.assign({}, opts, { households: true, meetings: true, rivals: true, weeks: opts.weeks !== false, accounts: true });
+  if (opts.weeks === false) delete opts.weeks;
+  if (opts.characters === undefined) opts = Object.assign({}, opts, { characters: true });
   clearSave(); Remote.drop(); acknowledgeCookie();
   let seed = null;
   await Remote.guest();
@@ -180,12 +182,17 @@ function titleScreen(){
   const saved = load(), resumable = saved && (!saved.over || saved.over === 'done');
   let best = null; try { best = JSON.parse(localStorage.getItem('ch-best') || 'null'); } catch (e) {}
   let level = 'standard'; try { const v = localStorage.getItem('bm-level'); if (DIFFICULTY[v]) level = v; } catch (e) {}
+  let pace = 'weekly'; try { if (localStorage.getItem('bm-pace') === 'monthly') pace = 'monthly'; } catch (e) {}
+  const PACE = { weekly: ['Weekly', 'Four weeks to a month and about three times as many customers, most of them everyday visits. The month still closes once.'], monthly: ['Monthly', 'The original pace: one batch of customers and messages, then close the month.'] };
   overlay(`<p class="title-xl">Bank<br>Manager</p>
     <p>Run a small high-street bank. Serve customers, answer your inbox, and make money without failing your customers or the regulator.</p>
     ${best ? `<p class="num" style="color:var(--brass);font-size:calc(13px*var(--ts));margin:0">Best rating so far: ${esc(best.letter)}${best.level && best.level !== 'standard' && DIFFICULTY[best.level] ? ' (' + esc(DIFFICULTY[best.level].name) + ')' : ''}</p>` : ''}
     <div class="lvl"><span id="lvlLabel" class="eyebrow">Level for a new career</span>
       <div class="seg three" role="group" aria-labelledby="lvlLabel">${Object.entries(DIFFICULTY).map(([k, d]) => `<button type="button" data-lvl="${k}" aria-pressed="${k === level}">${esc(d.name)}</button>`).join('')}</div>
       <p class="dim" id="lvlNote" role="status">${esc(DIFFICULTY[level].blurb)}</p></div>
+    <div class="lvl pace"><span id="paceLabel" class="eyebrow">Turns</span>
+      <div class="seg" role="group" aria-labelledby="paceLabel">${Object.entries(PACE).map(([k, d]) => `<button type="button" data-pace="${k}" aria-pressed="${k === pace}">${d[0]}</button>`).join('')}</div>
+      <p class="dim" id="paceNote" role="status">${esc(PACE[pace][1])}</p></div>
     <div class="rowbtn">
       ${resumable ? `<button type="button" class="btn primary" id="ovGo">${saved.scenario ? esc(SCENARIOS[saved.scenario].name) + ' · ' : ''}${saved.over ? `Year-end ${saved.year}` : `Continue · ${MONTHS[saved.month]} ${saved.year}`}</button>` : ''}
       <button type="button" class="btn ${resumable ? 'neutral' : 'primary'}" id="${best ? 'ovNew' : 'ovTrain'}">${best ? 'New career' : 'Start with a training day'}</button>
@@ -198,7 +205,8 @@ function titleScreen(){
 `);
   const g = $('#ovGo'); if (g) g.onclick = () => { S = saved; save(); play(); };
   $('#ovTrain').onclick = () => startGame({ tutorial:true });
-  $('#ovNew').onclick = () => startGame(level === 'standard' ? {} : { difficulty: level });
+  $('#ovNew').onclick = () => startGame(Object.assign(level === 'standard' ? {} : { difficulty: level }, pace === 'monthly' ? { weeks: false } : {}));
+  $('#ov .pace .seg').onclick = e => { const b = e.target.closest('[data-pace]'); if (!b) return; pace = b.dataset.pace; try { localStorage.setItem('bm-pace', pace); } catch (x) {} document.querySelectorAll('#ov [data-pace]').forEach(x => x.setAttribute('aria-pressed', x === b)); $('#paceNote').textContent = PACE[pace][1]; };
   $('#ov .lvl .seg').onclick = e => { const b = e.target.closest('[data-lvl]'); if (!b) return; level = b.dataset.lvl; try { localStorage.setItem('bm-level', level); } catch (x) {} document.querySelectorAll('#ov [data-lvl]').forEach(x => x.setAttribute('aria-pressed', x === b)); $('#lvlNote').textContent = DIFFICULTY[level].blurb; };
   $('#ovScen').onclick = scenarioPicker;
   $('#ovDisp').onclick = () => displayScreen(() => titleScreen());

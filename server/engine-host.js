@@ -7,7 +7,7 @@ const vm = require('vm'), fs = require('fs'), path = require('path');
 function createHost(enginePath = path.join(__dirname, '..', 'engine', 'engine.js')) {
   const src = fs.readFileSync(enginePath, 'utf8');
   const ctx = vm.createContext({ console, Date });
-  vm.runInContext(src + ';LEDGER_STRICT = true; this.E = { dispatch, ENGINE_VERSION, ambitionFacts, capRatio, liqRatio, metrics, rating, portfolio, maturityLadder, swapMTM, fundingInstruments, sharePrice, bookPerShare, riskFacts, giltRows, marketFacts, ' +
+  vm.runInContext(src + ';LEDGER_STRICT = true; this.E = { dispatch, ENGINE_VERSION, settingsFacts, ambitionFacts, capRatio, liqRatio, metrics, rating, portfolio, maturityLadder, swapMTM, fundingInstruments, sharePrice, bookPerShare, riskFacts, giltRows, marketFacts, ' +
     'get S(){ return S }, set S(v){ S = v }, setSink(f){ LEDGER_SINK = f } };', ctx);
   const E = ctx.E;
 
@@ -20,9 +20,11 @@ function createHost(enginePath = path.join(__dirname, '..', 'engine', 'engine.js
     E.S = state;
     try {
       const before = state ? { year: state.year, month: state.month } : null;
+      const settingsBefore = state ? JSON.parse(JSON.stringify(E.settingsFacts())) : [];
       const result = E.dispatch(cmd);
       const next = E.S;
       const facts = { before, after: { year: next.year, month: next.month }, over: next.over || null,
+        settings: JSON.parse(JSON.stringify(E.settingsFacts())), settingsBefore,
         cap: E.capRatio(), liq: E.liqRatio(), trust: next.trust, comp: next.comp,
         cohorts: JSON.parse(JSON.stringify(E.portfolio())),
         ladder: cmd.type === 'closeMonth' ? JSON.parse(JSON.stringify(E.maturityLadder())) : null, mtm: next.swaps && next.swaps.length ? E.swapMTM() : 0,

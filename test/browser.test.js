@@ -86,10 +86,14 @@ test('the page: sign up, confirm, accept the notice, play online and offline, an
   await waitFor(async () => (await pool.query('SELECT 1 FROM bank.game')).rows.length === 1, 'game on the server');
   const gameId = (await pool.query('SELECT id FROM bank.game')).rows[0].id;
   const seed = (await pool.query('SELECT seed FROM bank.game WHERE id = $1', [gameId])).rows[0].seed;
+  await page.waitForFunction(() => S && S.seed);                       // the server row exists before the page has started its own game
   assert.strictEqual(await page.evaluate(() => S.seed), seed, 'the page uses the seed the server chose');
 
   const playMonth = () => page.evaluate(() => {
-    for (let c; (c = current());){ const o = c.opts.filter((o) => !(o.cash && S.cash < o.cash)); dispatch({ type: 'resolve', id: c.id, k: o[0].k }); }
+    for (;;){                                              // a new career is played in weeks: serve each week, then the next
+      for (let c; (c = current());){ const o = c.opts.filter((o) => !(o.cash && S.cash < o.cash)); dispatch({ type: 'resolve', id: c.id, k: o[0].k }); }
+      if (weekLeft()) endWeek(); else break;
+    }
     closeBooks();
     return S.month;
   });
@@ -97,14 +101,16 @@ test('the page: sign up, confirm, accept the notice, play online and offline, an
   const pageCommands = () => page.evaluate(() => JSON.parse(localStorage.getItem('bm-remote') || '{}'));
 
   await playMonth(); await playMonth();
-  await waitFor(async () => { const r = await pageCommands(); return r.pending && r.pending.length === 0 && (await serverSeq()) === r.seq && r.seq > 8; }, 'server to catch up');
+  await waitFor(async () => { const r = await pageCommands(); return r.pending && r.pending.length === 0 && (await serverSeq()) === r.seq && r.seq > 8; }, 'server to catch up', 60000);   // a weekly month is about twenty commands
 
   // the regular customers: seven households, a Customers panel, and each closed month stored on the server
   assert.strictEqual(await page.evaluate(() => S.households.length), 7);
   await waitFor(async () => !(await page.isHidden('#hhBtn')), 'Customers button');
   await page.evaluate(() => closeOverlay());
   await page.click('#hhBtn');
-  assert.strictEqual(await page.locator('#ov .note').count(), 7);
+  assert.strictEqual(await page.locator('#ov .note:not(.reg-card)').count(), 7);
+  assert(await page.locator('#ov .reg-card').count() > 0, 'regulars are listed too');
+  assert.strictEqual(await page.evaluate(() => S.weeks && !!S.cast), true, 'a new career is weekly, with the cast');
   assert.match(await page.textContent('.panel'), /credit score \d+ \/ 999/);
   await page.click('#hhBack');
 
@@ -120,7 +126,7 @@ test('the page: sign up, confirm, accept the notice, play online and offline, an
   // reload while still offline, then come back online: the queue survives the reload and is flushed
   await ctx.setOffline(false);
   await page.reload();
-  await waitFor(async () => { const r = await pageCommands(); return r.pending && r.pending.length === 0 && (await serverSeq()) > before; }, 'queued commands to flush after reload');
+  await waitFor(async () => { const r = await pageCommands(); return r.pending && r.pending.length === 0 && (await serverSeq()) > before; }, 'queued commands to flush after reload', 60000);
 
   // the server's own run of the commands agrees with what the page saw
   const v = await verifyGame(pool, host, gameId);
@@ -239,9 +245,9 @@ test('the page without an account: the game is recorded anonymously, the player 
   await page.click('#ovNew');
   await waitFor(async () => (await pool.query('SELECT count(*)::int n FROM bank.game g JOIN account.player p ON p.player_key = g.player_key WHERE p.guest')).rows[0].n === 1, 'guest game on the server');
   await page.waitForFunction(() => S && S.seed);                       // the server row exists before the page has started its own game
-  await page.evaluate(() => { closeOverlay(); for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts.find((o) => !(o.cash && S.cash < o.cash)).k }); closeBooks(); });
+  await page.evaluate(() => { closeOverlay(); for (;;){ for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts.find((o) => !(o.cash && S.cash < o.cash)).k }); if (weekLeft()) endWeek(); else break; } closeBooks(); });
   await page.evaluate(() => closeOverlay()); await page.click('#menuBtn'); assert.match(await page.textContent('.panel'), /Playing as a guest/); assert.strictEqual(await page.$('#menuOut'), null, 'a guest has no password to sign out of'); await page.click('#menuResume');
-  const r = await waitFor(async () => { const x = await page.evaluate(() => JSON.parse(localStorage.getItem('bm-remote') || '{}')); return x.pending && x.pending.length === 0 && x.seq > 3 && x; }, 'commands to reach the server');
+  const r = await waitFor(async () => { const x = await page.evaluate(() => JSON.parse(localStorage.getItem('bm-remote') || '{}')); return x.pending && x.pending.length === 0 && x.seq > 3 && x; }, 'commands to reach the server', 60000);
   const gameId = (await pool.query('SELECT g.id FROM bank.game g JOIN account.player p ON p.player_key = g.player_key WHERE p.guest')).rows[0].id;
   assert.deepStrictEqual((await verifyGame(pool, host, gameId)).problems, []);
   assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.journal_line WHERE game_id = $1', [gameId])).rows[0].n > 0, true);
@@ -280,7 +286,7 @@ test('the executive meeting on the page: a new career queues settings for next m
   assert.strictEqual(await page.evaluate(() => S.pq.length), 0);
   await page.fill('input[data-key=mortgageSpread]', '1.3'); await page.click('#plSave');
   await waitFor(async () => (await page.evaluate(() => S.pq.length)) === 1, 'queued again');
-  await page.evaluate(() => { closeOverlay(); for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); dispatch({ type: 'closeMonth' }); });
+  await page.evaluate(() => { closeOverlay(); for (;;){ for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); if (weekLeft()) dispatch({ type: 'nextWeek' }); else break; } dispatch({ type: 'closeMonth' }); });
   assert.strictEqual(await page.evaluate(() => S.policy.pricing.mortgageSpread), 1.3, 'in force at the start of next month');
   assert.deepStrictEqual(errors, []);
   await ctx.close();

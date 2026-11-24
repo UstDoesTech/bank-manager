@@ -473,3 +473,29 @@ input[type="range"]{width:100%;accent-color:var(--brass)}
   #bubble b span{display:none}
   #bubble p{margin:0;flex:1 1 auto;min-width:0;font-size:calc(12.5px*var(--ts));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 }
+
+/* the banner when a new week opens */
+#wkban{position:absolute;left:50%;top:44%;transform:translateX(-50%);z-index:6;background:var(--hall-2,#14231f);border:1px solid var(--brass,#d9ab4f);border-radius:10px;padding:8px 14px;display:grid;gap:2px;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.35);pointer-events:none}
+#wkban[hidden]{display:none}
+#wkban b{font-size:calc(15px*var(--ts));color:var(--brass,#d9ab4f)}
+#wkban span{font-size:calc(12.5px*var(--ts));color:var(--muted)}
+/* regulars in the Customers panel */
+.regs{display:grid;gap:8px}
+.reg-card{display:grid;grid-template-columns:44px 1fr;gap:10px;align-items:start}
+.reg-card .photo{width:44px;height:54px}
+.reg-card ul{margin:4px 0 0;padding-left:18px}
+.reg-card li{font-size:calc(12.5px*var(--ts));color:var(--muted)}
+.ph-sm{width:44px;height:53px;overflow:hidden;border-radius:6px}
+.ph-sm .photo{transform:scale(.63);transform-origin:0 0}
+.photo q{position:absolute;left:50%;top:13px;width:40px;height:50px;margin-left:-20px;border-radius:20px 20px 10px 10px}
+.photo q::before,.photo q::after{content:none}
+.photo s{position:absolute;left:50%;top:8px;width:38px;height:14px;margin-left:-19px;border-radius:18px 18px 4px 4px;text-decoration:none}
+.photo s.hijab{top:10px;width:44px;height:58px;margin-left:-22px;border-radius:22px 22px 12px 12px}
+.photo s.turban{top:6px;width:38px;height:20px;border-radius:19px 19px 8px 8px}
+.photo s.flatcap{top:10px;width:40px;height:10px;margin-left:-20px;border-radius:12px 12px 2px 2px}
+.photo s.cap,.photo s.beanie{top:9px;height:13px}
+.photo em{position:absolute;left:50%;top:38px;width:26px;height:16px;margin-left:-13px;border-radius:4px 4px 14px 14px}
+.photo em.tache{top:40px;width:16px;height:4px;margin-left:-8px;border-radius:3px}
+.photo em.goatee{top:44px;width:10px;height:10px;margin-left:-5px}
+.photo .gl{position:absolute;left:50%;top:28px;width:26px;height:7px;margin-left:-13px;border:2px solid #1c1714;border-radius:4px;box-sizing:border-box}
+.photo i.hj{z-index:1;width:26px;height:30px;margin-left:-13px;top:20px}

@@ -45,7 +45,7 @@ password.
 ## Tests
 
 ```
-npm test                  # engine: 497 checks, no database needed (golden games, replay, ledger)
+npm test                  # engine: 929 checks, no database needed (golden games, replay, ledger)
 docker compose up -d db   # the next two need Postgres
 npm run test:server       # API, accounts, ledger, replay, rollback, privacy (throwaway database per run)
 npm run test:browser      # the real page in Edge/Chrome against the real server, including going offline
@@ -184,6 +184,130 @@ The 3D hall itself is not compared; the layout around it is.
 
 **When a change is deliberate**, run `npm run visual:update`, look at the changed images (`git diff --stat test/visual`, or open them) and
 commit them with the change. To approve a new platform, run it there once and commit that folder. The check is part of `npm run test:all`.
+
+## Weekly turns and the cast
+
+Two game options, both on for a new career started from the page (the title screen has a **Turns** choice: Weekly or Monthly). A game started
+without them, and every older game, plays and replays exactly as before: the golden snapshots are unchanged.
+
+**Weekly turns** (`opts.weeks`, `S.weeks`, `S.wk`). A month runs as four weeks. Week one opens with the month's events and four customers;
+each later week (the `nextWeek` command) brings four more, one more with the extra cashier, and some of the month's events (a product idea,
+a liquidity scare, an outage, a sanctions hit, the treasurer, an acquisition) wait for the week they were due (`S.wkHold`). The economy, the
+accounts and every month-end rule are unchanged, and the month still closes once: `closeMonth` is refused until week four, and the server
+refuses it too (`weeks_left`). About 230 decisions a year instead of 85. Most of the extra slots are everyday visits (below), so lending
+and the wealth desk grow far less than the number of customers. Over 24 seeds and two years, profit a year against the same games played a
+month at a time: careful 156 against 148, greedy 163 against 178, noisy 244 against 255, the wealth bot 285 against 231. The stress test and
+the Settings preview step through the weeks on their copy. The training day and the scenarios have no weeks.
+
+**The cast** (`opts.characters`, `S.cast`). People get names from large pools by heritage (British, with Scottish, Welsh and Irish
+families; South Asian; West African; Caribbean; Polish and Romanian; Chinese and Vietnamese; Southern European; Turkish, Somali and Middle
+Eastern) and by birth decade, so an 85-year-old is a Doreen or a Kenneth and a 19-year-old an Isla or an Alfie. A Polish surname takes its
+women's form, and a Sikh woman is a Kaur. No two people the player can meet again share a full name (the last 300 people, every household,
+every regular and every borrower). A person still takes exactly four numbers from the random stream, as before; everything else about them
+is hashed from those numbers (`castPerson()`, `drawName()`, `makeLook()`).
+- **Looks.** Each person has a look: build, height, skin tone, hair style and colour (going grey with age), beard, glasses, a headscarf,
+  turban, flat cap, cap or beanie, a skirt, a walking stick or a bag, and clothes from their job: scrubs for a nurse, hi-vis for an
+  electrician, a suit for an accountant, a hoodie for a student, a cardigan for a retiree (`appearance()`). The 3D hall and the photo on
+  the ID document draw it.
+- **Manner.** Calm, chatty, anxious, brisk, proud, cheerful, wary or flustered, shown on the papers under "At the counter", and in how they
+  walk and look in the queue. It changes what they do: a proud customer is less likely to take a smaller mortgage offer or sign a personal
+  guarantee, a wary one shops around, an anxious one accepts a counter-offer, a brisk or flustered one is less likely to come back with
+  documents (`TEMPER_FX`, `fx()`).
+- **Motives.** Each customer has a reason for coming in, from their age and what they are asking for ("Has rented for nine years and is
+  tired of moving every lease"). They are chosen by hash, never from the hidden truth, so they give nothing away.
+- **Regulars** (`S.cast.regs`, at most 60). Anyone the bank has served joins the regulars, with a line on what happened each time. Fraud
+  alerts, payments, limit requests, complaints, visits and some loan applications come back from regulars, with their name, face and age
+  and a note on when you first served them and what happened last time. An impostor trying to take over a regular's account has their name
+  but not their face. The Customers panel lists them beside the households.
+- **More variety.** Seven more money-laundering patterns and six more complaints, picked with the same single random draw.
+
+**Everyday visits** (`gen.visit`, `VISITS`): a bereavement (release a small estate or ask for probate), a power of attorney (check with the
+Office of the Public Guardian when the signs point to abuse), a couple opening a joint account (speak to the customer alone when one partner
+answers every question), a switcher asking you to match a bonus, a request for a gambling block, savings advice (a fixed bond only for money
+not needed soon), a student overdraft, a new business, someone about to close everything, and someone locked out of online banking (call
+the number on file when the signs point to a takeover). Each has a hidden truth the papers only hint at, and a test checks that under each
+truth the best answer is worth more than the others, counting later consequences at their odds. They are most of a weekly game's extra
+customers and a few a month with the cast alone.
+
+**On the server.** `POST /api/games` accepts `weeks` and `characters`; the command API accepts `nextWeek`. Migration 016 adds the week to
+each decision (`bank.decision.week`) and scores a visit as consistent when the best answer was chosen (`bank.v_decision_truth`).
+
+**Customers in the database** (migration 017), kept apart from the game state:
+- `bank.person` holds a name and a look (heritage, presentation, skin tone, hair, headwear, beard, glasses, build, height, skirt, stick,
+  bag) and nothing else. It is shared across games: the same name and look is one row wherever it appears, keyed by a hash of the two.
+  The same name with another face is another person, so an impostor is not the customer they claim to be.
+- `bank.customer` is one row per regular in one game: the person, year of birth, manner, job, when first and last served, how many times,
+  whether they hold a mortgage with you and whether they have left. It keeps every regular the game ever had, including those the game has
+  since dropped from its list of 60.
+- `bank.customer_event` is every time the bank served a regular: the command, year, month and week, the case and the answer, and what
+  happened. The game state keeps only the last six; the table keeps all of them.
+- `bank.decision.person_id` and `bank.decision.customer_id` say who each decision was about, and `bank.household.person_id` links the
+  households to their person.
+- The server writes these as each command runs (`syncCustomers()`, `upsertPerson()` in `server/games.js`), including customers served by
+  the lending desk at a month end. `server/replay.js` checks the stored customers against the replay: one row per regular the game created,
+  and each live regular's person, year of birth, manner, number of times served, events and last outcome.
+- Analysis: `bank.metric_customer` (per game: customers, the share served more than once, times served, the share who left, and whether
+  the game was weekly) and `bank.metric_customer_manner` (by manner). Both read only games in `v_game`, and the read-only role can read
+  them. Queries 14 to 16 in `db/analysis/metrics.sql` use them, including the people who turn up in more than one game.
+
+**Screenshot baselines.** The title screen has a new control, so the approved Windows images for the title change: run
+`npm run visual:update` on Windows and review them.
+
+## The tables as a simplified core banking system
+
+Migration 018 persists what used to live only in the game state, so the database can be read as a small core banking
+system: products and their prices, the terms in force at any point, a ledger for each loan, and one customer file.
+
+| Function | Where |
+| --- | --- |
+| Options a game was started with | `bank.game.weekly`, `characters`, `households`, `meetings`, `rivals`, `chief_executive` (older games are filled in from their first command) |
+| Products | `bank.product_catalogue`, shared like the chart of accounts: the four loans and four deposit products, the general-ledger account each sits in, and how each is priced |
+| Every setting in force | `bank.setting_version`: each pricing, credit, treasury, funding, capital, operations and growth setting, the savings rate, the branch's upgrades and product decisions (overdraft fee, counter, broker, government scheme, cyber cover, wealth desk), and who controls each policy area (locked, system or player). One row per setting per period it held, from the command that set it to the command that replaced it, so any month's terms can be read back. `v_setting_current` is what is in force now |
+| Price list | `bank.v_price_list`: each product's rate now, from the current settings and the latest Bank Rate (mortgages by loan-to-value band) |
+| A ledger for each loan | Every journal line that moves a loan, its interest or its fees names the loan (`journal_line.subledger`, `subledger_id`). A pool sale is split by loan. `v_loan_statement` is each loan's transactions (drawdown, repayment, interest, fee, write-off, sold); `v_loan_ledger` is each loan's balance from its postings against the agreement's balance; `v_loan_reconciliation` checks the loan book against the general ledger's `loans` account |
+| One customer file | A borrower (`bank.party`) links to its person and, unless it is a household, its regular customer; a business loan links to its director. Each customer has a KYC status: verified, verified with documents, or on file (banked here before the player arrived). `v_customer_holding` lists the loans each customer holds |
+
+How it works: the engine lists every setting in force (`settingsFacts()`, pure); the server compares the list before and after each
+command and versions what changed (`syncSettings()`). Loan postings carry the loan's number in what reaches the database only, so
+the engine's own state, the golden snapshots and every recorded game are unchanged. `server/replay.js` checks the settings in force,
+the options, and that nothing has reached the loan book without a loan since lines began to carry one. A game recorded before this
+migration still replays: its journal lines are compared by account, and its settings are written in full at its next command.
+
+**Customers' own deposit accounts** (the `accounts` option, with the cast; on for a new career from the page; migration 019).
+A customer who opens an account at the counter has one in their name (`S.acc` in the engine, `bank.account` rows `acct-<n>` with
+the customer, product, and when opened and closed): a current account, an easy-access saver, a cash ISA, a two-year fixed saver or a
+business account. Onboarding, a switch, a student or a new business opens one; savings advice and a bereavement move money the
+customer already had in the pool into an account in their name; closing everything closes their accounts and takes their real
+balances. Each month a current account sees salary or takings in and spending out, savers have interest credited to the account
+(the pool's blended rate now covers only what is left in the pool), and a fixed saver becomes easy access after two years. This
+costs the bank a little, because savers in their own accounts earn the full savings rate. Account activity is hashed, so a game with accounts takes the same random numbers as one without.
+
+Every deposit posting now names where it belongs: a customer's account, the retail pool (`deposit` 0) or a large depositor (`large`).
+`v_deposit_statement` is each account's statement from the customer's side; `v_deposit_ledger` is each account's balance from its
+postings against its recorded balance; `v_deposit_reconciliation` checks the deposits against the general ledger;
+`v_customer_holding` now lists deposits beside loans. Journal entries carry a value day (`journal_entry.value_day`,
+`v_journal_entry.value_date`): in a weekly game a day in the week it happened, at month end the last day of the month. The replay
+checks customers' accounts and that nothing reaches deposits without an account. Journal entries and lines are now written in one
+statement each per command.
+
+**Statements that read like a bank's** (migration 020; the interest and correction rules only in games with accounts):
+- *Value dates in every game.* A posting's day is how far through the month's customers the counter has got (or the week's, in a
+  weekly game), so days run forward through the month; month-end postings take the last day. This is only in what reaches the database.
+- *Interest on each day's balance.* Savers earn interest at actual/365 on every day's balance, credited at month end ("Interest: 31
+  days at 2.50%"), and paid to the day when an account closes. A new loan's first month of interest runs from the day it was drawn.
+- *Corrections, never edits.* A payment paid in at the counter is sometimes returned unpaid by the bank it came from (about one in 25):
+  a reversal at month end names the entry it corrects (`journal_entry.corrects`). Refunds of card fraud, scams and upheld complaints
+  go into the customer's account, and a refund of a payment made by someone using a customer's identity names that payment. A payment
+  made in branch now leaves the customer's account.
+- *Narratives.* Every posting to a customer's account says what it was (`journal_entry.narrative`): paid in at the counter, salary in
+  and bills out, interest, returned unpaid, refund, account closed.
+- `v_deposit_statement` and `v_loan_statement` carry the value date and narrative; `v_correction` lists each correction beside what
+  it corrects. The replay checks each entry's value day, narrative and correction.
+
+Realism costs a little: over 24 seeds, careful play earns 140 a year with accounts, against 156 without, mostly because a loan now
+earns only part of a month's interest in its first month.
+
+The new views read raw tables, so they are for the owner, not the read-only analysis role.
 
 ## Display, sound and the Settings preview
 

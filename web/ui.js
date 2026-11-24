@@ -107,7 +107,7 @@ function unreadCount(){ return inboxActions().filter(c => !c.done).length + (S.i
 
 function hud(flash){
   const m = metrics();
-  $('#hWhen').textContent = `${MONTHS[Math.min(S.month, 11)].slice(0, 3)} ${S.year}`;
+  $('#hWhen').textContent = `${S.weeks && !S.over ? `Wk ${S.wk + 1} · ` : ''}${MONTHS[Math.min(S.month, 11)].slice(0, 3)} ${S.year}`;
   const set = (id, txt, delta) => { const el = $(id); el.textContent = txt; if (flash && delta){ el.classList.remove('up', 'down'); void el.offsetWidth; el.classList.add(delta > 0 ? 'up' : 'down'); } };
   const d = lastM || m;
   const lvl = (id, warn, bad) => { const el = $(id); el.classList.toggle('warn', !!warn && !bad); el.classList.toggle('bad', !!bad); };
@@ -117,13 +117,14 @@ function hud(flash){
   set('#mTrust', String(Math.round(m.trust)), Math.round(m.trust) - Math.round(d.trust)); lvl('#mTrust', m.trust < 45, m.trust < 25);
   const [rs, rc] = regStatus(); const r = $('#hReg'); r.innerHTML = '<span class="rl">Regulator </span>' + rs.toLowerCase(); r.className = 'reg ' + rc;
   const gb = $('#goalsBtn'); gb.hidden = !S.scenario; if (S.scenario){ const g = S.goals || []; gb.textContent = `Goals ${g.filter(x => x.ok !== false).length}/${g.length}`; }
-  $('#hhBtn').hidden = !S.households;
+  $('#hhBtn').hidden = !(S.households || (S.cast && S.cast.regs.length));
   $('#policyBtn').hidden = !(S.progress && S.progress.unlocked.some(a => POLICY_LIMITS[a]));
   const nq = counterQueue().length, ni = inboxActions().filter(c => !c.done).length;        // the badge counts what needs a reply, not every unread message
   $('#nCounter').textContent = nq ? String(nq) : ''; $('#nInbox').textContent = ni ? String(ni) : '';
-  $('#contBtn').textContent = S.over ? 'Year end' : (remaining() || served) ? 'Continue' : 'End month';
+  $('#contBtn').textContent = S.over ? 'Year end' : (remaining() || served) ? 'Continue' : weekLeft() ? 'End week' : 'End month';
   lastM = m;
 }
+const weekLeft = () => !!(S && S.weeks && !S.over && S.wk < 3);
 function floatText(t, good){ const f = document.createElement('div'); f.className = 'fl'; f.textContent = t; f.style.color = good ? 'var(--good)' : 'var(--bad)'; $('#float').appendChild(f); setTimeout(() => f.remove(), 1700); }
 function ticker(){
   const tk = S.loans.filter(l => l.status === 'arrears').length;
@@ -140,12 +141,26 @@ function setView(v){
 
 /* ---------- The counter ---------- */
 const SKIN_C = ['#f1c9a5','#d8a47f','#b07a52','#8a5a3c','#5c3b28','#e6b98f'], CLOTH_C = ['#3b62a8','#b84a5a','#2c8a5a','#d9ab4f','#6a4fa0','#2f7f8f','#8a5a3b','#c9c2b0','#444f63','#b86b3a','#7a2f3f','#55705a'], HAIR_C = ['#1a120c','#3b2a1a','#7a5a32','#b9b2a5','#111111'];
+// The passport-style photo on an ID document. With the characters option it follows the person's look.
+const hexC = n => '#' + (n >>> 0).toString(16).padStart(6, '0');
+function photoHTML(who){
+  const h = who.hue || 0.5, A = appearance(who);
+  if (!A) return `<div class="photo" style="background:#a9bccd"><b style="background:${CLOTH_C[Math.floor(h * 997) % CLOTH_C.length]}"></b><i style="background:${SKIN_C[Math.floor(h * 131) % SKIN_C.length]}"></i><u style="background:${(who.age || 0) > 62 ? '#b9b2a5' : HAIR_C[Math.floor(h * 53) % HAIR_C.length]}"></u></div>`;
+  const hair = hexC(A.hair), covered = A.hat === 'hijab' || A.hat === 'turban';
+  const back = !covered && ['long', 'braids', 'ponytail', 'curly', 'bob'].includes(A.hairStyle) ? `<q style="background:${hair};${A.hairStyle === 'bob' ? 'height:34px' : A.hairStyle === 'curly' ? 'width:46px;margin-left:-23px;height:40px' : ''}"></q>` : '';
+  const top = covered || A.hairStyle === 'bald' ? '' : `<u style="background:${hair}${A.hairStyle === 'receding' ? ';height:10px;top:13px;width:30px;margin-left:-15px' : A.hairStyle === 'crop' ? ';height:13px;top:14px' : ''}"></u>`;
+  const hat = A.hat ? `<s class="${A.hat}" style="background:${hexC(A.hatCol)}"></s>` : '';
+  const beard = A.beard ? `<em class="${A.beard === 'tache' || A.beard === 'goatee' ? A.beard : ''}" style="background:${hair};opacity:${A.beard === 'short' ? 0.65 : 0.95}"></em>` : '';
+  const face = `<i${A.hat === 'hijab' ? ' class="hj"' : ''} style="background:${hexC(A.skin)}"></i>`;
+  const body = `<b style="background:${hexC(A.top)}${A.build === 2 ? ';left:4px;right:4px' : A.build === 0 ? ';left:12px;right:12px' : ''}"></b>`;
+  return `<div class="photo" style="background:#a9bccd">${body}${A.hat === 'hijab' ? hat : ''}${back}${face}${beard}${top}${A.hat !== 'hijab' ? hat : ''}${A.specs ? '<span class="gl"></span>' : ''}</div>`;
+}
 function fieldHTML(f){ return `<div class="f${f.w ? ' wide' : ''}"><dt>${termBtn(esc(f.l), f.t)}</dt><dd>${esc(f.v)}</dd></div>`; }
 function docHTML(c, d, i){
   const ref = `No. ${c.ref}`;
   if (d.s === 'id'){
     const h = c.who.hue || 0.5, born = S.year - (c.who.age || 40);
-    const photo = `<div class="photo" style="background:#a9bccd"><b style="background:${CLOTH_C[Math.floor(h * 997) % CLOTH_C.length]}"></b><i style="background:${SKIN_C[Math.floor(h * 131) % SKIN_C.length]}"></i><u style="background:${(c.who.age || 0) > 62 ? '#b9b2a5' : HAIR_C[Math.floor(h * 53) % HAIR_C.length]}"></u></div>`;
+    const photo = photoHTML(c.who);
     return `<header class="dh">${esc(d.t)}<span>UK · ${String(c.ref).padStart(4, '0')}${String(c.id).padStart(5, '0')}</span></header><dl class="db">${photo}<div class="idf"><div class="f"><dt>Name</dt><dd>${esc(c.who.name)}</dd></div><div class="f"><dt>Born</dt><dd>${born}</dd></div>${d.rows.map(fieldHTML).join('')}</div></dl>`;
   }
   const who = i === 0 ? `<div class="who-row"><strong>${nameHTML(c)}${c.who.age ? ', ' + c.who.age : ''}</strong><span>${esc(c.who.sub)}</span></div>` : '';
@@ -153,7 +168,7 @@ function docHTML(c, d, i){
 }
 function idStrip(c, d){
   const h = c.who.hue || 0.5, born = S.year - (c.who.age || 40);
-  const photo = `<div class="photo" style="background:#a9bccd"><b style="background:${CLOTH_C[Math.floor(h * 997) % CLOTH_C.length]}"></b><i style="background:${SKIN_C[Math.floor(h * 131) % SKIN_C.length]}"></i><u style="background:${(c.who.age || 0) > 62 ? '#b9b2a5' : HAIR_C[Math.floor(h * 53) % HAIR_C.length]}"></u></div>`;
+  const photo = photoHTML(c.who);
   return `<div class="idstrip">${photo}<dl class="db"><div class="f"><dt>${esc(d.t)}</dt><dd>UK ${String(c.ref).padStart(4, '0')}${String(c.id).padStart(5, '0')}</dd></div><div class="f"><dt>Born</dt><dd>${born}</dd></div>${d.rows.map(fieldHTML).join('')}</dl></div>`;
 }
 function layDocs(c, mark){
@@ -186,8 +201,9 @@ function renderCounter(instant){
   if (!c){
     bubble(null); Scene.setView('hall', instant);
     const act = inboxActions().filter(x => !x.done).length;
-    box.style.height = ''; box.innerHTML = `<div class="empty"><h2>Counter closed</h2><p>${act ? `No one waiting. ${act} message${act > 1 ? 's' : ''} in your inbox need${act > 1 ? '' : 's'} a reply.` : `No one waiting. ${MONTHS[S.month]}'s work is done.`}</p></div>`;
-    tray.innerHTML = `<button type="button" class="btn primary served" id="deskCont">${act ? 'Go to inbox' : `Close the books for ${MONTHS[S.month]}`}</button>`;
+    const wl = weekLeft();
+    box.style.height = ''; box.innerHTML = `<div class="empty"><h2>${wl ? `End of week ${S.wk + 1}` : 'Counter closed'}</h2><p>${act ? `No one waiting. ${act} message${act > 1 ? 's' : ''} in your inbox need${act > 1 ? '' : 's'} a reply.` : wl ? `No one waiting. Week ${S.wk + 2} of ${MONTHS[S.month]} brings more customers.` : `No one waiting. ${MONTHS[S.month]}'s work is done.`}</p></div>`;
+    tray.innerHTML = `<button type="button" class="btn primary served" id="deskCont">${act ? 'Go to inbox' : wl ? `Open week ${S.wk + 2}` : `Close the books for ${MONTHS[S.month]}`}</button>`;
     $('#deskCont').onclick = cont; return;
   }
   Scene.setView('booth', instant);
@@ -284,7 +300,19 @@ function cont(){
   if (view === 'counter' && waiting){ renderCounter(); const t = $('#tray'); t.classList.remove('shake'); void t.offsetWidth; t.classList.add('shake'); return; }
   if (act){ openMsg('c' + act.id); return; }
   if (waiting){ setView('counter'); return; }
+  if (weekLeft()){ endWeek(); return; }
   closeBooks();
+}
+function endWeek(){
+  const r = dispatch({ type:'nextWeek' });
+  served = null; openKey = null; $('#app').dataset.msg = '';
+  Scene.sync(); Scene.boards(); Scene.setCard(); hud(true); save();
+  Snd.play('bell'); Snd.play('paper', 280);
+  const n = counterQueue().length, m = inboxActions().filter(c => !c.done).length;
+  const b = $('#wkban'); b.innerHTML = `<b>Week ${S.wk + 1} of ${MONTHS[S.month]}</b><span>${n} at the counter${m ? ` · ${m} in your inbox` : ''}</span>`; b.hidden = false;
+  clearTimeout(endWeek.t); endWeek.t = setTimeout(() => { b.hidden = true; }, 2600);
+  setView(n || !m ? 'counter' : 'inbox');
+  return r;
 }
 function closeBooks(){
   const prevMonth = S.month, prevYear = S.year;

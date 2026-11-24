@@ -198,3 +198,15 @@ metrics:
     column: mean_deposit_growth
     grain: led on savers x difficulty
     unit: ratio
+  - name: returning_customer_share
+    description: The share of a game's regular customers who were served more than once
+    view: bank.metric_customer
+    column: returning_share
+    grain: bank
+    unit: ratio
+  - name: customer_loss_by_manner
+    description: The share of regular customers who closed their accounts, by the customer's manner
+    view: bank.metric_customer_manner
+    column: left_share
+    grain: manner
+    unit: ratio

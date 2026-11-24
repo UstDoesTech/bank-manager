@@ -33,6 +33,11 @@ const SCREENS = [
   ['settings-preview', () => { policyScreen(); const i = document.querySelector('input[data-key="liquidityTarget"]'); if (i) { i.value = '0.4'; i.dispatchEvent(new Event('input', { bubbles: true })); } }],
   ['stress', () => stressScreen()],
   ['stress-result', () => { dispatch({ type: 'stress', scenario: 'recession' }); stressScreen(); }],
+  // a weekly career with the cast: the counter, the end of a week, the new week's banner and the regulars
+  ['weekly-counter', () => { closeOverlay(); dispatch({ type: 'newGame', seed: 11, opts: { households: true, meetings: true, rivals: true, weeks: true, characters: true } }); begin3(); setView('counter'); renderCounter(true); }],
+  ['week-end', () => { play(); served = null; setView('counter'); renderCounter(true); hud(); }],
+  ['week-banner', () => { endWeek(); }],
+  ['regulars', () => { for (let w = 0; w < 4; w++){ play(); if (S.wk < 3) dispatch({ type: 'nextWeek' }); } dispatch({ type: 'closeMonth' }); householdScreen(null, S.cast.regs[0] && S.cast.regs[0].id); }],
 ];
 (async () => {
   const b = await chromium.launch({ executablePath: E, headless: true, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });

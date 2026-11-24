@@ -85,3 +85,23 @@ SELECT year, difficulty, round(avg(our_share), 4) AS mean_share,
 FROM bank.metric_rival_month
 GROUP BY year, difficulty
 ORDER BY year, difficulty;
+
+-- 14. Do customers come back? Regulars per game, how many were served again, and how many left, weekly against monthly play.
+SELECT weekly, difficulty, count(*) AS games, round(avg(customers), 1) AS mean_customers, round(avg(returning_share), 3) AS mean_returning_share,
+       round(avg(mean_times_served), 2) AS mean_times_served, round(avg(left_share), 3) AS mean_left_share
+FROM bank.metric_customer
+GROUP BY weekly, difficulty
+ORDER BY weekly, difficulty;
+
+-- 15. Does manner go with loyalty? How often customers of each manner were served, and how many left.
+SELECT manner, games, customers, mean_times_served, left_share, mortgage_share
+FROM bank.metric_customer_manner
+ORDER BY left_share DESC;
+
+-- 16. The people who turn up in more than one game: the same invented name and face, and how they fared in each.
+SELECT p.full_name, p.heritage, count(DISTINCT c.game_id) AS games, string_agg(c.manner || ' (' || c.times_served || ')', ', ' ORDER BY c.game_id) AS manner_and_visits
+FROM bank.person p JOIN bank.customer c ON c.person_id = p.person_id
+GROUP BY p.person_id, p.full_name, p.heritage
+HAVING count(DISTINCT c.game_id) > 1
+ORDER BY games DESC, p.full_name
+LIMIT 50;
