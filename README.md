@@ -45,7 +45,7 @@ password.
 ## Tests
 
 ```
-npm test                  # engine: 902 checks, no database needed (golden games, replay, ledger)
+npm test                  # engine: 910 checks, no database needed (golden games, replay, ledger)
 docker compose up -d db   # the next two need Postgres
 npm run test:server       # API, accounts, ledger, replay, rollback, privacy (throwaway database per run)
 npm run test:browser      # the real page in Edge/Chrome against the real server, including going offline
@@ -252,6 +252,30 @@ each decision (`bank.decision.week`) and scores a visit as consistent when the b
 
 **Screenshot baselines.** The title screen has a new control, so the approved Windows images for the title change: run
 `npm run visual:update` on Windows and review them.
+
+## The tables as a simplified core banking system
+
+Migration 018 persists what used to live only in the game state, so the database can be read as a small core banking
+system: products and their prices, the terms in force at any point, a ledger for each loan, and one customer file.
+
+| Function | Where |
+| --- | --- |
+| Options a game was started with | `bank.game.weekly`, `characters`, `households`, `meetings`, `rivals`, `chief_executive` (older games are filled in from their first command) |
+| Products | `bank.product_catalogue`, shared like the chart of accounts: the four loans and four deposit products, the general-ledger account each sits in, and how each is priced |
+| Every setting in force | `bank.setting_version`: each pricing, credit, treasury, funding, capital, operations and growth setting, the savings rate, the branch's upgrades and product decisions (overdraft fee, counter, broker, government scheme, cyber cover, wealth desk), and who controls each policy area (locked, system or player). One row per setting per period it held, from the command that set it to the command that replaced it, so any month's terms can be read back. `v_setting_current` is what is in force now |
+| Price list | `bank.v_price_list`: each product's rate now, from the current settings and the latest Bank Rate (mortgages by loan-to-value band) |
+| A ledger for each loan | Every journal line that moves a loan, its interest or its fees names the loan (`journal_line.subledger`, `subledger_id`). A pool sale is split by loan. `v_loan_statement` is each loan's transactions (drawdown, repayment, interest, fee, write-off, sold); `v_loan_ledger` is each loan's balance from its postings against the agreement's balance; `v_loan_reconciliation` checks the loan book against the general ledger's `loans` account |
+| One customer file | A borrower (`bank.party`) links to its person and, unless it is a household, its regular customer; a business loan links to its director. Each customer has a KYC status: verified, verified with documents, or on file (banked here before the player arrived). `v_customer_holding` lists the loans each customer holds |
+
+How it works: the engine lists every setting in force (`settingsFacts()`, pure); the server compares the list before and after each
+command and versions what changed (`syncSettings()`). Loan postings carry the loan's number in what reaches the database only, so
+the engine's own state, the golden snapshots and every recorded game are unchanged. `server/replay.js` checks the settings in force,
+the options, and that nothing has reached the loan book without a loan since lines began to carry one. A game recorded before this
+migration still replays: its journal lines are compared by account, and its settings are written in full at its next command.
+
+Still not modelled, because the engine does not have them: deposit accounts for each customer (retail deposits are one pool),
+transactions with value dates, daily interest, and reversals. The new views read raw tables, so they are for the owner, not the
+read-only analysis role.
 
 ## Display, sound and the Settings preview
 

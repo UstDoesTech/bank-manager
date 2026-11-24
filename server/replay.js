@@ -100,6 +100,25 @@ async function verifyGame(pool, host, gameId) {
     }
   }
 
+  // the settings in force, the game's options and the loan book against the general ledger
+  if (state) {
+    const facts = host.apply(JSON.parse(JSON.stringify(state)), { type: 'read', key: 'm0' }).facts.settings;
+    const open = (await pool.query('SELECT area, setting, value, value_text, owner FROM bank.setting_version WHERE game_id = $1 AND to_seq IS NULL', [gameId])).rows;
+    const stored = new Map(open.map((r) => [r.area + '|' + r.setting, r]));
+    if (open.length && open.length !== facts.length) problems.push(`${open.length} settings stored in force, replay has ${facts.length}`);
+    if (open.length) for (const f of facts) {
+      const r = stored.get(f.area + '|' + f.setting);
+      if (!r || (f.value == null ? r.value != null : Math.abs(Number(r.value) - f.value) > 1e-6) || (r.value_text || null) !== f.text || r.owner !== f.owner) problems.push(`setting ${f.area}.${f.setting} is stored differently from the replay`);
+    }
+    const opt = { weekly: !!state.weeks, characters: !!state.cast, households: !!state.households, meetings: !!state.meet, rivals: !!state.rivals };
+    if (open.length) for (const [k, v] of Object.entries(opt)) if (g[k] !== v) problems.push(`the game's ${k} option is stored as ${g[k]}, the replay has ${v}`);
+    // since journal lines began to carry their loan, nothing may reach the loan book without one
+    const loose = (await pool.query(
+      `SELECT coalesce(sum(amount_pence), 0)::bigint AS p FROM bank.journal_line WHERE game_id = $1 AND account = 'loans' AND subledger IS NULL
+         AND entry_seq > (SELECT min(entry_seq) FROM bank.journal_line WHERE game_id = $1 AND subledger IS NOT NULL)`, [gameId])).rows[0].p;
+    if (Number(loose) !== 0) problems.push(`${loose} pence posted to the loan book without a loan`);
+  }
+
   if (state && state.cast) {
     const rows = (await pool.query(
       `SELECT c.customer_id, p.full_name, c.born_year, c.manner, c.times_served, c.left_bank,
@@ -126,13 +145,18 @@ async function verifyGame(pool, host, gameId) {
   }
 
   const lines = (await pool.query(
-    'SELECT entry_seq, line_no, account, amount_pence FROM bank.journal_line WHERE game_id = $1 ORDER BY entry_seq, line_no', [gameId])).rows;
+    'SELECT entry_seq, line_no, account, amount_pence, subledger, subledger_id FROM bank.journal_line WHERE game_id = $1 ORDER BY entry_seq, line_no', [gameId])).rows;
   const byEntry = new Map();
-  for (const l of lines) { if (!byEntry.has(l.entry_seq)) byEntry.set(l.entry_seq, []); byEntry.get(l.entry_seq).push([l.account, Number(l.amount_pence)]); }
+  for (const l of lines) { if (!byEntry.has(l.entry_seq)) byEntry.set(l.entry_seq, []); byEntry.get(l.entry_seq).push(l.subledger ? [l.account, Number(l.amount_pence), l.subledger + ':' + l.subledger_id] : [l.account, Number(l.amount_pence)]); }
   if (byEntry.size !== entries.length) problems.push(`journal has ${byEntry.size} entries, replay produced ${entries.length}`);
+  // A game recorded before journal lines carried their loan keeps one line per account: compare it by account, to the penny per line.
+  const byAccount = (ls) => { const t = {}; for (const [a, p] of ls) t[a] = (t[a] || 0) + p; return t; };
   for (const e of entries) {
     const want = toPence(e.lines), got = byEntry.get(e.seq);
-    if (!got || canon(want) !== canon(got)) problems.push(`journal entry ${e.seq} (${e.memo}) differs`);
+    if (got && !got.some((l) => l.length > 2) && want.some((l) => l.length > 2)) {
+      const w = byAccount(want), g = byAccount(got);
+      if (Object.keys(w).length !== Object.keys(g).length || Object.keys(w).some((a) => Math.abs((g[a] || 0) - w[a]) > want.length)) problems.push(`journal entry ${e.seq} (${e.memo}) differs`);
+    } else if (!got || canon(want) !== canon(got)) problems.push(`journal entry ${e.seq} (${e.memo}) differs`);
   }
   const total = lines.reduce((t, l) => t + Number(l.amount_pence), 0);
   if (total !== 0) problems.push(`trial balance is ${total} pence, not zero`);

@@ -789,4 +789,34 @@ for (const pol of ALL()) for (const seed of [3, 17]){
     const E = loadEngine(src); E.dispatch({ type: 'newGame', seed: 8, opts: Object.assign({ chiefExecutive: true }, WK) }); E.dispatch({ type: 'nextWeek' });
     const before = hashState(E.S, []); const r = E.stressTest({}, 9); assert(r.ran >= 1, 'the stress test ran'); E.previewPolicy({}, 3); assert.strictEqual(hashState(E.S, []), before, 'the copy touched the game'); n++; }
 }
+// 26. A simplified core: every setting in force as rows, and a ledger for each loan. The settings are read only and complete;
+//     every posting that moves a loan, its interest or its fees names the loan, a pool sale is split by loan in what the sink
+//     receives, and each loan's postings add up to its balance while the ledger's own balances are exactly as before.
+{ const E = loadEngine(src), entries = []; E.setSink(e => entries.push(e));
+  E.dispatch({ type: 'newGame', seed: 14, opts: { households: true, meetings: true, rivals: true, characters: true } });
+  const rs = E.S.rs, f0 = E.settingsFacts();
+  assert.strictEqual(E.S.rs, rs, 'reading the settings takes no random numbers');
+  const k = r => r.area + '.' + r.setting, has = new Set(f0.map(k));
+  for (const want of ['pricing.mortgageSpread', 'pricing.ltvAdd>90', 'credit.mortgageMaxLtv', 'treasury.liquidityTarget', 'funding.savingsSpread', 'capital.capitalTarget', 'operations.staffCounter', 'growth.town1', 'deposits.savingsRate', 'branch.cashier', 'branch.overdraftFee', 'control.pricing'])
+    assert(has.has(want), 'setting ' + want);
+  assert.strictEqual(has.size, f0.length, 'one row per setting'); n++;
+  assert.strictEqual(f0.find(r => k(r) === 'control.pricing').text, 'locked'); n++;
+  E.S.progress.unlocked.push('pricing'); E.S.meet = false; E.dispatch({ type: 'setPolicy', area: 'pricing', values: { mortgageSpread: 1.4 } });
+  const f1 = E.settingsFacts(); assert.strictEqual(f1.find(r => k(r) === 'pricing.mortgageSpread').value, 1.4); assert.strictEqual(f1.find(r => k(r) === 'pricing.mortgageSpread').owner, 'player'); assert.strictEqual(f1.find(r => k(r) === 'control.pricing').text, 'player'); n++;
+  // play a year, then sell a pool of mortgages, and check the loans' own postings
+  while (!E.S.over){ for (let c; (c = E.current());) E.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); E.dispatch({ type: 'closeMonth' }); }
+  const before = JSON.stringify(E.S.ledger.bal), pool = E.S.loans.filter(l => l.kind === 'mortgage' && l.status === 'current').length;
+  const r = pool ? E.sellPool(0.5, 0) : null;
+  const sale = entries.find(e => e.memo === 'pool.sale');
+  if (r && sale){ const parts = sale.lines.filter(l => l[0] === 'loans'); assert(parts.length > 1 && parts.every(l => /^loan:\d+$/.test(l[2])), 'a pool sale is split by loan'); n++; }
+  const byLoan = {}; let loose = 0;
+  for (const e of entries) for (const [a, d, ref] of e.lines){ if (a !== 'loans') continue; if (ref) byLoan[ref] = (byLoan[ref] || 0) + d; else loose += d; }
+  assert(Math.abs(loose) < 1e-6, 'nothing reaches the loan book without a loan: ' + loose); n++;
+  for (const l of E.S.loans) assert(Math.abs((byLoan['loan:' + l.id] || 0) - l.bal) < 1e-6, 'loan ' + l.id + ' postings add up to its balance');
+  const live = new Set(E.S.loans.map(l => 'loan:' + l.id));
+  for (const [ref, v] of Object.entries(byLoan)) if (!live.has(ref)) assert(Math.abs(v) < 1e-6, ref + ' is closed, so its postings net to zero');
+  n++;
+  assert(entries.some(e => e.memo === 'pl.intLoans' && e.lines.every(l => /^loan:/.test(l[2] || ''))), 'interest names its loan'); n++;
+  assert(entries.some(e => e.memo === 'pl.fees' && e.lines.some(l => /^loan:/.test(l[2] || ''))), 'fees on new loans name the loan'); n++;
+  assert.strictEqual(typeof before, 'string'); }
 console.log('ok', n, 'checks');

@@ -336,6 +336,67 @@ test('weeks and the cast: a weekly game steps through four weeks, cannot close a
   const t = await call('POST', '/api/games', { tutorial: true, weeks: true }, cookie); assert.strictEqual(t.json.state.weeks, undefined);
 });
 
+test('core: options, products, versioned settings, a ledger for each loan and one customer file are kept apart from the game state', async () => {
+  const cookie = await newPlayer('cora@example.com');
+  const g = await call('POST', '/api/games', { households: true, weeks: true, characters: true, chiefExecutive: true }, cookie);
+  assert.strictEqual(g.status, 201);
+  const id = g.json.id, q = async (sql, args = []) => (await pool.query(sql, [id, ...args])).rows;
+  // the options the game was started with
+  const opt = (await q('SELECT weekly, characters, households, meetings, rivals, chief_executive FROM bank.game WHERE id = $1'))[0];
+  assert.deepStrictEqual(opt, { weekly: true, characters: true, households: true, meetings: false, rivals: false, chief_executive: true });
+  // the products, shared
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.product_catalogue')).rows[0].n, 8);
+  // every setting in force, from the first command
+  const first = await q('SELECT area, setting, value, value_text, owner FROM bank.v_setting_current WHERE game_id = $1');
+  const { loadEngine: le } = require('../tools/harness'); const E = le(fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), 'utf8')); E.S = g.json.state;
+  assert.strictEqual(first.length, E.settingsFacts().length, 'every setting is stored');
+  assert.strictEqual(Number(first.find((r) => r.setting === 'mortgageSpread').value), 1.05);
+  assert.strictEqual(first.find((r) => r.area === 'control' && r.setting === 'pricing').value_text, 'system', 'a chief executive starts with every area unlocked');
+  // a change closes the old version and opens a new one, and the price list follows
+  let seq = 1;
+  const send = async (command) => { const r = await call('POST', `/api/games/${id}/commands`, { seq: ++seq, command }, cookie); assert.strictEqual(r.status, 200, JSON.stringify(r.json)); return r.json; };
+  await send({ type: 'setPolicy', area: 'pricing', values: { mortgageSpread: 1.45 } });
+  const v = await q("SELECT value, from_seq, to_seq, owner FROM bank.setting_version WHERE game_id = $1 AND setting = 'mortgageSpread' ORDER BY from_seq");
+  assert.deepStrictEqual(v.map((r) => [Number(r.value), r.from_seq, r.to_seq, r.owner]), [[1.05, 1, 2, 'system'], [1.45, 2, null, 'player']]);
+  assert.strictEqual((await q("SELECT owner FROM bank.v_setting_current WHERE game_id = $1 AND area = 'control' AND setting = 'pricing'"))[0].owner, 'system');
+  // play three months
+  const played = await play(cookie, id, (await call('GET', `/api/games/${id}`, null, cookie)).json.state, seq, 4);
+  const prices = await q("SELECT product, tier, rate_pct FROM bank.v_price_list WHERE game_id = $1");
+  const base = Number((await q('SELECT base_rate FROM bank.market_state WHERE game_id = $1 ORDER BY year DESC, month DESC LIMIT 1'))[0].base_rate);
+  assert.strictEqual(Number(prices.find((r) => r.product === 'mortgage' && /Up to 75/.test(r.tier)).rate_pct), Math.round((base + 1.45) * 1000) / 1000, 'the price list follows the settings and Bank Rate');
+  assert.strictEqual(Number(prices.find((r) => r.product === 'easy_access').rate_pct), played.state.savRate);
+  // a ledger for each loan: postings add up to each agreement's balance, and the loan book reconciles to the general ledger
+  const ledger = await q('SELECT agreement_id, agreement_balance_pence, posted_balance_pence, interest_paid_pence, postings FROM bank.v_loan_ledger WHERE game_id = $1');
+  assert(ledger.length > 0, 'loans were booked');
+  for (const l of ledger) assert(Math.abs(Number(l.agreement_balance_pence) - Number(l.posted_balance_pence)) <= l.postings * 2, `loan ${l.agreement_id}: postings ${l.posted_balance_pence} against balance ${l.agreement_balance_pence}`);
+  assert(ledger.some((l) => Number(l.interest_paid_pence) > 0), 'interest shows on the loans');
+  const rec = (await q('SELECT control_pence, loans_pence, unattributed_pence FROM bank.v_loan_reconciliation WHERE game_id = $1'))[0];
+  assert.strictEqual(Number(rec.unattributed_pence), 0); assert.strictEqual(Number(rec.control_pence), Number(rec.loans_pence));
+  const stmt = await q("SELECT DISTINCT transaction_type FROM bank.v_loan_statement WHERE game_id = $1");
+  for (const t of ['drawdown', 'repayment', 'interest']) assert(stmt.some((r) => r.transaction_type === t), 'statement has ' + t);
+  // one customer file: borrowers link to their person and customer; customers have a KYC status; holdings join them up
+  const parties = (await q(`SELECT count(*)::int n, count(person_id)::int people,
+      count(*) FILTER (WHERE customer_id IS NULL AND name NOT IN (SELECT name FROM bank.household WHERE game_id = $1))::int loose
+    FROM bank.party WHERE game_id = $1 AND kind = 'person'`))[0];
+  assert.strictEqual(parties.people, parties.n, 'every borrower links to a person: ' + JSON.stringify(parties));
+  assert.strictEqual(parties.loose, 0, 'every borrower who is not a household is a customer');
+  const kyc = await q('SELECT kyc_status, count(*)::int n FROM bank.customer WHERE game_id = $1 GROUP BY 1');
+  assert(kyc.some((r) => r.kyc_status === 'verified'), 'customers who opened accounts are verified: ' + JSON.stringify(kyc));
+  const linked = (await q('SELECT count(*)::int n FROM bank.party WHERE game_id = $1 AND customer_id IS NOT NULL'))[0].n;
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.v_customer_holding WHERE game_id = $1'))[0].n, linked, 'every linked borrower shows as a customer holding');
+  // the replay agrees, and catches a changed setting
+  assert.deepStrictEqual((await verifyGame(pool, host, id)).problems, []);
+  await pool.query("UPDATE bank.setting_version SET value = 9 WHERE game_id = $1 AND setting = 'cardRate' AND to_seq IS NULL", [id]);
+  assert.strictEqual((await verifyGame(pool, host, id)).ok, false, 'an edited setting is caught');
+  // a game recorded before lines named their loan and settings were kept still replays: its lines are compared by account
+  const asAdmin = async (sql) => { const c = await pool.connect(); try { await c.query('BEGIN'); await c.query('SET LOCAL session_replication_role = replica'); await c.query(sql, [id]); await c.query('COMMIT'); } finally { c.release(); } };   // the journal is append-only
+  await pool.query('DELETE FROM bank.setting_version WHERE game_id = $1', [id]);
+  await asAdmin('UPDATE bank.journal_line SET subledger = NULL, subledger_id = NULL WHERE game_id = $1');
+  assert.deepStrictEqual((await verifyGame(pool, host, id)).problems, [], 'an older game still replays');
+  await asAdmin("UPDATE bank.journal_line SET amount_pence = amount_pence + 500 WHERE game_id = $1 AND account = 'loans' AND entry_seq = (SELECT max(entry_seq) FROM bank.journal_line WHERE game_id = $1 AND account = 'loans')");
+  assert.strictEqual((await verifyGame(pool, host, id)).ok, false, 'and an edited line in it is still caught');
+});
+
 test('literacy: five questions before the first game and one more after each year, scored on the server', async () => {
   const { QUESTIONS } = require('../server/literacy');
   assert.strictEqual((await call('GET', '/api/literacy')).status, 401);

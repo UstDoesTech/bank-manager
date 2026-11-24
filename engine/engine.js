@@ -443,7 +443,10 @@ function je(memo, lines, opts){
     else if (a.startsWith('pl.')) S.pl[a.slice(3)] -= d;
   }
   L.n++;
-  if (LEDGER_SINK) LEDGER_SINK({ seq: L.n, year: S.year, month: S.month, memo, lines });
+  if (LEDGER_SINK){
+    const sp = opts && opts.split, out = sp ? lines.flatMap(l => l[0] === sp.account ? sp.parts.map(([ref, amt]) => [sp.account, amt, ref]) : [l]) : lines;
+    LEDGER_SINK({ seq: L.n, year: S.year, month: S.month, memo, lines: out });
+  }
 }
 // Posts the current position as one opening entry; equity.opening is the balancing figure.
 function openLedger(memo){
@@ -463,8 +466,8 @@ function ledgerCheck(){
   chk('equity', eq, capital() + (S.goodwill || 0));      // book equity is regulatory capital plus the goodwill that is deducted from it
   return bad;
 }
-function post(key, amt){ je('pl.' + key, [['cash', amt], ['pl.' + key, -amt]]); }
-function money(key, amt, label){ post(key, amt); chip((label ? label + ' ' : '') + fmt(amt, true), amt >= 0 ? 'good' : 'bad'); }
+function post(key, amt, ref){ je('pl.' + key, ref ? [['cash', amt, ref], ['pl.' + key, -amt, ref]] : [['cash', amt], ['pl.' + key, -amt]]); }
+function money(key, amt, label, ref){ post(key, amt, ref); chip((label ? label + ' ' : '') + fmt(amt, true), amt >= 0 ? 'good' : 'bad'); }
 function dT(d){ d = Math.round(d); if (!d) return; S.trust = clamp(S.trust + d, 0, 100); chip('Customers ' + (d > 0 ? '+' : '−') + Math.abs(d), d > 0 ? 'good' : 'bad'); }
 function dC(d){ d = Math.round(d); if (!d) return; S.comp = clamp(S.comp + d, 0, 100); chip('Regulator ' + (d > 0 ? '+' : '−') + Math.abs(d), d > 0 ? 'good' : 'bad'); }
 function depMove(x){ je('deposit.flow', [['cash', x], ['deposits', -x]]); chip('Deposits ' + fmt(x, true), x >= 0 ? 'good' : 'bad'); }
@@ -483,7 +486,7 @@ function analyst(pd){ if (!S.up || !S.up.analyst) return null; const v = pd * Ma
 /* loans */
 function book(o){
   const l = Object.assign({ id: S.nextId++, status: 'current', m0: S.month, carded: false, hpi0: hpi() }, o);
-  je('loan.originate', [['loans', l.bal], ['cash', -l.bal]]); S.loans.push(l); S.stats.loans++; S.stats.lent += l.bal; if (l.hh != null) hhBooked(l);
+  je('loan.originate', [['loans', l.bal, 'loan:' + l.id], ['cash', -l.bal, 'loan:' + l.id]]); S.loans.push(l); S.stats.loans++; S.stats.lent += l.bal; if (l.hh != null) hhBooked(l);
   chip('Lent ' + fmt(l.bal), 'neutral');
   const kept = l.bal * (RETAIN[l.kind] || 0.2); je('deposit.created', [['cash', kept], ['deposits', -kept]]); chip('Deposit created ' + fmt(kept, true), 'neutral');
   if (!S.flags.seenCreate){ S.flags.seenCreate = true; say(`Lending created a new deposit of ${full(l.bal)} in the borrower's account. As they spend it, most moves to other banks and takes your reserves with it. ${full(kept)} is still with you.`); }
@@ -496,7 +499,7 @@ function recovery(l){
 }
 function writeOff(l, rec){
   rec = clamp(rec, 0, l.bal); const loss = l.bal - rec;
-  je('loan.writeoff', [['cash', rec], ['pl.losses', loss], ['loans', -l.bal]]); S.loans = S.loans.filter(x => x !== l); S.stats.defaults++; S.stats.losses += loss;
+  je('loan.writeoff', [['cash', rec, 'loan:' + l.id], ['pl.losses', loss, 'loan:' + l.id], ['loans', -l.bal, 'loan:' + l.id]]); S.loans = S.loans.filter(x => x !== l); S.stats.defaults++; S.stats.losses += loss;
   return loss;
 }
 /* ---- system policy: the pricing and credit rules every bank starts with ----
@@ -756,7 +759,7 @@ function mortgageRisk(h, loan = h.loan){
 }
 res.mortgage = (c, k) => {
   const h = c.h, nm = first(h.name), spreadEx = excess('mortgageSpread');
-  const doBook = (loan, extra = 0) => { const m = mortgageRisk(h, loan); { const pay = annuity(loan, m.rate + extra, h.term); custSay(`${full(pay)} a month at ${(m.rate + extra).toFixed(2)}%, ${pc(pay / takeHome(h.inc), 0)} of take-home pay. Over ${h.term} years they repay ${full(pay * h.term * 12)} for a ${full(loan)} loan, if the rate stayed the same.`); } book({ hh:h.hh, kind:'mortgage', name:h.name, bal:loan, rate:m.rate + extra, pd: Math.min(0.95, m.pd * (extra ? 1.25 : 1) * adv(spreadEx)), prop:h.price, ltv:m.ltv }); money('fees', 0.999 - (h.broker ? loan * 0.0035 : 0), h.broker ? 'Fee less broker' : 'Fee'); };
+  const doBook = (loan, extra = 0) => { const m = mortgageRisk(h, loan); { const pay = annuity(loan, m.rate + extra, h.term); custSay(`${full(pay)} a month at ${(m.rate + extra).toFixed(2)}%, ${pc(pay / takeHome(h.inc), 0)} of take-home pay. Over ${h.term} years they repay ${full(pay * h.term * 12)} for a ${full(loan)} loan, if the rate stayed the same.`); } const nl = book({ hh:h.hh, kind:'mortgage', name:h.name, bal:loan, rate:m.rate + extra, pd: Math.min(0.95, m.pd * (extra ? 1.25 : 1) * adv(spreadEx)), prop:h.price, ltv:m.ltv }); money('fees', 0.999 - (h.broker ? loan * 0.0035 : 0), h.broker ? 'Fee less broker' : 'Fee', 'loan:' + nl.id); };
   if (k === 'yes'){ if (takeUp(spreadEx, MORTGAGE_SLOPE)){ doBook(h.loan); say(`Offer issued. ${nm} gets the keys next month.`); } else say(`${nm} found a cheaper mortgage at another lender.`); }
   if (k === 'prem'){ const pd = mortgageRisk(h).pd; if (chance(clamp(0.22 + pd * 4, 0.22, 0.9) * dem(spreadEx + excess('mortgagePremium'), MORTGAGE_SLOPE) / fx(c, 'shop'))) { doBook(h.loan, S.policy.pricing.mortgagePremium); say(`${nm} accepts the higher rate. ${pd > 0.05 ? 'Nobody else offered them anything.' : 'They didn\'t shop around.'}`); } else say(`${nm} found the market rate at another lender.`); }
   if (k === 'less'){ if (chance(Math.min(0.95, 0.45 * fx(c, 'counter')))) { doBook(h.alt); say(`${nm} found the extra deposit with help from family. Smaller loan agreed.`); } else { say(`${nm} took a bigger loan from another lender.`); dT(-1); } }
@@ -826,7 +829,7 @@ gen.business = () => {
 };
 res.business = (c, k) => {
   const h = c.h, nm = first(h.name);
-  const doBook = g => { if (h.profit){ const yr = annuity(h.amt, h.rate, 5) * 12; custSay(`${h.biz} repays ${full(yr)} a year for 5 years, ${pc(yr / h.profit, 0)} of last year's profit. Total interest: ${full(yr * 5 - h.amt)}.${g ? ' If the business fails, the director could lose their home.' : ''}`); } book({ kind:'business', name:h.biz, bal:h.amt, rate:h.rate, pd:h.pd, guar:g, ggs: !!S.flags.ggs }); money('fees', h.amt * 0.015, 'Fee'); };
+  const doBook = g => { if (h.profit){ const yr = annuity(h.amt, h.rate, 5) * 12; custSay(`${h.biz} repays ${full(yr)} a year for 5 years, ${pc(yr / h.profit, 0)} of last year's profit. Total interest: ${full(yr * 5 - h.amt)}.${g ? ' If the business fails, the director could lose their home.' : ''}`); } const nl = book({ kind:'business', name:h.biz, bal:h.amt, rate:h.rate, pd:h.pd, guar:g, ggs: !!S.flags.ggs }); money('fees', h.amt * 0.015, 'Fee', 'loan:' + nl.id); };
   if (k === 'yes'){ doBook(false); say(`${h.biz} gets the money. ${nm} shakes the cashier's hand.`); dT(1); }
   if (k === 'pg'){ if (chance(Math.min(0.97, 0.72 * fx(c, 'guar')))) { doBook(true); say(`${nm} signs a personal guarantee against the family home.`); } else { say(`${nm} wouldn't put the house on the line and walked.`); } }
   if (k === 'no'){ say(`${h.biz} will look elsewhere.`); if (h.pd < 0.04) { dT(-2); S.stats.wrongNo++; } }
@@ -1401,7 +1404,7 @@ gen.capital = () => {
 function issueEquity(amt){ { const P = pxOf(), price = sharePrice() * 0.9, add = amt / price; P.shares += add; P.issues.push({ y: S.year, m: Math.min(S.month, 11), amt, price: Math.round(price * 1000) / 1000, shares: Math.round(add * 10) / 10 }); }
   news(5, `Counting House asks shareholders for ${fmt(amt)}`, 'The bank says it needs more capital to keep lending.'); je('equity.issue', [['cash', amt], ['equity.paidin', -amt]]); S.injected = (S.injected || 0) + amt; chip('Capital +' + fmt(amt), 'good'); say('Shareholders put in more money. Your profit is now shared across more shares, so each one earns less.'); }
 function sellMortgages(){ const ms = S.loans.filter(l => l.kind === 'mortgage' && l.status === 'current').sort((a, b) => b.bal - a.bal); let sold = 0, target = ms.reduce((a, l) => a + l.bal, 0) / 2;
-  for (const l of ms){ if (sold >= target) break; sold += l.bal; je('loan.sell', [['cash', l.bal * 0.97], ['pl.gilts', l.bal * 0.03], ['loans', -l.bal]]); S.loans = S.loans.filter(x => x !== l); }
+  for (const l of ms){ if (sold >= target) break; sold += l.bal; je('loan.sell', [['cash', l.bal * 0.97, 'loan:' + l.id], ['pl.gilts', l.bal * 0.03, 'loan:' + l.id], ['loans', -l.bal, 'loan:' + l.id]]); S.loans = S.loans.filter(x => x !== l); }
   chip('Mortgages sold ' + fmt(sold), 'neutral'); chip('Loss on sale ' + fmt(-sold * 0.03), 'bad'); say(`Another bank buys ${full(sold)} of mortgages. Less risk on your books, less interest coming in.`); return sold; }
 res.capital = (c, k) => {
   if (k === 'raise') issueEquity(300);
@@ -1723,7 +1726,7 @@ function sellPool(share, mode){
   if (sold < 50) return null;
   const pd = pdW / sold, discount = clamp(0.01 + 0.03 * marketStress() + 0.4 * pd, 0, 0.25);
   const cash = 0.95 * sold * (1 - discount), kept = 0.05 * sold, loss = sold - cash - kept;
-  je('pool.sale', [['cash', cash], ['retained', kept], ['pl.gilts', loss], ['loans', -sold]]);
+  je('pool.sale', [['cash', cash], ['retained', kept], ['pl.gilts', loss], ['loans', -sold]], { split: { account: 'loans', parts: picked.map(l => ['loan:' + l.id, -l.bal]) } });
   S.loans = S.loans.filter(l => !picked.includes(l));
   S.pools.push({ id: S.nextId++, bal: 0.95 * sold, ret: kept, rate: rateW / sold, pd, orig: sold, lost: 0, over: 0 });
   S.lastPool = S.year * 12 + S.month; S.stats.poolSales = (S.stats.poolSales || 0) + 1;
@@ -1843,12 +1846,12 @@ function closeMonth(){
   // new loans
   for (const l of [...S.loans]){
     if (l.status === 'current'){
-      post('intLoans', l.bal * l.rate / 1200);
-      const a = l.bal * AMORT[l.kind]; je('loan.repay', [['cash', a], ['loans', -a]]); l.bal -= a;
+      post('intLoans', l.bal * l.rate / 1200, 'loan:' + l.id);
+      const a = l.bal * AMORT[l.kind]; je('loan.repay', [['cash', a, 'loan:' + l.id], ['loans', -a, 'loan:' + l.id]]); l.bal -= a;
       const pm = (1 - Math.pow(1 - l.pd, 1 / 12)) * AMP * u * (1 + Math.max(0, S.base - S.y0.base) * (P().stress || 0));
       if (l.m0 !== m && R() < pm){ l.status = 'arrears'; l.since = m; l.carded = false; ev(`${l.name} fell behind on their ${KNAME[l.kind]}.`, 'bad'); }
     } else if (l.status === 'plan'){
-      post('intLoans', l.bal * l.rate / 2400);
+      post('intLoans', l.bal * l.rate / 2400, 'loan:' + l.id);
       if (R() < l.cure){ l.status = 'current'; l.pd *= 0.8; ev(`${l.name} is back to full payments.`, 'good'); }
       else if (R() < 0.07 * u){ const loss = writeOff(l, recovery(l)); ev(`${l.name}'s payment plan failed. Written off: ${fmt(loss)}.`, 'bad'); }
     } else if (l.status === 'arrears' && l.carded === false && m - l.since >= 2){
@@ -2877,6 +2880,30 @@ function sceneFacts(){
   const towns = G ? GROWTH_TOWNS.map(t => ({ name: t.name, state: ['closed', 'hub', 'branch'][G.townState[t.key]] || 'closed' })) : [];
   return { weather, day, analyst: owned('analyst'), refurb: owned('refurb'), app: owned('app'), cashier: owned('cashier'),
     branches: towns.filter(t => t.state === 'branch').length, hubs: towns.filter(t => t.state === 'hub').length, network: !!G };
+}
+
+/* ---- every setting in force, as rows the database can version: the policy areas, the savings rate, the branch's upgrades and
+   product decisions, and who controls each area. Pure; no random numbers. ---- */
+const SETTING_AREAS = ['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations', 'growth'];
+function settingsFacts(){
+  const rows = [], add = (area, setting, value, owner) => rows.push(typeof value === 'number' ? { area, setting, value: Math.round(value * 1e6) / 1e6, text: null, owner } : { area, setting, value: null, text: value == null ? null : String(value), owner });
+  const P = S.policy || systemPolicy();
+  for (const area of SETTING_AREAS){
+    const owner = (P.owner && P.owner[area]) || 'system', vals = P[area] || {};
+    for (const [k, v] of Object.entries(vals)){
+      if (Array.isArray(v)) for (const [band, amt] of v) add(area, `${k}>${band}`, amt, owner);
+      else if (typeof v === 'number' || typeof v === 'string') add(area, k, v, owner);
+    }
+    add('control', area, S.progress && S.progress.unlocked.includes(area) ? owner : 'locked', 'system');
+  }
+  add('deposits', 'savingsRate', S.savRate, P.owner && P.owner.funding === 'player' ? 'player' : 'bank');
+  for (const u of UPGRADES) add('branch', u.key, owned(u.key) ? 1 : 0, 'bank');
+  const F = S.flags || {};
+  add('branch', 'overdraftFee', typeof F.od === 'number' ? 'charging' : F.od === false ? 'stopped' : 'never', 'bank');
+  add('branch', 'counter', F.branch === 'closed' ? 'closed' : F.branch === 'hub' ? 'hub' : 'full', 'bank');
+  for (const k of ['broker', 'ggs', 'cyber']) add('branch', k, F[k] ? 1 : 0, 'bank');
+  add('branch', 'wealth', S.wm ? (S.wm.houseNew ? 'house funds' : 'open') : 'none', 'bank');
+  return rows;
 }
 
 /* ---- dashboard and month-end facts: what the page draws as gauges, charts and "what moved" ---- */

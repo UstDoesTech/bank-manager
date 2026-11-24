@@ -16,8 +16,10 @@ function toPence(lines) {
     amounts.forEach((x, i) => { if (Math.abs(x) > Math.abs(amounts[big])) big = i; });
     amounts[big] += drift;
   }
-  return lines.map(([account], i) => [account, amounts[i]]);
+  return lines.map(([account, , ref], i) => (ref ? [account, amounts[i], ref] : [account, amounts[i]]));
 }
+// 'loan:12' -> ['loan', 12]: the account below the general ledger that a journal line belongs to.
+const splitRef = (ref) => { if (!ref) return [null, null]; const i = ref.indexOf(':'); return [ref.slice(0, i), Number(ref.slice(i + 1))]; };
 
 // Checks a command against the current state before the engine sees it.
 function validate(state, cmd) {
@@ -331,6 +333,40 @@ async function syncAmbitions(client, gid, year, list) {
 }
 
 // Writes everything one command produced. The caller holds the transaction.
+// Every setting in force, versioned: a setting that changed closes its open row and opens a new one from this command.
+async function syncSettings(client, gid, seq, state, was, now) {
+  const key = (r) => r.area + '|' + r.setting, same = (a, b) => a && b && a.value === b.value && a.text === b.text && a.owner === b.owner;
+  const old = new Map(was.map((r) => [key(r), r])), cur = new Map(now.map((r) => [key(r), r]));
+  const y = state.year, m = Math.min(state.month, 11);
+  const fresh = seq === 1 || !(await client.query('SELECT 1 FROM bank.setting_version WHERE game_id = $1 LIMIT 1', [gid])).rows.length;   // a game recorded before settings were kept gets them all now
+  for (const [k, r] of cur) {
+    if (!fresh && same(old.get(k), r)) continue;
+    await client.query('UPDATE bank.setting_version SET to_seq = $5 WHERE game_id = $1 AND area = $2 AND setting = $3 AND to_seq IS NULL AND from_seq <> $4', [gid, r.area, r.setting, seq, seq]);
+    await client.query(
+      `INSERT INTO bank.setting_version (game_id, area, setting, from_seq, from_year, from_month, value, value_text, owner) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (game_id, area, setting, from_seq) DO UPDATE SET value = EXCLUDED.value, value_text = EXCLUDED.value_text, owner = EXCLUDED.owner`,
+      [gid, r.area, r.setting, seq, y, m, r.value, r.text, r.owner]);
+  }
+  for (const [k, r] of old) if (!cur.has(k)) await client.query('UPDATE bank.setting_version SET to_seq = $4 WHERE game_id = $1 AND area = $2 AND setting = $3 AND to_seq IS NULL', [gid, r.area, r.setting, seq]);
+}
+// One customer file: a loan booked by a decision belongs to that decision's person and customer; a loan booked by the lending
+// desk is matched to the regular customer of the same name. A customer who opened their account at this command gets a KYC status.
+async function linkCustomers(client, gid, cmd, before, state, decided) {
+  const had = (before && before.loanIds) || new Set(), fresh = (state.loans || []).filter((l) => !had.has(l.id)).map((l) => l.id);
+  if (cmd.type === 'resolve' && fresh.length && (decided.person || decided.customer))
+    await client.query('UPDATE bank.party SET person_id = coalesce(person_id, $3), customer_id = coalesce(customer_id, $4) WHERE game_id = $1 AND party_id = ANY ($2::int[])', [gid, fresh, decided.person, decided.customer]);
+  if (state.cast && fresh.length)
+    await client.query(
+      `UPDATE bank.party p SET customer_id = c.customer_id, person_id = coalesce(p.person_id, c.person_id)
+         FROM (SELECT DISTINCT ON (pe.full_name) pe.full_name, c.customer_id, c.person_id FROM bank.customer c JOIN bank.person pe ON pe.person_id = c.person_id
+                WHERE c.game_id = $1 ORDER BY pe.full_name, c.customer_id DESC) c
+        WHERE p.game_id = $1 AND p.party_id = ANY ($2::int[]) AND p.customer_id IS NULL AND p.kind = 'person' AND p.name = c.full_name`, [gid, fresh]);
+  const card = before && before.card;
+  if (cmd.type === 'resolve' && card && decided.customer != null && !(before.regs && before.regs.has(decided.customer))) {
+    const kyc = card.kind === 'onboard' ? (cmd.k === 'docs' ? 'verified_with_documents' : 'verified') : card.kind === 'visit' && ['switch', 'student'].includes(card.h && card.h.v) ? 'verified' : null;
+    if (kyc) await client.query('UPDATE bank.customer SET kyc_status = $3 WHERE game_id = $1 AND customer_id = $2', [gid, decided.customer, kyc]);
+  }
+}
 // The regular customer a decision was about: the card's own regular, or the person it made a regular. Never an impostor.
 function customerOf(state, card) {
   if (!state.cast || !card.who || card.who.claim) return null;
@@ -339,7 +375,7 @@ function customerOf(state, card) {
 }
 async function persist(client, game, seq, cmd, before, out) {
   const { state, result, entries, facts } = out;
-  const gid = game.id, people = new Map();
+  const gid = game.id, people = new Map(), decided = { person: null, customer: null };
   await client.query('INSERT INTO bank.command (game_id, seq, type, payload) VALUES ($1, $2, $3, $4)', [gid, seq, cmd.type, JSON.stringify(cmd)]);
 
   // journal: entries, then lines, so the deferred balance check sees whole entries at commit
@@ -348,8 +384,8 @@ async function persist(client, game, seq, cmd, before, out) {
       [gid, e.seq, seq, e.year, e.month, e.memo]);
     const lines = toPence(e.lines);
     const values = [], params = [];
-    lines.forEach(([account, pence], i) => { params.push(gid, e.seq, i + 1, account, pence); values.push(`($${params.length - 4}, $${params.length - 3}, $${params.length - 2}, $${params.length - 1}, $${params.length})`); });
-    await client.query(`INSERT INTO bank.journal_line (game_id, entry_seq, line_no, account, amount_pence) VALUES ${values.join(',')}`, params);
+    lines.forEach(([account, pence, ref], i) => { const [sl, sid] = splitRef(ref); params.push(gid, e.seq, i + 1, account, pence, sl, sid); const n = params.length; values.push(`($${n - 6}, $${n - 5}, $${n - 4}, $${n - 3}, $${n - 2}, $${n - 1}, $${n})`); });
+    await client.query(`INSERT INTO bank.journal_line (game_id, entry_seq, line_no, account, amount_pence, subledger, subledger_id) VALUES ${values.join(',')}`, params);
   }
 
   if (cmd.type === 'resolve') {
@@ -359,7 +395,7 @@ async function persist(client, game, seq, cmd, before, out) {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
       [gid, seq, card.id, card.kind, before.year, before.month,
         JSON.stringify(card.opts.map((o) => ({ k: o.k, l: o.l }))), cmd.k, JSON.stringify(card.h || {}), JSON.stringify((card.fields || []).map((f) => ({ l: f.l, v: f.v }))), before.weeks ? (card.wk || 0) : null,
-        await upsertPerson(client, card.who, people), customerOf(state, card)]);
+        (decided.person = await upsertPerson(client, card.who, people)), (decided.customer = customerOf(state, card))]);
     for (const l of (result && result.lines) || [])
       await client.query('INSERT INTO bank.event (game_id, command_seq, year, month, kind, tone, text) VALUES ($1, $2, $3, $4, $5, $6, $7)',
         [gid, seq, before.year, before.month, 'outcome', l.tone || '', l.t]);
@@ -381,6 +417,8 @@ async function persist(client, game, seq, cmd, before, out) {
   await syncBook(client, gid, before || { year: state.year, month: state.month }, state.loans || []);
   if (state.households && cmd.type === 'closeMonth') await syncHouseholds(client, gid, before, state.households, people);
   if (state.cast) await syncCustomers(client, gid, seq, before, state, people);
+  await syncSettings(client, gid, seq, state, facts.settingsBefore || [], facts.settings || []);
+  await linkCustomers(client, gid, cmd, before, state, decided);
   await syncFunding(client, gid, facts.instruments || []);
   if (facts.ambitions && before) await syncAmbitions(client, gid, before.year, facts.ambitions);
   if (cmd.type === 'closeMonth' && state.rivals) await syncRivals(client, gid, state);
@@ -452,9 +490,10 @@ function register(app, { pool, host }) {
     try { out = host.apply(null, cmd); } catch (e) { throw new HttpError(422, 'bad_game', 'Could not start that game.'); }
     const game = await inTransaction(async (client) => {
       const g = (await client.query(
-        `INSERT INTO bank.game (player_key, mode, scenario, tutorial, seed, engine_version, in_analysis, difficulty)
-         VALUES ($1, 'branch', $2, $3, $4, $5, $6, $7) RETURNING id`,
-        [p.player_key, opts.scenario || null, !!opts.tutorial, seed, host.version, !p.analysis_opt_out, opts.difficulty || 'standard'])).rows[0];
+        `INSERT INTO bank.game (player_key, mode, scenario, tutorial, seed, engine_version, in_analysis, difficulty, weekly, characters, households, meetings, rivals, chief_executive)
+         VALUES ($1, 'branch', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+        [p.player_key, opts.scenario || null, !!opts.tutorial, seed, host.version, !p.analysis_opt_out, opts.difficulty || 'standard',
+          !!out.state.weeks, !!out.state.cast, !!out.state.households, !!out.state.meet, !!out.state.rivals, !!opts.chiefExecutive && !opts.tutorial && !opts.scenario])).rows[0];
       await persist(client, g, 1, cmd, { year: out.state.year, month: out.state.month }, out);
       return g;
     });
@@ -496,7 +535,7 @@ function register(app, { pool, host }) {
       const state = (await client.query('SELECT state FROM bank.game_state WHERE game_id = $1', [g.id])).rows[0].state;
       validate(state, cmd);
       const card = cmd.type === 'resolve' ? state.queue.find((x) => x.id === cmd.id) : null;
-      const before = { year: state.year, month: state.month, card, weeks: !!state.weeks, regs: regularsBefore(state) };
+      const before = { year: state.year, month: state.month, card, weeks: !!state.weeks, regs: regularsBefore(state), loanIds: new Set((state.loans || []).map((l) => l.id)) };
       let out;
       try { out = host.apply(state, cmd); } catch (e) { req.log.error(e); throw new HttpError(422, 'engine_error', 'The engine could not apply that command.'); }
       if (cmd.type === 'buy' && !out.result) throw new HttpError(422, 'cannot_buy', 'That cannot be bought now.');
