@@ -229,13 +229,67 @@ async function syncAnalytics(client, gid, at, state, facts, closing) {
   }
 }
 
+// --- people and customers --------------------------------------------------------------------------------------------
+// A person is an invented name and a look, shared across games: the same name and look is one row wherever they appear.
+// Their manner, age and job, and what happened to them, belong to the game and go in bank.customer and bank.customer_event.
+const BUILDS = ['slim', 'average', 'broad'], BAGS = [null, 'handbag', 'backpack'];
+const hexOf = (n) => '#' + (Number(n) >>> 0).toString(16).padStart(6, '0');
+function personRow(who) {
+  const L = who.look, sp = who.name.indexOf(' ');
+  const look = { p: L.p, g: L.g, skin: L.skin, hc: L.hc, hair: L.hair, hat: L.hat || null, beard: L.beard || null, specs: !!L.specs, build: L.build, ht: L.ht, skirt: !!L.skirt, stick: !!L.stick, bag: L.bag || 0 };
+  return { key: crypto.createHash('sha1').update(who.name + '|' + JSON.stringify(look)).digest('hex'), full: who.name, first: who.name.slice(0, sp), surname: who.name.slice(sp + 1), look };
+}
+async function upsertPerson(client, who, cache) {
+  if (!who || !who.look || !who.name) return null;
+  const p = personRow(who), L = p.look;
+  if (cache && cache.has(p.key)) return cache.get(p.key);
+  const r = await client.query(
+    `INSERT INTO bank.person (person_key, full_name, first_name, surname, heritage, presentation, skin_tone, hair_colour, hair_style, headwear, beard, glasses, build, height, skirt, walking_stick, bag)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+     ON CONFLICT (person_key) DO UPDATE SET person_key = EXCLUDED.person_key RETURNING person_id`,
+    [p.key, p.full, p.first, p.surname, L.g, L.p, hexOf(L.skin), hexOf(L.hc), L.hair, L.hat, L.beard, L.specs, BUILDS[L.build] || 'average', L.ht, L.skirt, L.stick, BAGS[L.bag] || null]);
+  const id = Number(r.rows[0].person_id);
+  if (cache) cache.set(p.key, id);
+  return id;
+}
+// What the regulars looked like before a command, so the customers it touched can be found afterwards.
+function regularsBefore(state) {
+  return state && state.cast ? new Map(state.cast.regs.map((r) => [r.id, { n: r.n, gone: !!r.gone, mort: !!r.mort, job: r.job || null }])) : null;
+}
+// Writes every regular customer a command created or served, and each new time they were served.
+async function syncCustomers(client, gid, seq, before, state, cache) {
+  const prev = (before && before.regs) || new Map();
+  for (const r of state.cast.regs) {
+    const p = prev.get(r.id);
+    if (p && p.n === r.n && p.gone === !!r.gone && p.mort === !!r.mort && p.job === (r.job || null)) continue;
+    const personId = await upsertPerson(client, { name: r.name, look: r.look }, cache);
+    if (!personId) continue;
+    await client.query(
+      `INSERT INTO bank.customer (game_id, customer_id, person_id, born_year, manner, occupation, first_served_year, first_served_month, last_served_year, last_served_month, times_served, has_mortgage, left_bank)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       ON CONFLICT (game_id, customer_id) DO UPDATE SET occupation = EXCLUDED.occupation, last_served_year = EXCLUDED.last_served_year, last_served_month = EXCLUDED.last_served_month,
+         times_served = EXCLUDED.times_served, has_mortgage = EXCLUDED.has_mortgage, left_bank = EXCLUDED.left_bank`,
+      [gid, r.id, personId, r.born, (r.look && r.look.t) || 'calm', r.job || null, r.since[0], r.since[1], Math.floor(r.last / 12), r.last % 12, r.n, !!r.mort, !!r.gone]);
+    for (let k = (p ? p.n : 0) + 1; k <= r.n; k++) {
+      const note = r.notes[r.notes.length - 1 - (r.n - k)];
+      if (!note) continue;
+      await client.query(
+        `INSERT INTO bank.customer_event (game_id, customer_id, event_no, command_seq, year, month, week, topic, outcome) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT DO NOTHING`,
+        [gid, r.id, k, seq, note.y, note.m, note.wk == null ? null : note.wk, note.w || '', note.t]);
+    }
+  }
+}
+
 // Keeps the household cast and each closed month of their money in step with the engine.
-async function syncHouseholds(client, gid, at, households) {
-  const cast = JSON.stringify(households.map((h) => ({ id: h.id, name: h.name, stage: h.stage, label: h.label, goal: h.goal })));
+async function syncHouseholds(client, gid, at, households, cache) {
+  const people = [];
+  for (const h of households) people.push(await upsertPerson(client, h.look ? { name: h.name, look: h.look } : null, cache));
+  const cast = JSON.stringify(households.map((h, i) => ({ id: h.id, name: h.name, stage: h.stage, label: h.label, goal: h.goal, person: people[i] })));
   await client.query(
-    `INSERT INTO bank.household (game_id, household_id, name, stage, label, goal)
-     SELECT $1, r.id, r.name, r.stage, r.label, r.goal FROM json_to_recordset($2::json) AS r(id int, name text, stage text, label text, goal text)
-     ON CONFLICT (game_id, household_id) DO UPDATE SET stage = EXCLUDED.stage, label = EXCLUDED.label`, [gid, cast]);
+    `INSERT INTO bank.household (game_id, household_id, name, stage, label, goal, person_id)
+     SELECT $1, r.id, r.name, r.stage, r.label, r.goal, r.person FROM json_to_recordset($2::json) AS r(id int, name text, stage text, label text, goal text, person bigint)
+     ON CONFLICT (game_id, household_id) DO UPDATE SET stage = EXCLUDED.stage, label = EXCLUDED.label, person_id = coalesce(bank.household.person_id, EXCLUDED.person_id)`, [gid, cast]);
   const rows = households.map((h) => ({ h, e: h.hist.find((x) => x.y === at.year && x.m === at.month) })).filter((r) => r.e)
     .map(({ h, e }) => ({ id: h.id, income: Math.round(e.income * 100), spend: Math.round(e.spend * 100), saved: Math.round(e.saved * 100), debt: Math.round(e.debt * 100), score: e.score, fund: e.fund }));
   if (rows.length)
@@ -277,9 +331,15 @@ async function syncAmbitions(client, gid, year, list) {
 }
 
 // Writes everything one command produced. The caller holds the transaction.
+// The regular customer a decision was about: the card's own regular, or the person it made a regular. Never an impostor.
+function customerOf(state, card) {
+  if (!state.cast || !card.who || card.who.claim) return null;
+  const r = state.cast.regs.find((x) => x.name === card.who.name);
+  return r ? r.id : null;
+}
 async function persist(client, game, seq, cmd, before, out) {
   const { state, result, entries, facts } = out;
-  const gid = game.id;
+  const gid = game.id, people = new Map();
   await client.query('INSERT INTO bank.command (game_id, seq, type, payload) VALUES ($1, $2, $3, $4)', [gid, seq, cmd.type, JSON.stringify(cmd)]);
 
   // journal: entries, then lines, so the deferred balance check sees whole entries at commit
@@ -295,10 +355,11 @@ async function persist(client, game, seq, cmd, before, out) {
   if (cmd.type === 'resolve') {
     const card = before.card;
     await client.query(
-      `INSERT INTO bank.decision (game_id, command_seq, card_id, kind, year, month, options, chosen, truth, shown, week)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      `INSERT INTO bank.decision (game_id, command_seq, card_id, kind, year, month, options, chosen, truth, shown, week, person_id, customer_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
       [gid, seq, card.id, card.kind, before.year, before.month,
-        JSON.stringify(card.opts.map((o) => ({ k: o.k, l: o.l }))), cmd.k, JSON.stringify(card.h || {}), JSON.stringify((card.fields || []).map((f) => ({ l: f.l, v: f.v }))), before.weeks ? (card.wk || 0) : null]);
+        JSON.stringify(card.opts.map((o) => ({ k: o.k, l: o.l }))), cmd.k, JSON.stringify(card.h || {}), JSON.stringify((card.fields || []).map((f) => ({ l: f.l, v: f.v }))), before.weeks ? (card.wk || 0) : null,
+        await upsertPerson(client, card.who, people), customerOf(state, card)]);
     for (const l of (result && result.lines) || [])
       await client.query('INSERT INTO bank.event (game_id, command_seq, year, month, kind, tone, text) VALUES ($1, $2, $3, $4, $5, $6, $7)',
         [gid, seq, before.year, before.month, 'outcome', l.tone || '', l.t]);
@@ -318,7 +379,8 @@ async function persist(client, game, seq, cmd, before, out) {
   }
 
   await syncBook(client, gid, before || { year: state.year, month: state.month }, state.loans || []);
-  if (state.households && cmd.type === 'closeMonth') await syncHouseholds(client, gid, before, state.households);
+  if (state.households && cmd.type === 'closeMonth') await syncHouseholds(client, gid, before, state.households, people);
+  if (state.cast) await syncCustomers(client, gid, seq, before, state, people);
   await syncFunding(client, gid, facts.instruments || []);
   if (facts.ambitions && before) await syncAmbitions(client, gid, before.year, facts.ambitions);
   if (cmd.type === 'closeMonth' && state.rivals) await syncRivals(client, gid, state);
@@ -434,7 +496,7 @@ function register(app, { pool, host }) {
       const state = (await client.query('SELECT state FROM bank.game_state WHERE game_id = $1', [g.id])).rows[0].state;
       validate(state, cmd);
       const card = cmd.type === 'resolve' ? state.queue.find((x) => x.id === cmd.id) : null;
-      const before = { year: state.year, month: state.month, card, weeks: !!state.weeks };
+      const before = { year: state.year, month: state.month, card, weeks: !!state.weeks, regs: regularsBefore(state) };
       let out;
       try { out = host.apply(state, cmd); } catch (e) { req.log.error(e); throw new HttpError(422, 'engine_error', 'The engine could not apply that command.'); }
       if (cmd.type === 'buy' && !out.result) throw new HttpError(422, 'cannot_buy', 'That cannot be bought now.');
@@ -458,4 +520,4 @@ function register(app, { pool, host }) {
   // There is deliberately no route that deletes a game: games are never removed, by anyone.
 }
 
-module.exports = { register, toPence, validate, cleanCommand };
+module.exports = { register, toPence, validate, cleanCommand, upsertPerson, personRow };

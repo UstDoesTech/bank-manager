@@ -304,6 +304,32 @@ test('weeks and the cast: a weekly game steps through four weeks, cannot close a
   assert.deepStrictEqual(weeks.map((r) => r.week), [0, 1, 2, 3], 'each decision keeps its week');
   const visits = (await pool.query("SELECT count(*)::int n, count(*) FILTER (WHERE consistent)::int ok FROM bank.v_decision_truth WHERE game_id = $1 AND kind = 'visit'", [id])).rows[0];
   assert(visits.n > 0 && visits.ok === visits.n, 'the careful player chose the best answer on every visit: ' + JSON.stringify(visits));
+  // customers: their own tables, apart from the game state. One row per regular, one event each time they were served,
+  // a person (name and look) shared across games, and links from the decisions and the households
+  const st = played.state, cq = async (sql) => (await pool.query(sql, [id])).rows;
+  assert.strictEqual((await cq('SELECT count(*)::int n FROM bank.customer WHERE game_id = $1'))[0].n, st.cast.rid, 'one row per regular');
+  const ev = await cq('SELECT c.customer_id, c.times_served, count(e.*)::int n FROM bank.customer c LEFT JOIN bank.customer_event e USING (game_id, customer_id) WHERE c.game_id = $1 GROUP BY 1, 2');
+  assert(ev.every((r) => r.n === r.times_served), 'an event for every time a customer was served');
+  const one = st.cast.regs[0], row = (await cq(`SELECT p.full_name, p.presentation, p.skin_tone, c.manner, c.born_year FROM bank.customer c JOIN bank.person p USING (person_id) WHERE c.game_id = $1 AND c.customer_id = ${one.id}`))[0];
+  assert.deepStrictEqual([row.full_name, row.presentation, row.manner, row.born_year], [one.name, one.look.p, one.look.t, one.born]);
+  assert.match(row.skin_tone, /^#[0-9a-f]{6}$/);
+  const cols = (await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'bank' AND table_name = 'person'")).rows.map((r) => r.column_name);
+  assert(!cols.includes('game_id') && !cols.includes('manner') && !cols.includes('born_year'), 'a person carries only a name and a look');
+  assert.strictEqual((await cq("SELECT count(*)::int n FROM bank.decision WHERE game_id = $1 AND person_id IS NULL AND kind IN ('onboard', 'mortgage', 'personal', 'visit', 'fraud', 'app')"))[0].n, 0, 'every customer decision names its person');
+  assert((await cq('SELECT count(*)::int n FROM bank.decision WHERE game_id = $1 AND customer_id IS NOT NULL'))[0].n > 0, 'decisions link to customers');
+  assert.strictEqual((await cq('SELECT count(*)::int n FROM bank.household WHERE game_id = $1 AND person_id IS NULL'))[0].n, 0, 'households are people too');
+  // the same name and look is one person, wherever it appears; another look with the same name is another person
+  { const { upsertPerson } = require('../server/games'), c = await pool.connect();
+    try { const a = await upsertPerson(c, { name: one.name, look: one.look }), b = await upsertPerson(c, { name: one.name, look: Object.assign({}, one.look, { t: 'proud' }) }), d = await upsertPerson(c, { name: one.name, look: Object.assign({}, one.look, { specs: one.look.specs ? 0 : 1 }) });
+      assert.strictEqual(a, b, 'manner is not part of the person'); assert.notStrictEqual(a, d, 'another face is another person');
+      await c.query('DELETE FROM bank.person WHERE person_id = $1', [d]); } finally { c.release(); } }
+  // a changed customer row is caught by the replay
+  await pool.query(`UPDATE bank.customer SET manner = 'nonsense' WHERE game_id = $1 AND customer_id = ${one.id}`, [id]);
+  assert.strictEqual((await verifyGame(pool, host, id)).ok, false, 'an edited customer is caught');
+  await pool.query(`UPDATE bank.customer SET manner = $2 WHERE game_id = $1 AND customer_id = ${one.id}`, [id, one.look.t]);
+  assert.strictEqual((await verifyGame(pool, host, id)).ok, true);
+  const mc = (await cq('SELECT * FROM bank.metric_customer WHERE game_id = $1'))[0];
+  assert(mc && mc.weekly === true && mc.customers === st.cast.rid, 'the customer metrics see the game');
   // a monthly game has no weeks, and a training day never gets them
   const m = (await call('POST', '/api/games', { characters: true }, cookie)).json;
   assert.strictEqual((await call('POST', `/api/games/${m.id}/commands`, { seq: 2, command: { type: 'nextWeek' } }, cookie)).json.error, 'no_weeks');

@@ -100,6 +100,22 @@ async function verifyGame(pool, host, gameId) {
     }
   }
 
+  if (state && state.cast) {
+    const rows = (await pool.query(
+      `SELECT c.customer_id, p.full_name, c.born_year, c.manner, c.times_served, c.left_bank,
+              (SELECT count(*)::int FROM bank.customer_event e WHERE e.game_id = c.game_id AND e.customer_id = c.customer_id) AS events,
+              (SELECT e.outcome FROM bank.customer_event e WHERE e.game_id = c.game_id AND e.customer_id = c.customer_id ORDER BY e.event_no DESC LIMIT 1) AS last
+         FROM bank.customer c JOIN bank.person p ON p.person_id = c.person_id WHERE c.game_id = $1`, [gameId])).rows;
+    if (rows.length !== (state.cast.rid || 0)) problems.push(`${rows.length} stored customers, replay has ${state.cast.rid || 0}`);
+    for (const r of state.cast.regs) {
+      const row = rows.find((x) => x.customer_id === r.id), last = r.notes[r.notes.length - 1];
+      if (!row) { problems.push(`customer ${r.name} is not stored`); continue; }
+      if (row.full_name !== r.name || row.born_year !== r.born || row.manner !== ((r.look && r.look.t) || 'calm') || row.left_bank !== !!r.gone) problems.push(`customer ${r.name} is stored differently from the replay`);
+      if (row.times_served !== r.n || row.events !== r.n) problems.push(`customer ${r.name} was served ${r.n} times in the replay; stored ${row.times_served}, with ${row.events} events`);
+      if (last && row.last !== last.t) problems.push(`customer ${r.name}'s last stored event differs from the replay`);
+    }
+  }
+
   if (state && state.households) {
     const rows = (await pool.query('SELECT household_id, credit_score, year, month FROM bank.household_month WHERE game_id = $1 ORDER BY year, month', [gameId])).rows;
     for (const h of state.households) {

@@ -294,7 +294,7 @@ function regAdd(who, job){
   r.last = at; r.n++;
   return r;
 }
-function regNote(r, text, what){ r.notes.push({ y: S.year, m: Math.min(S.month, 11), w: what || '', t: text }); if (r.notes.length > 6) r.notes.shift(); }
+function regNote(r, text, what){ const n = { y: S.year, m: Math.min(S.month, 11), w: what || '', t: text }; if (S.weeks) n.wk = S.wk; r.notes.push(n); if (r.notes.length > 6) r.notes.shift(); }
 const JOB_KINDS = { onboard: 1, mortgage: 1 };
 const NO_REG = new Set(['aml', 'sanctions', 'rate', 'treasury', 'liqshock', 'outage', 'funding', 'capital', 'product', 'acquire', 'acquire2', 'wmLaunch', 'wmHouse', 'wmMarket', 'wmCampaign']);
 // After a decision: the customer joins (or stays in) the regulars with a line on what happened.

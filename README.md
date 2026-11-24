@@ -230,8 +230,25 @@ truth the best answer is worth more than the others, counting later consequences
 customers and a few a month with the cast alone.
 
 **On the server.** `POST /api/games` accepts `weeks` and `characters`; the command API accepts `nextWeek`. Migration 016 adds the week to
-each decision (`bank.decision.week`) and scores a visit as consistent when the best answer was chosen (`bank.v_decision_truth`). The cast
-and the regulars are part of the stored state, so the replay checks them.
+each decision (`bank.decision.week`) and scores a visit as consistent when the best answer was chosen (`bank.v_decision_truth`).
+
+**Customers in the database** (migration 017), kept apart from the game state:
+- `bank.person` holds a name and a look (heritage, presentation, skin tone, hair, headwear, beard, glasses, build, height, skirt, stick,
+  bag) and nothing else. It is shared across games: the same name and look is one row wherever it appears, keyed by a hash of the two.
+  The same name with another face is another person, so an impostor is not the customer they claim to be.
+- `bank.customer` is one row per regular in one game: the person, year of birth, manner, job, when first and last served, how many times,
+  whether they hold a mortgage with you and whether they have left. It keeps every regular the game ever had, including those the game has
+  since dropped from its list of 60.
+- `bank.customer_event` is every time the bank served a regular: the command, year, month and week, the case and the answer, and what
+  happened. The game state keeps only the last six; the table keeps all of them.
+- `bank.decision.person_id` and `bank.decision.customer_id` say who each decision was about, and `bank.household.person_id` links the
+  households to their person.
+- The server writes these as each command runs (`syncCustomers()`, `upsertPerson()` in `server/games.js`), including customers served by
+  the lending desk at a month end. `server/replay.js` checks the stored customers against the replay: one row per regular the game created,
+  and each live regular's person, year of birth, manner, number of times served, events and last outcome.
+- Analysis: `bank.metric_customer` (per game: customers, the share served more than once, times served, the share who left, and whether
+  the game was weekly) and `bank.metric_customer_manner` (by manner). Both read only games in `v_game`, and the read-only role can read
+  them. Queries 14 to 16 in `db/analysis/metrics.sql` use them, including the people who turn up in more than one game.
 
 **Screenshot baselines.** The title screen has a new control, so the approved Windows images for the title change: run
 `npm run visual:update` on Windows and review them.
