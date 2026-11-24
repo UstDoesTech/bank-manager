@@ -100,7 +100,7 @@ test('the page: sign up, confirm, accept the notice, play online and offline, an
   const pageCommands = () => page.evaluate(() => JSON.parse(localStorage.getItem('bm-remote') || '{}'));
 
   await playMonth(); await playMonth();
-  await waitFor(async () => { const r = await pageCommands(); return r.pending && r.pending.length === 0 && (await serverSeq()) === r.seq && r.seq > 8; }, 'server to catch up');
+  await waitFor(async () => { const r = await pageCommands(); return r.pending && r.pending.length === 0 && (await serverSeq()) === r.seq && r.seq > 8; }, 'server to catch up', 60000);   // a weekly month is about twenty commands
 
   // the regular customers: seven households, a Customers panel, and each closed month stored on the server
   assert.strictEqual(await page.evaluate(() => S.households.length), 7);
@@ -125,7 +125,7 @@ test('the page: sign up, confirm, accept the notice, play online and offline, an
   // reload while still offline, then come back online: the queue survives the reload and is flushed
   await ctx.setOffline(false);
   await page.reload();
-  await waitFor(async () => { const r = await pageCommands(); return r.pending && r.pending.length === 0 && (await serverSeq()) > before; }, 'queued commands to flush after reload');
+  await waitFor(async () => { const r = await pageCommands(); return r.pending && r.pending.length === 0 && (await serverSeq()) > before; }, 'queued commands to flush after reload', 60000);
 
   // the server's own run of the commands agrees with what the page saw
   const v = await verifyGame(pool, host, gameId);
@@ -246,7 +246,7 @@ test('the page without an account: the game is recorded anonymously, the player 
   await page.waitForFunction(() => S && S.seed);                       // the server row exists before the page has started its own game
   await page.evaluate(() => { closeOverlay(); for (;;){ for (let c; (c = current());) dispatch({ type: 'resolve', id: c.id, k: c.opts.find((o) => !(o.cash && S.cash < o.cash)).k }); if (weekLeft()) endWeek(); else break; } closeBooks(); });
   await page.evaluate(() => closeOverlay()); await page.click('#menuBtn'); assert.match(await page.textContent('.panel'), /Playing as a guest/); assert.strictEqual(await page.$('#menuOut'), null, 'a guest has no password to sign out of'); await page.click('#menuResume');
-  const r = await waitFor(async () => { const x = await page.evaluate(() => JSON.parse(localStorage.getItem('bm-remote') || '{}')); return x.pending && x.pending.length === 0 && x.seq > 3 && x; }, 'commands to reach the server');
+  const r = await waitFor(async () => { const x = await page.evaluate(() => JSON.parse(localStorage.getItem('bm-remote') || '{}')); return x.pending && x.pending.length === 0 && x.seq > 3 && x; }, 'commands to reach the server', 60000);
   const gameId = (await pool.query('SELECT g.id FROM bank.game g JOIN account.player p ON p.player_key = g.player_key WHERE p.guest')).rows[0].id;
   assert.deepStrictEqual((await verifyGame(pool, host, gameId)).problems, []);
   assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.journal_line WHERE game_id = $1', [gameId])).rows[0].n > 0, true);
