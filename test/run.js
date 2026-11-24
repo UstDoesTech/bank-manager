@@ -848,4 +848,53 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   const R = loadEngine(src); for (const cmd of a.cmds) R.dispatch(cmd); assert.strictEqual(hashState(R.S, []), hashState(S, [])); n++;
   const N = loadEngine(src); N.dispatch({ type: 'newGame', seed: 2, opts: { accounts: true } }); assert(!N.S.acc, 'accounts need the cast');
   const T = loadEngine(src); T.dispatch({ type: 'newGame', seed: 2, opts: { tutorial: true, characters: true, accounts: true } }); assert(!T.S.acc, 'no accounts on the training day'); n++; }
+// 28. More realistic, still simple: every posting has a value day (a month-at-a-time game too); savers earn interest on each day's
+//     balance at actual/365, and a new loan's first month runs from the day it was drawn; a payment returned unpaid is reversed
+//     against the posting it corrects; refunds land in the customer's account; statements carry a narrative.
+{ // a game played a month at a time dates its postings in order through the month
+  const M = loadEngine(src), me = []; M.setSink(e => me.push(e));
+  play(M, 9, 'careful', 1, { households: true, characters: true, accounts: true });
+  assert(me.every(e => e.day >= 1 && e.day <= new Date(Date.UTC(e.year, Math.min(e.month, 11) + 1, 0)).getUTCDate()), 'every posting has a value day in its month'); n++;
+  let ok = true; for (let i = 1; i < me.length; i++) if (me[i].year === me[i - 1].year && me[i].month === me[i - 1].month && me[i].day < me[i - 1].day) ok = false;
+  assert(ok, 'value days run forward through the month'); n++;
+  const E = loadEngine(src), entries = []; E.setSink(e => entries.push(e));
+  const a = play(E, 6, 'careful', 2, { households: true, meetings: true, rivals: true, weeks: true, characters: true, accounts: true });
+  // savers: recompute each month's interest from the balances and days in the postings, at the rate the narrative states
+  const acct = {}; let checked = 0;
+  for (const e of entries){
+    for (const [ac, d, ref] of e.lines){
+      if (ac !== 'deposits' || !/^deposit:[1-9]/.test(ref || '')) continue;
+      const A = acct[ref] = acct[ref] || { bal: 0, bd: 0, d: null, key: null }, key = e.year * 12 + e.month;
+      if (A.key !== key){ A.key = key; A.bd = 0; A.d = 1; }
+      if (A.d == null) A.d = e.day;
+      if (e.memo === 'pl.intDep' && /^Interest: (\d+) days at ([\d.]+)%/.test(e.note || '')){
+        const [, , rate] = e.note.match(/^Interest: (\d+) days at ([\d.]+)%/), last = new Date(Date.UTC(e.year, e.month + 1, 0)).getUTCDate();
+        const bd = A.bd + A.bal * (last - A.d + 1), want = bd * Number(rate) / 36500;
+        assert(Math.abs(-d - want) < 1e-6 * Math.max(1, want) + 1e-9, `${ref} interest ${-d} against ${want}`); checked++;
+        A.bal += -d; A.bd = 0; A.d = 1; A.key = null; continue;
+      }
+      A.bd += A.bal * Math.max(0, e.day - A.d); A.d = e.day; A.bal += -d;
+      if (e.memo === 'account.month') A.d = 1;
+    }
+  }
+  assert(checked > 100, 'interest on each day\'s balance, checked ' + checked + ' times'); n++;
+  // a new loan's first month of interest runs from the day it was drawn
+  const drawn = {}; let firsts = 0;
+  for (const e of entries){
+    if (e.memo === 'loan.originate') drawn[e.lines[0][2]] = { day: e.day, bal: e.lines[0][1], key: e.year * 12 + e.month };
+    if (e.memo === 'pl.intLoans' && /^Interest: (\d+) days/.test(e.note || '')){ const L = drawn[e.lines[0][2]], days = Number(e.note.match(/^Interest: (\d+) days/)[1]);
+      const last = new Date(Date.UTC(e.year, e.month + 1, 0)).getUTCDate(); assert.strictEqual(days, last - L.day + 1, 'days from drawdown'); firsts++; }
+  }
+  assert(firsts > 10, 'first months pro-rated: ' + firsts); n++;
+  // payments returned unpaid are reversed against what they correct; refunds into accounts say what they put right
+  const bySeq = new Map(entries.map(e => [e.seq, e]));
+  const returns = entries.filter(e => e.memo === 'deposit.return');
+  for (const r of returns){ const o = bySeq.get(r.corrects); assert(o && o.memo === 'deposit.flow' && o.seq < r.seq, 'a return corrects an earlier payment in'); assert.strictEqual(o.lines.find(l => l[0] === 'deposits')[2], r.lines.find(l => l[0] === 'deposits')[2], 'the same account'); }
+  assert(returns.length > 0, 'some payments were returned unpaid'); n++;
+  assert(entries.some(e => e.memo === 'pl.redress' && e.lines.some(l => /^deposit:[1-9]/.test(l[2] || ''))), 'refunds land in customers\' accounts'); n++;
+  assert(entries.filter(e => e.lines.some(l => /^deposit:[1-9]/.test(l[2] || '')) && e.lines.some(l => l[0] === 'deposits')).every(e => e.note), 'every posting to a customer\'s account has a narrative'); n++;
+  // the accounts still add up
+  const by = {}; for (const e of entries) for (const [ac, d, ref] of e.lines) if (ac === 'deposits' && ref) by[ref] = (by[ref] || 0) + d;
+  for (const x of a.S.acc.list) assert(Math.abs(-(by['deposit:' + x.id] || 0) - x.bal) < 1e-6); n++;
+  const R = loadEngine(src); for (const cmd of a.cmds) R.dispatch(cmd); assert.strictEqual(hashState(R.S, []), hashState(a.S, [])); n++; }
 console.log('ok', n, 'checks');

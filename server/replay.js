@@ -172,6 +172,13 @@ async function verifyGame(pool, host, gameId) {
       if (Object.keys(w).length !== Object.keys(g).length || Object.keys(w).some((a) => Math.abs((g[a] || 0) - w[a]) > want.length)) problems.push(`journal entry ${e.seq} (${e.memo}) differs`);
     } else if (!got || canon(want) !== canon(got)) problems.push(`journal entry ${e.seq} (${e.memo}) differs`);
   }
+  // the value day, narrative and correction of each entry, for games recorded since entries carried them
+  const heads = new Map((await pool.query('SELECT seq, value_day, narrative, corrects FROM bank.journal_entry WHERE game_id = $1', [gameId])).rows.map((r) => [r.seq, r]));
+  for (const e of entries) {
+    const h = heads.get(e.seq);
+    if (!h || h.value_day == null) continue;
+    if (h.value_day !== e.day || (h.narrative || null) !== (e.note || null) || (h.corrects || null) !== (e.corrects || null)) problems.push(`journal entry ${e.seq} (${e.memo}) is dated or described differently from the replay`);
+  }
   const total = lines.reduce((t, l) => t + Number(l.amount_pence), 0);
   if (total !== 0) problems.push(`trial balance is ${total} pence, not zero`);
 

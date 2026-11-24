@@ -370,6 +370,7 @@ test('core: options, products, versioned settings, a ledger for each loan and on
   assert(ledger.length > 0, 'loans were booked');
   for (const l of ledger) assert(Math.abs(Number(l.agreement_balance_pence) - Number(l.posted_balance_pence)) <= l.postings * 2, `loan ${l.agreement_id}: postings ${l.posted_balance_pence} against balance ${l.agreement_balance_pence}`);
   assert(ledger.some((l) => Number(l.interest_paid_pence) > 0), 'interest shows on the loans');
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.v_journal_entry WHERE game_id = $1 AND value_date IS NULL'))[0].n, 0, 'a month-at-a-time game dates every posting too');
   const rec = (await q('SELECT control_pence, loans_pence, unattributed_pence FROM bank.v_loan_reconciliation WHERE game_id = $1'))[0];
   assert.strictEqual(Number(rec.unattributed_pence), 0); assert.strictEqual(Number(rec.control_pence), Number(rec.loans_pence));
   const stmt = await q("SELECT DISTINCT transaction_type FROM bank.v_loan_statement WHERE game_id = $1");
@@ -419,6 +420,11 @@ test('deposit accounts: customers have their own, each reconciles to its posting
   for (const k of ['paid in', 'salary and takings', 'spending and bills']) assert(kinds.includes(k), 'statement has ' + k + ': ' + kinds);
   assert.strictEqual((await q('SELECT count(*)::int n FROM bank.v_journal_entry WHERE game_id = $1 AND value_date IS NULL'))[0].n, 0, 'a weekly game dates every entry');
   assert((await q("SELECT count(*)::int n FROM bank.v_customer_holding WHERE game_id = $1 AND holding = 'deposit'"))[0].n > 0, 'customers hold deposits');
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.v_deposit_statement WHERE game_id = $1 AND narrative IS NULL'))[0].n, 0, 'every statement line has a narrative');
+  const interest = await q("SELECT narrative FROM bank.v_deposit_statement WHERE game_id = $1 AND description = 'interest'");
+  assert(interest.length > 0 && interest.every((r) => /days at [\d.]+%/.test(r.narrative)), 'interest says how many days at what rate');
+  for (const c of await q('SELECT memo, corrects_memo FROM bank.v_correction WHERE game_id = $1'))
+    assert(['deposit.return', 'pl.redress'].includes(c.memo) && c.corrects_memo === 'deposit.flow', 'a correction points at the payment it corrects');
   assert.deepStrictEqual((await verifyGame(pool, host, id)).problems, []);
   await pool.query("UPDATE bank.account SET balance_pence = balance_pence + 100 WHERE game_id = $1 AND account_id = $2", [id, accts[0].account_id]);
   assert.strictEqual((await verifyGame(pool, host, id)).ok, false, 'an edited account balance is caught');

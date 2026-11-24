@@ -450,7 +450,10 @@ function je(memo, lines, opts){
   if (LEDGER_SINK){
     const sp = opts && opts.split, out = (sp ? lines.flatMap(l => l[0] === sp.account ? sp.parts.map(([ref, amt]) => [sp.account, amt, ref]) : [l]) : lines)
       .map(l => l[0] === 'deposits' && !l[2] ? ['deposits', l[1], 'deposit:0'] : l);      // a deposit not in a customer's own account is in the retail pool
-    LEDGER_SINK({ seq: L.n, year: S.year, month: S.month, day: valueDay(L.n), memo, lines: out });
+    const e = { seq: L.n, year: S.year, month: S.month, day: dayNow(), memo, lines: out };
+    if (opts && opts.note) e.note = opts.note;
+    if (opts && opts.corrects) e.corrects = opts.corrects;
+    LEDGER_SINK(e);
   }
 }
 // Posts the current position as one opening entry; equity.opening is the balancing figure.
@@ -478,11 +481,16 @@ function dC(d){ d = Math.round(d); if (!d) return; S.comp = clamp(S.comp + d, 0,
 function depMove(x){ je('deposit.flow', [['cash', x], ['deposits', -x]]); chip('Deposits ' + fmt(x, true), x >= 0 ? 'good' : 'bad'); }
 /* ---- the value day of a posting: in a weekly game a day in the week it happened, at month end the month's last day, otherwise not known ---- */
 var CLOSING = false;
-function valueDay(n){
-  const m = Math.min(S.month, 11), last = new Date(Date.UTC(S.year, m + 1, 0)).getUTCDate();
+const daysIn = () => new Date(Date.UTC(S.year, Math.min(S.month, 11) + 1, 0)).getUTCDate();
+// The day of the month it is: how far through the month's customers (or the week's, in a weekly game) the counter has got.
+// Month end is the last day. Read only.
+function dayNow(){
+  const last = daysIn();
   if (CLOSING) return last;
-  return S.weeks ? Math.min(last, (S.wk || 0) * 7 + 1 + (n * 3) % 5) : null;
+  const q = S.weeks ? (S.queue || []).filter(c => (c.wk || 0) === S.wk) : (S.queue || []), done = q.filter(c => c.done).length;
+  return S.weeks ? Math.min(last, (S.wk || 0) * 7 + 1 + Math.floor(done * 6 / Math.max(1, q.length))) : 1 + Math.floor(done * (last - 2) / Math.max(1, q.length));
 }
+const dayName = (d, m) => `${d} ${MONTHS[Math.min(m == null ? S.month : m, 11)].slice(0, 3)}`;
 /* ---- customers' own deposit accounts ----
    Only games started with the accounts option (and the cast) have them (S.acc). A customer who opens an account at the counter
    gets one in their name; what they pay in, take out and earn is posted to it, and the rest of the retail deposits stay in one
@@ -491,25 +499,30 @@ function valueDay(n){
 const ACC_PRODUCTS = { current_account: 'Current account', easy_access: 'Easy-access saver', cash_isa: 'Cash ISA', fixed_saver: 'Two-year fixed saver', business_current: 'Business account' };
 const SAVERS = { easy_access: 1, cash_isa: 1, fixed_saver: 1 };
 const accRef = a => 'deposit:' + a.id;
+// Interest accrues on each day's balance: before a balance changes, the days it has held are added up.
+function accTouch(a){ const d = dayNow(); if (a.d == null){ a.d = d; a.bd = 0; } a.bd += a.bal * Math.max(0, d - a.d); a.d = d; }
 function accsOf(name){ return S.acc ? S.acc.list.filter(a => a.status === 'open' && a.holder === name) : []; }
 function accOpen(c, product, pay){
   const A = S.acc, a = { id: A.next++, holder: c.who.name, reg: (c.who.reg && !c.who.claim) ? c.who.reg : null, product, opened: [S.year, Math.min(S.month, 11)], bal: 0, status: 'open',
     pay: pay != null ? pay : product === 'current_account' ? Math.round((1.3 + 2.9 * hx(A.next, S.seed + 5)) * 100) / 100 : product === 'business_current' ? Math.round((3 + 9 * hx(A.next, S.seed + 6)) * 100) / 100 : 0 };
   if (product === 'fixed_saver'){ a.rate = Math.round((S.savRate + 0.6) * 100) / 100; a.matures = S.year * 12 + Math.min(S.month, 11) + 24; }
+  a.d = dayNow(); a.bd = 0;
   A.list.push(a); return a;
 }
 // Money in or out of a customer's own accounts. Out comes from their accounts first, then from the pool.
-function custDep(c, x, product){
+function custDep(c, x, product, note){
   if (!S.acc || !c || !c.who || c.who.claim){ depMove(x); return; }
   if (x >= 0){
     const a = accsOf(c.who.name).find(q => q.product === product) || accOpen(c, product);
-    je('deposit.flow', [['cash', x], ['deposits', -x, accRef(a)]]); a.bal += x;
+    accTouch(a); je('deposit.flow', [['cash', x], ['deposits', -x, accRef(a)]], { note: note || 'Paid in at the counter' }); a.bal += x;
+    // now and then a payment in is returned unpaid by the bank it came from, and is reversed at month end
+    if (x >= 0.5 && hx(a.id * 31 + S.ledger.n, S.seed + 9) < 0.04) a.ret = { seq: S.ledger.n, amt: x, day: dayNow(), m: Math.min(S.month, 11) };
     chip('Deposits ' + fmt(x, true), 'good'); return;
   }
   let need = -x; const lines = [['cash', x]];
-  for (const a of accsOf(c.who.name).sort((p, q) => q.bal - p.bal)){ if (need <= 1e-9) break; const t = Math.min(a.bal, need); if (t <= 0) continue; lines.push(['deposits', t, accRef(a)]); a.bal -= t; need -= t; }
+  for (const a of accsOf(c.who.name).sort((p, q) => q.bal - p.bal)){ if (need <= 1e-9) break; const t = Math.min(a.bal, need); if (t <= 0) continue; accTouch(a); lines.push(['deposits', t, accRef(a)]); a.bal -= t; need -= t; }
   if (need > 1e-9) lines.push(['deposits', need]);
-  je('deposit.flow', lines); chip('Deposits ' + fmt(x, true), 'bad');
+  je('deposit.flow', lines, { note: note || 'Withdrawn' }); chip('Deposits ' + fmt(x, true), 'bad');
 }
 // An account opened with nothing in it yet (a student, a new business that has not traded).
 function custOpen(c, product){ if (S.acc && c && c.who && !c.who.claim && !accsOf(c.who.name).some(a => a.product === product)) accOpen(c, product); }
@@ -517,34 +530,65 @@ function custOpen(c, product){ if (S.acc && c && c.who && !c.who.claim && !accsO
 function custCarve(c, amt, product){
   if (!S.acc || !c || !c.who || c.who.claim || !(amt > 0)) return;
   const a = accsOf(c.who.name).find(q => q.product === product) || accOpen(c, product);
-  je('deposit.transfer', [['deposits', amt], ['deposits', -amt, accRef(a)]]); a.bal += amt;
+  accTouch(a); je('deposit.transfer', [['deposits', amt], ['deposits', -amt, accRef(a)]], { note: product === 'current_account' ? 'Transfer in' : 'Moved from savings already held with the bank' }); a.bal += amt;
 }
 // A customer leaves: every account they hold is closed and the money goes. With no accounts of their own, `fallback` leaves the pool.
 function custLeave(c, fallback){
   const mine = S.acc && c && c.who ? accsOf(c.who.name) : [];
   if (!mine.length){ depMove(-fallback); return; }
+  for (const a of mine){                                            // interest to the day of closing is paid first
+    accTouch(a); const i = monthInterest(a);
+    if (i > 0){ je('pl.intDep', [['pl.intDep', i, accRef(a)], ['deposits', -i, accRef(a)]], { note: `Interest to the day of closing at ${(a.product === 'fixed_saver' ? a.rate : S.savRate).toFixed(2)}%` }); a.bal += i; }
+    a.bd = 0;
+  }
   const tot = mine.reduce((t, a) => t + a.bal, 0), lines = [['cash', -tot]];
   for (const a of mine){ if (a.bal > 0) lines.push(['deposits', a.bal, accRef(a)]); a.bal = 0; a.status = 'closed'; a.closed = [S.year, Math.min(S.month, 11)]; }
-  if (tot > 0) je('deposit.flow', lines);
+  if (tot > 0) je('deposit.flow', lines, { note: 'Account closed; balance sent to another bank' });
   chip('Deposits ' + fmt(-tot, true), 'bad');
 }
 // Each month: salary in and spending out on current accounts, interest credited on savers, fixed savers maturing into easy access.
+// The interest a saver has earned this month on each day's balance, at actual/365. Nothing for current accounts.
+function monthInterest(a){
+  if (!SAVERS[a.product]) return 0;
+  const r = a.product === 'fixed_saver' ? a.rate : S.savRate;
+  return (a.bd || 0) * r / 36500;
+}
 function accMonth(){
   if (!S.acc) return;
-  const at = S.year * 12 + Math.min(S.month, 11);
+  const at = S.year * 12 + Math.min(S.month, 11), last = daysIn();
   for (const a of S.acc.list){
     if (a.status !== 'open') continue;
+    if (a.ret){
+      const amt = Math.min(a.ret.amt, a.bal);
+      if (amt > 0){ accTouch(a); je('deposit.return', [['cash', -amt], ['deposits', amt, accRef(a)]], { note: `Returned unpaid: the ${full(a.ret.amt)} paid in on ${dayName(a.ret.day, a.ret.m)}`, corrects: a.ret.seq }); a.bal -= amt; }
+      delete a.ret;
+    }
+    if (SAVERS[a.product]){
+      accTouch(a); a.bd += a.bal;                                   // the last day counts too
+      const r = a.product === 'fixed_saver' ? a.rate : S.savRate, i = monthInterest(a);
+      if (i > 0){ je('pl.intDep', [['pl.intDep', i, accRef(a)], ['deposits', -i, accRef(a)]], { note: `Interest: ${last} days at ${r.toFixed(2)}%` }); a.bal += i; }
+    }
+    a.bd = 0; a.d = 1;
     if (a.pay > 0){
       const u1 = hx(a.id * 7919 + at, S.seed), u2 = hx(a.id * 104729 + at, S.seed + 1);      // hashed, so accounts never move the game's random numbers
       const inn = a.pay * (0.9 + 0.2 * u1), out = Math.min(a.bal + inn, inn * (0.9 + 0.16 * u2));
-      je('account.month', [['cash', inn - out], ['deposits', -inn, accRef(a)], ['deposits', out, accRef(a)]]); a.bal += inn - out;
-    }
-    if (SAVERS[a.product] && a.bal > 0){
-      const r = a.product === 'fixed_saver' ? a.rate : S.savRate, i = a.bal * r / 1200;
-      if (i > 0){ je('pl.intDep', [['pl.intDep', i, accRef(a)], ['deposits', -i, accRef(a)]]); a.bal += i; }
+      je('account.month', [['cash', inn - out], ['deposits', -inn, accRef(a)], ['deposits', out, accRef(a)]], { note: a.product === 'business_current' ? 'Takings in; suppliers and bills out' : 'Salary in; rent, bills and card spending out' }); a.bal += inn - out; a.d = 1;
     }
     if (a.product === 'fixed_saver' && a.matures <= at){ a.product = 'easy_access'; delete a.rate; delete a.matures; }
   }
+}
+// A refund to a customer: into their own account where they have one, otherwise paid out as before.
+function custRefund(c, amt, key, label, note, corrects){
+  const mine = S.acc && c && c.who && !c.who.claim ? accsOf(c.who.name) : [], a = mine.find(q => q.product === 'current_account' || q.product === 'business_current') || mine[0];
+  if (!a){ money(key, -amt, label); return; }
+  accTouch(a); je('pl.' + key, [['pl.' + key, amt, accRef(a)], ['deposits', -amt, accRef(a)]], { note, corrects }); a.bal += amt;
+  chip((label ? label + ' ' : '') + fmt(-amt, true), 'bad');
+}
+// A payment out of the customer's account at the counter; returns the posting's number, or null if they have no account with us.
+function custPay(name, amt, note){
+  const a = S.acc ? accsOf(name).sort((p, q) => q.bal - p.bal)[0] : null;
+  if (!a || a.bal < amt) return null;
+  accTouch(a); je('deposit.flow', [['cash', -amt], ['deposits', amt, accRef(a)]], { note }); a.bal -= amt; return S.ledger.n;
 }
 const accSum = (saversOnly) => S.acc ? S.acc.list.reduce((t, a) => t + (a.status === 'open' && (!saversOnly || SAVERS[a.product]) ? a.bal : 0), 0) : 0;
 const fid = () => (S.fid = (S.fid || 0) + 1);
@@ -562,6 +606,7 @@ function analyst(pd){ if (!S.up || !S.up.analyst) return null; const v = pd * Ma
 /* loans */
 function book(o){
   const l = Object.assign({ id: S.nextId++, status: 'current', m0: S.month, carded: false, hpi0: hpi() }, o);
+  if (S.acc) l.vd = dayNow();                                       // the day it was drawn, for its first month's interest
   je('loan.originate', [['loans', l.bal, 'loan:' + l.id], ['cash', -l.bal, 'loan:' + l.id]]); S.loans.push(l); S.stats.loans++; S.stats.lent += l.bal; if (l.hh != null) hhBooked(l);
   chip('Lent ' + fmt(l.bal), 'neutral');
   const kept = l.bal * (RETAIN[l.kind] || 0.2); je('deposit.created', [['cash', kept], ['deposits', -kept]]); chip('Deposit created ' + fmt(kept, true), 'neutral');
@@ -924,7 +969,7 @@ gen.fraud = (o = {}) => {
 };
 res.fraud = (c, k) => {
   const h = c.h, nm = first(h.name);
-  if (k === 'let'){ if (h.fraud){ say(`It was fraud. ${nm} spotted it next morning. You refunded them in full.`, 'bad'); money('redress', -h.amt, 'Refund'); dT(-1); S.stats.fraudMiss++; } else say(`Genuine. ${nm} never knew it was held.`); }
+  if (k === 'let'){ if (h.fraud){ say(`It was fraud. ${nm} spotted it next morning. You refunded them in full.`, 'bad'); custRefund(c, h.amt, 'redress', 'Refund', 'Refund of a card payment the customer did not make'); dT(-1); S.stats.fraudMiss++; } else say(`Genuine. ${nm} never knew it was held.`); }
   if (k === 'block'){ if (h.fraud){ say(`${nm} replied "NOT ME". New card on its way.`, 'good'); dT(2); S.stats.fraudStop++; } else { say(`It was ${nm}. The card was declined at the till.`, 'bad'); dT(-2); } }
 };
 
@@ -942,7 +987,8 @@ gen.app = () => {
 res.app = (c, k) => {
   const h = c.h, nm = first(h.name);
   if (k === 'send'){
-    if (h.scam){ say(`It was a scam. ${nm} reported it a week later. You refunded them; the receiving bank paid half.`, 'bad'); money('redress', -h.amt / 2, 'Refund share'); dT(-2); S.stats.scamMiss++; news(3, `Scam victim lost ${fmt(h.amt)} after branch visit`, `${h.name} sent the money in person at Counting House. The bank has refunded them.`); }
+    const sent = custPay(h.name, h.amt, 'Payment to a new payee, made in branch');
+    if (h.scam){ say(`It was a scam. ${nm} reported it a week later. You refunded them; the receiving bank paid half.`, 'bad'); if (sent) custRefund(c, h.amt / 2, 'redress', 'Refund share', 'Scam refund: half, the rest from the receiving bank', sent); else money('redress', -h.amt / 2, 'Refund share'); dT(-2); S.stats.scamMiss++; news(3, `Scam victim lost ${fmt(h.amt)} after branch visit`, `${h.name} sent the money in person at Counting House. The bank has refunded them.`); }
     else { say(`Payment sent. ${nm} thanks the cashier.`); dT(1); }
   }
   if (k === 'stop'){
@@ -1165,8 +1211,8 @@ gen.complaint = () => {
 };
 res.complaint = (c, k) => {
   const h = c.h, nm = first(h.name);
-  if (k === 'good'){ money('redress', -(h.amt + 0.15)); say(`${nm} writes back to say thank you.`); dT(h.valid ? 2 : 0); }
-  if (k === 'refund'){ money('redress', -h.amt); say(`Refunded. ${nm} accepts.`); dT(h.valid ? 1 : 0); }
+  if (k === 'good'){ custRefund(c, h.amt + 0.15, 'redress', '', 'Complaint upheld: refund and goodwill'); say(`${nm} writes back to say thank you.`); dT(h.valid ? 2 : 0); }
+  if (k === 'refund'){ custRefund(c, h.amt, 'redress', '', 'Complaint upheld: refund'); say(`Refunded. ${nm} accepts.`); dT(h.valid ? 1 : 0); }
   if (k === 'reject'){
     if (h.valid){ say(`${nm} takes it to the Financial Ombudsman.`); later(ri(1, 2), { text:`The Ombudsman upheld ${h.name}'s complaint. You pay the claim, interest and a case fee.`, cash: -(h.amt + 0.75), key:'redress', trust:-3, comp:-1, tone:'bad' }); }
     else say(`${nm} accepts the decision.`);
@@ -1277,7 +1323,7 @@ const VISITS = {
         fields: [ F('ID', sig(imp, ['Passport · face matches', 'Driving licence · face matches'], ['Driving licence · the photo is old', 'A utility bill only'])), F('Security questions', sig(imp, ['All correct', 'Correct after a pause'], ['Two wrong', 'Correct, read from a note'])), F('Account history', sig(imp, ['Uses this branch most weeks', 'Usual spending'], ['Contact email changed yesterday', 'Three failed logins from abroad']), null, true), F('Payment', full(amt)) ],
         opts: [ { k: 'do', l: 'Register the phone and send it', s: 'go', st: 'DONE' }, { k: 'verify', l: 'Call the number on file first', s: 'alt', st: 'CHECKING' }, { k: 'refuse', l: 'Refuse', s: 'no', st: 'REFUSED' } ] }; },
     res(c, k, h, nm){
-      if (k === 'do'){ if (h.imp){ say(`Done. The real ${c.who.name} calls the next morning: it was not them. You refund the ${full(h.amt)}.`, 'bad'); money('redress', -h.amt, 'Refund'); dT(-2); dC(-2); S.stats.fraudMiss++; } else { say(`${nm} is back in their account and very grateful.`, 'good'); dT(2); } }
+      if (k === 'do'){ if (!h.imp) custPay(c.who.name, h.amt, 'Payment to a new payee, requested at the counter'); if (h.imp){ say(`Done. The real ${c.who.name} calls the next morning: it was not them. You refund the ${full(h.amt)}.`, 'bad'); { const sent = custPay(c.who.name, h.amt, 'Payment to a new payee, requested at the counter'); if (sent){ const a = accsOf(c.who.name).sort((p, q) => q.bal - p.bal)[0]; accTouch(a); je('pl.redress', [['pl.redress', h.amt, accRef(a)], ['deposits', -h.amt, accRef(a)]], { note: 'Refund: a payment made by someone using the customer\'s identity', corrects: sent }); a.bal += h.amt; chip('Refund ' + fmt(-h.amt, true), 'bad'); } else money('redress', -h.amt, 'Refund'); } dT(-2); dC(-2); S.stats.fraudMiss++; } else { say(`${nm} is back in their account and very grateful.`, 'good'); dT(2); } }
       if (k === 'verify'){ if (h.imp){ say(`The real ${c.who.name} answers at home. The person at the counter walks out.`, 'good'); dT(2); dC(1); S.stats.fraudStop++; } else { say(`It checks out, an hour later.`); dT(-1); } }
       if (k === 'refuse'){ if (h.imp) say('The person at the counter leaves without arguing.'); else { say(`${nm} is still locked out and furious.`, 'bad'); dT(-3); } }
     } },
@@ -1926,7 +1972,8 @@ function closeMonth(){
   // new loans
   for (const l of [...S.loans]){
     if (l.status === 'current'){
-      post('intLoans', l.bal * l.rate / 1200, 'loan:' + l.id);
+      if (l.vd && l.m0 === m){ const last = daysIn(), days = last - l.vd + 1; je('pl.intLoans', [['cash', l.bal * l.rate / 100 * days / 365, 'loan:' + l.id], ['pl.intLoans', -l.bal * l.rate / 100 * days / 365, 'loan:' + l.id]], { note: `Interest: ${days} days at ${l.rate.toFixed(2)}%` }); }
+      else post('intLoans', l.bal * l.rate / 1200, 'loan:' + l.id);
       const a = l.bal * AMORT[l.kind]; je('loan.repay', [['cash', a, 'loan:' + l.id], ['loans', -a, 'loan:' + l.id]]); l.bal -= a;
       const pm = (1 - Math.pow(1 - l.pd, 1 / 12)) * AMP * u * (1 + Math.max(0, S.base - S.y0.base) * (P().stress || 0));
       if (l.m0 !== m && R() < pm){ l.status = 'arrears'; l.since = m; l.carded = false; ev(`${l.name} fell behind on their ${KNAME[l.kind]}.`, 'bad'); }

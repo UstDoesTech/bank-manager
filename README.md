@@ -45,7 +45,7 @@ password.
 ## Tests
 
 ```
-npm test                  # engine: 920 checks, no database needed (golden games, replay, ledger)
+npm test                  # engine: 929 checks, no database needed (golden games, replay, ledger)
 docker compose up -d db   # the next two need Postgres
 npm run test:server       # API, accounts, ledger, replay, rollback, privacy (throwaway database per run)
 npm run test:browser      # the real page in Edge/Chrome against the real server, including going offline
@@ -280,8 +280,7 @@ business account. Onboarding, a switch, a student or a new business opens one; s
 customer already had in the pool into an account in their name; closing everything closes their accounts and takes their real
 balances. Each month a current account sees salary or takings in and spending out, savers have interest credited to the account
 (the pool's blended rate now covers only what is left in the pool), and a fixed saver becomes easy access after two years. This
-costs the bank a little, because savers in their own accounts earn the full savings rate: over 24 seeds, careful play earned 148 a
-year against 156 without accounts. Account activity is hashed, so a game with accounts takes the same random numbers as one without.
+costs the bank a little, because savers in their own accounts earn the full savings rate. Account activity is hashed, so a game with accounts takes the same random numbers as one without.
 
 Every deposit posting now names where it belongs: a customer's account, the retail pool (`deposit` 0) or a large depositor (`large`).
 `v_deposit_statement` is each account's statement from the customer's side; `v_deposit_ledger` is each account's balance from its
@@ -291,9 +290,24 @@ postings against its recorded balance; `v_deposit_reconciliation` checks the dep
 checks customers' accounts and that nothing reaches deposits without an account. Journal entries and lines are now written in one
 statement each per command.
 
-Still not modelled, because the engine does not have them: daily interest, reversals, and value dates in a game played a month at a
-time (where only month-end postings are dated). The new views read raw tables, so they are for the owner, not the read-only analysis
-role.
+**Statements that read like a bank's** (migration 020; the interest and correction rules only in games with accounts):
+- *Value dates in every game.* A posting's day is how far through the month's customers the counter has got (or the week's, in a
+  weekly game), so days run forward through the month; month-end postings take the last day. This is only in what reaches the database.
+- *Interest on each day's balance.* Savers earn interest at actual/365 on every day's balance, credited at month end ("Interest: 31
+  days at 2.50%"), and paid to the day when an account closes. A new loan's first month of interest runs from the day it was drawn.
+- *Corrections, never edits.* A payment paid in at the counter is sometimes returned unpaid by the bank it came from (about one in 25):
+  a reversal at month end names the entry it corrects (`journal_entry.corrects`). Refunds of card fraud, scams and upheld complaints
+  go into the customer's account, and a refund of a payment made by someone using a customer's identity names that payment. A payment
+  made in branch now leaves the customer's account.
+- *Narratives.* Every posting to a customer's account says what it was (`journal_entry.narrative`): paid in at the counter, salary in
+  and bills out, interest, returned unpaid, refund, account closed.
+- `v_deposit_statement` and `v_loan_statement` carry the value date and narrative; `v_correction` lists each correction beside what
+  it corrects. The replay checks each entry's value day, narrative and correction.
+
+Realism costs a little: over 24 seeds, careful play earns 140 a year with accounts, against 156 without, mostly because a loan now
+earns only part of a month's interest in its first month.
+
+The new views read raw tables, so they are for the owner, not the read-only analysis role.
 
 ## Display, sound and the Settings preview
 

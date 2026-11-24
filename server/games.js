@@ -391,9 +391,10 @@ async function persist(client, game, seq, cmd, before, out) {
   // journal: entries, then lines, so the deferred balance check sees whole entries at commit; one statement each, however many
   if (entries.length) {
     await client.query(
-      `INSERT INTO bank.journal_entry (game_id, seq, command_seq, year, month, memo, value_day)
-       SELECT $1, r.seq, $2, r.year, r.month, r.memo, r.day FROM json_to_recordset($3::json) AS r(seq int, year int, month int, memo text, day smallint)`,
-      [gid, seq, JSON.stringify(entries.map((e) => ({ seq: e.seq, year: e.year, month: e.month, memo: e.memo, day: e.day == null ? null : e.day })))]);
+      `INSERT INTO bank.journal_entry (game_id, seq, command_seq, year, month, memo, value_day, narrative, corrects)
+       SELECT $1, r.seq, $2, r.year, r.month, r.memo, r.day, r.note, r.corrects
+         FROM json_to_recordset($3::json) AS r(seq int, year int, month int, memo text, day smallint, note text, corrects int)`,
+      [gid, seq, JSON.stringify(entries.map((e) => ({ seq: e.seq, year: e.year, month: e.month, memo: e.memo, day: e.day == null ? null : e.day, note: e.note || null, corrects: e.corrects || null })))]);
     const rows = [];
     for (const e of entries) toPence(e.lines).forEach(([account, amt, ref], i) => { const [sl, sid] = splitRef(ref); rows.push({ e: e.seq, n: i + 1, a: account, p: amt, s: sl, i: sid }); });
     await client.query(
