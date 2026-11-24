@@ -345,7 +345,7 @@ test('core: options, products, versioned settings, a ledger for each loan and on
   const opt = (await q('SELECT weekly, characters, households, meetings, rivals, chief_executive FROM bank.game WHERE id = $1'))[0];
   assert.deepStrictEqual(opt, { weekly: true, characters: true, households: true, meetings: false, rivals: false, chief_executive: true });
   // the products, shared
-  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.product_catalogue')).rows[0].n, 8);
+  assert.strictEqual((await pool.query('SELECT count(*)::int n FROM bank.product_catalogue')).rows[0].n, 11);
   // every setting in force, from the first command
   const first = await q('SELECT area, setting, value, value_text, owner FROM bank.v_setting_current WHERE game_id = $1');
   const { loadEngine: le } = require('../tools/harness'); const E = le(fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), 'utf8')); E.S = g.json.state;
@@ -395,6 +395,33 @@ test('core: options, products, versioned settings, a ledger for each loan and on
   assert.deepStrictEqual((await verifyGame(pool, host, id)).problems, [], 'an older game still replays');
   await asAdmin("UPDATE bank.journal_line SET amount_pence = amount_pence + 500 WHERE game_id = $1 AND account = 'loans' AND entry_seq = (SELECT max(entry_seq) FROM bank.journal_line WHERE game_id = $1 AND account = 'loans')");
   assert.strictEqual((await verifyGame(pool, host, id)).ok, false, 'and an edited line in it is still caught');
+});
+
+test('deposit accounts: customers have their own, each reconciles to its postings, deposits reconcile to the ledger, and entries carry value dates', async () => {
+  const cookie = await newPlayer('desmond.accounts@example.com');
+  const g = await call('POST', '/api/games', { households: true, weeks: true, characters: true, accounts: true }, cookie);
+  assert.strictEqual(g.status, 201); assert(g.json.state.acc, 'the game has accounts');
+  const id = g.json.id, q = async (sql) => (await pool.query(sql, [id])).rows;
+  assert.strictEqual((await q('SELECT accounts FROM bank.game WHERE id = $1'))[0].accounts, true);
+  const played = await play(cookie, id, g.json.state, 1, 4), st = played.state;
+  const accts = await q("SELECT account_id, kind, customer_id, status, balance_pence FROM bank.account WHERE game_id = $1 AND account_id LIKE 'acct-%'");
+  assert.strictEqual(accts.length, st.acc.list.length, 'one row for each customer account');
+  assert(accts.length > 0 && accts.every((a) => a.customer_id != null), 'each account belongs to a customer');
+  const led = await q('SELECT account_id, account_balance_pence, posted_balance_pence, postings FROM bank.v_deposit_ledger WHERE game_id = $1');
+  for (const a of led) assert(Math.abs(Number(a.account_balance_pence) - Number(a.posted_balance_pence)) <= a.postings + 1, `${a.account_id}: postings ${a.posted_balance_pence} against ${a.account_balance_pence}`);
+  const rec = (await q('SELECT * FROM bank.v_deposit_reconciliation WHERE game_id = $1'))[0];
+  assert.strictEqual(Number(rec.unattributed_pence), 0, 'every deposit posting names where it belongs');
+  assert.strictEqual(Number(rec.control_pence), Number(rec.pool_pence) + Number(rec.customer_accounts_pence) + Number(rec.large_deposits_pence));
+  const lines = (await q("SELECT count(*)::int n FROM bank.journal_line WHERE game_id = $1 AND account = 'deposits'"))[0].n;
+  const poolRow = (await q("SELECT balance_pence FROM bank.account WHERE game_id = $1 AND account_id = 'easy'"))[0];
+  assert(Math.abs(Number(poolRow.balance_pence) - Number(rec.pool_pence)) <= lines, 'the pool account matches its postings');
+  const kinds = (await q('SELECT DISTINCT description FROM bank.v_deposit_statement WHERE game_id = $1')).map((r) => r.description);
+  for (const k of ['paid in', 'salary and takings', 'spending and bills']) assert(kinds.includes(k), 'statement has ' + k + ': ' + kinds);
+  assert.strictEqual((await q('SELECT count(*)::int n FROM bank.v_journal_entry WHERE game_id = $1 AND value_date IS NULL'))[0].n, 0, 'a weekly game dates every entry');
+  assert((await q("SELECT count(*)::int n FROM bank.v_customer_holding WHERE game_id = $1 AND holding = 'deposit'"))[0].n > 0, 'customers hold deposits');
+  assert.deepStrictEqual((await verifyGame(pool, host, id)).problems, []);
+  await pool.query("UPDATE bank.account SET balance_pence = balance_pence + 100 WHERE game_id = $1 AND account_id = $2", [id, accts[0].account_id]);
+  assert.strictEqual((await verifyGame(pool, host, id)).ok, false, 'an edited account balance is caught');
 });
 
 test('literacy: five questions before the first game and one more after each year, scored on the server', async () => {

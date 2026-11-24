@@ -86,7 +86,7 @@ async function offerLiteracy(){
 }
 
 async function startGame(opts = {}){
-  if (!opts.tutorial && !opts.scenario && opts.households === undefined) opts = Object.assign({}, opts, { households: true, meetings: true, rivals: true, weeks: opts.weeks !== false });
+  if (!opts.tutorial && !opts.scenario && opts.households === undefined) opts = Object.assign({}, opts, { households: true, meetings: true, rivals: true, weeks: opts.weeks !== false, accounts: true });
   if (opts.weeks === false) delete opts.weeks;
   if (opts.characters === undefined) opts = Object.assign({}, opts, { characters: true });
   clearSave(); Remote.drop(); acknowledgeCookie();

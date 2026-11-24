@@ -155,7 +155,9 @@ function nameHTML(c){
 // A regular: their photo, manner, how long they have banked with you and the last few things that happened.
 function regularCard(r){
   const who = { name: r.name, age: S.year - r.born, hue: r.hue, look: r.look, sub: r.job || '' }, mn = mannerOf(who);
-  return '<div class="note reg-card" id="reg' + r.id + '"><div class="ph-sm">' + photoHTML(who) + '</div><div><div class="eyebrow">' + esc(r.job || 'Customer') + ', ' + who.age + (mn ? ' · ' + esc(mn.name.toLowerCase()) : '') + '</div><p><b>' + esc(r.name) + '</b> · first served ' + MONTHS[r.since[1]].slice(0, 3) + ' ' + r.since[0] + (r.gone ? ' · has left the bank' : '') + '</p>' +
+  const accts = S.acc ? S.acc.list.filter((a) => a.status === 'open' && (a.reg === r.id || a.holder === r.name)) : [];
+  const held = accts.length ? '<p class="dim">' + accts.map((a) => esc(ACC_PRODUCTS[a.product] || a.product) + ' ' + fmt(a.bal)).join(' · ') + '</p>' : '';
+  return '<div class="note reg-card" id="reg' + r.id + '"><div class="ph-sm">' + photoHTML(who) + '</div><div><div class="eyebrow">' + esc(r.job || 'Customer') + ', ' + who.age + (mn ? ' · ' + esc(mn.name.toLowerCase()) : '') + '</div><p><b>' + esc(r.name) + '</b> · first served ' + MONTHS[r.since[1]].slice(0, 3) + ' ' + r.since[0] + (r.gone ? ' · has left the bank' : '') + '</p>' + held +
     (r.notes.length ? '<ul>' + r.notes.slice().reverse().map(n => '<li>' + MONTHS[n.m].slice(0, 3) + ' ' + n.y + (n.w ? ', ' + esc(n.w) : '') + ': ' + esc(n.t) + '</li>').join('') + '</ul>' : '') + '</div></div>';
 }
 function householdCard(h){

@@ -45,7 +45,7 @@ password.
 ## Tests
 
 ```
-npm test                  # engine: 910 checks, no database needed (golden games, replay, ledger)
+npm test                  # engine: 920 checks, no database needed (golden games, replay, ledger)
 docker compose up -d db   # the next two need Postgres
 npm run test:server       # API, accounts, ledger, replay, rollback, privacy (throwaway database per run)
 npm run test:browser      # the real page in Edge/Chrome against the real server, including going offline
@@ -273,9 +273,27 @@ the engine's own state, the golden snapshots and every recorded game are unchang
 the options, and that nothing has reached the loan book without a loan since lines began to carry one. A game recorded before this
 migration still replays: its journal lines are compared by account, and its settings are written in full at its next command.
 
-Still not modelled, because the engine does not have them: deposit accounts for each customer (retail deposits are one pool),
-transactions with value dates, daily interest, and reversals. The new views read raw tables, so they are for the owner, not the
-read-only analysis role.
+**Customers' own deposit accounts** (the `accounts` option, with the cast; on for a new career from the page; migration 019).
+A customer who opens an account at the counter has one in their name (`S.acc` in the engine, `bank.account` rows `acct-<n>` with
+the customer, product, and when opened and closed): a current account, an easy-access saver, a cash ISA, a two-year fixed saver or a
+business account. Onboarding, a switch, a student or a new business opens one; savings advice and a bereavement move money the
+customer already had in the pool into an account in their name; closing everything closes their accounts and takes their real
+balances. Each month a current account sees salary or takings in and spending out, savers have interest credited to the account
+(the pool's blended rate now covers only what is left in the pool), and a fixed saver becomes easy access after two years. This
+costs the bank a little, because savers in their own accounts earn the full savings rate: over 24 seeds, careful play earned 148 a
+year against 156 without accounts. Account activity is hashed, so a game with accounts takes the same random numbers as one without.
+
+Every deposit posting now names where it belongs: a customer's account, the retail pool (`deposit` 0) or a large depositor (`large`).
+`v_deposit_statement` is each account's statement from the customer's side; `v_deposit_ledger` is each account's balance from its
+postings against its recorded balance; `v_deposit_reconciliation` checks the deposits against the general ledger;
+`v_customer_holding` now lists deposits beside loans. Journal entries carry a value day (`journal_entry.value_day`,
+`v_journal_entry.value_date`): in a weekly game a day in the week it happened, at month end the last day of the month. The replay
+checks customers' accounts and that nothing reaches deposits without an account. Journal entries and lines are now written in one
+statement each per command.
+
+Still not modelled, because the engine does not have them: daily interest, reversals, and value dates in a game played a month at a
+time (where only month-end postings are dated). The new views read raw tables, so they are for the owner, not the read-only analysis
+role.
 
 ## Display, sound and the Settings preview
 

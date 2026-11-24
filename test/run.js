@@ -819,4 +819,33 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   assert(entries.some(e => e.memo === 'pl.intLoans' && e.lines.every(l => /^loan:/.test(l[2] || ''))), 'interest names its loan'); n++;
   assert(entries.some(e => e.memo === 'pl.fees' && e.lines.some(l => /^loan:/.test(l[2] || ''))), 'fees on new loans name the loan'); n++;
   assert.strictEqual(typeof before, 'string'); }
+// 27. Customers' own deposit accounts (accounts option, with the cast): each account's postings add up to its balance; the pool,
+//     the customers' accounts and the large depositors add up to the deposits in the ledger; savers earn interest into the account;
+//     current accounts see money in and out each month; nothing moves the game's random numbers; entries carry a value day.
+{ const OPT = { households: true, meetings: true, rivals: true, weeks: true, characters: true, accounts: true };
+  const E = loadEngine(src), entries = []; E.setSink(e => entries.push(e));
+  const a = play(E, 6, 'careful', 2, OPT), S = a.S;
+  assert(S.acc && S.acc.list.length > 40, 'customers opened accounts: ' + (S.acc && S.acc.list.length)); n++;
+  const by = {}; let loose = 0;
+  for (const e of entries) for (const [acct, d, ref] of e.lines){ if (acct !== 'deposits') continue; if (ref) by[ref] = (by[ref] || 0) + d; else loose += d; }
+  assert.strictEqual(loose, 0, 'every deposit posting names where it belongs'); n++;
+  for (const x of S.acc.list) assert(Math.abs(-(by['deposit:' + x.id] || 0) - x.bal) < 1e-6, 'account ' + x.id + ' postings add up to its balance');
+  assert(S.acc.list.filter(x => x.status === 'closed').every(x => x.bal === 0), 'closed accounts are empty'); n++;
+  const large = Object.entries(by).filter(([k]) => k.startsWith('large:')).reduce((t, [, v]) => t - v, 0);
+  assert(Math.abs(-(by['deposit:0'] || 0) + large + S.acc.list.reduce((t, x) => t + x.bal, 0) - S.deposits) < 1e-6, 'pool, accounts and large depositors add up to the deposits'); n++;
+  const kinds = new Set(S.acc.list.map(x => x.product)); for (const k of ['current_account', 'easy_access', 'business_current']) assert(kinds.has(k), 'opened a ' + k); n++;
+  assert(entries.some(e => e.memo === 'pl.intDep' && e.lines.some(l => /^deposit:[1-9]/.test(l[2] || ''))), 'savers earn interest into their account');
+  assert(entries.some(e => e.memo === 'account.month'), 'current accounts see money in and out'); n++;
+  // value days: inside the month, in the week's range during the month, the last day at month end
+  for (const e of entries){ if (e.day == null) continue; const last = new Date(Date.UTC(e.year, Math.min(e.month, 11) + 1, 0)).getUTCDate(); assert(e.day >= 1 && e.day <= last, 'value day in the month'); }
+  assert(entries.filter(e => e.memo === 'account.month').every(e => e.day === new Date(Date.UTC(e.year, e.month + 1, 0)).getUTCDate()), 'month-end postings on the last day'); n++;
+  // the same game without accounts takes the same random numbers: the same people come to the counter in the same order
+  const names = (opts) => { const G = loadEngine(src); G.dispatch({ type: 'newGame', seed: 6, opts }); const out = [];
+    for (let m = 0; m < 3; m++){ for (let w = 0; w < 4; w++){ for (let c; (c = G.current());){ out.push(c.who.name); G.dispatch({ type: 'resolve', id: c.id, k: c.opts[c.opts.length - 1].k }); } if (w < 3) G.dispatch({ type: 'nextWeek' }); } G.dispatch({ type: 'closeMonth' }); }
+    return out.join('|'); };
+  assert.strictEqual(names(OPT), names(Object.assign({}, OPT, { accounts: false })), 'accounts never move the random numbers'); n++;
+  // replay, and no accounts without the cast or on the training day
+  const R = loadEngine(src); for (const cmd of a.cmds) R.dispatch(cmd); assert.strictEqual(hashState(R.S, []), hashState(S, [])); n++;
+  const N = loadEngine(src); N.dispatch({ type: 'newGame', seed: 2, opts: { accounts: true } }); assert(!N.S.acc, 'accounts need the cast');
+  const T = loadEngine(src); T.dispatch({ type: 'newGame', seed: 2, opts: { tutorial: true, characters: true, accounts: true } }); assert(!T.S.acc, 'no accounts on the training day'); n++; }
 console.log('ok', n, 'checks');

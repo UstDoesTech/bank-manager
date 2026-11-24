@@ -336,6 +336,10 @@ function castCards(cards){
         const r = cand[Math.floor(hx(c.id, S.seed + 7) * Math.min(6, cand.length))], old = c.who;
         c.who = Object.assign({}, old, { name: r.name, age: S.year - r.born, hue: r.hue, look: r.look, born: r.born, reg: r.id });
         if (c.kind === 'mortgage' && r.job) c.who.sub = r.job;
+        if (S.acc && c.kind === 'visit' && c.h && c.h.v === 'closing' && !c.h.imp){      // what they hold with you, not a guess
+          const tot = accsOf(r.name).reduce((t, a) => t + a.bal, 0), f = c.fields.find(x => x.l === 'Balances');
+          if (tot > 0 && f){ c.h.bal = tot; f.v = full(tot); }
+        }
         if (c.h && c.h.imp){ c.who.look = old.look; c.who.hue = old.hue; c.who.claim = 1; }    // someone else, using a regular's name
         if (c.h) c.h.name = r.name;
         c.note = c.note.split(old.name).join(r.name).replace(new RegExp('\\b' + first(old.name) + '\\b', 'g'), first(r.name));
@@ -444,8 +448,9 @@ function je(memo, lines, opts){
   }
   L.n++;
   if (LEDGER_SINK){
-    const sp = opts && opts.split, out = sp ? lines.flatMap(l => l[0] === sp.account ? sp.parts.map(([ref, amt]) => [sp.account, amt, ref]) : [l]) : lines;
-    LEDGER_SINK({ seq: L.n, year: S.year, month: S.month, memo, lines: out });
+    const sp = opts && opts.split, out = (sp ? lines.flatMap(l => l[0] === sp.account ? sp.parts.map(([ref, amt]) => [sp.account, amt, ref]) : [l]) : lines)
+      .map(l => l[0] === 'deposits' && !l[2] ? ['deposits', l[1], 'deposit:0'] : l);      // a deposit not in a customer's own account is in the retail pool
+    LEDGER_SINK({ seq: L.n, year: S.year, month: S.month, day: valueDay(L.n), memo, lines: out });
   }
 }
 // Posts the current position as one opening entry; equity.opening is the balancing figure.
@@ -471,6 +476,77 @@ function money(key, amt, label, ref){ post(key, amt, ref); chip((label ? label +
 function dT(d){ d = Math.round(d); if (!d) return; S.trust = clamp(S.trust + d, 0, 100); chip('Customers ' + (d > 0 ? '+' : '−') + Math.abs(d), d > 0 ? 'good' : 'bad'); }
 function dC(d){ d = Math.round(d); if (!d) return; S.comp = clamp(S.comp + d, 0, 100); chip('Regulator ' + (d > 0 ? '+' : '−') + Math.abs(d), d > 0 ? 'good' : 'bad'); }
 function depMove(x){ je('deposit.flow', [['cash', x], ['deposits', -x]]); chip('Deposits ' + fmt(x, true), x >= 0 ? 'good' : 'bad'); }
+/* ---- the value day of a posting: in a weekly game a day in the week it happened, at month end the month's last day, otherwise not known ---- */
+var CLOSING = false;
+function valueDay(n){
+  const m = Math.min(S.month, 11), last = new Date(Date.UTC(S.year, m + 1, 0)).getUTCDate();
+  if (CLOSING) return last;
+  return S.weeks ? Math.min(last, (S.wk || 0) * 7 + 1 + (n * 3) % 5) : null;
+}
+/* ---- customers' own deposit accounts ----
+   Only games started with the accounts option (and the cast) have them (S.acc). A customer who opens an account at the counter
+   gets one in their name; what they pay in, take out and earn is posted to it, and the rest of the retail deposits stay in one
+   pool. Current accounts see salary in and spending out each month; savers have interest credited each month. Without the
+   option every one of these calls is exactly the old pooled movement. */
+const ACC_PRODUCTS = { current_account: 'Current account', easy_access: 'Easy-access saver', cash_isa: 'Cash ISA', fixed_saver: 'Two-year fixed saver', business_current: 'Business account' };
+const SAVERS = { easy_access: 1, cash_isa: 1, fixed_saver: 1 };
+const accRef = a => 'deposit:' + a.id;
+function accsOf(name){ return S.acc ? S.acc.list.filter(a => a.status === 'open' && a.holder === name) : []; }
+function accOpen(c, product, pay){
+  const A = S.acc, a = { id: A.next++, holder: c.who.name, reg: (c.who.reg && !c.who.claim) ? c.who.reg : null, product, opened: [S.year, Math.min(S.month, 11)], bal: 0, status: 'open',
+    pay: pay != null ? pay : product === 'current_account' ? Math.round((1.3 + 2.9 * hx(A.next, S.seed + 5)) * 100) / 100 : product === 'business_current' ? Math.round((3 + 9 * hx(A.next, S.seed + 6)) * 100) / 100 : 0 };
+  if (product === 'fixed_saver'){ a.rate = Math.round((S.savRate + 0.6) * 100) / 100; a.matures = S.year * 12 + Math.min(S.month, 11) + 24; }
+  A.list.push(a); return a;
+}
+// Money in or out of a customer's own accounts. Out comes from their accounts first, then from the pool.
+function custDep(c, x, product){
+  if (!S.acc || !c || !c.who || c.who.claim){ depMove(x); return; }
+  if (x >= 0){
+    const a = accsOf(c.who.name).find(q => q.product === product) || accOpen(c, product);
+    je('deposit.flow', [['cash', x], ['deposits', -x, accRef(a)]]); a.bal += x;
+    chip('Deposits ' + fmt(x, true), 'good'); return;
+  }
+  let need = -x; const lines = [['cash', x]];
+  for (const a of accsOf(c.who.name).sort((p, q) => q.bal - p.bal)){ if (need <= 1e-9) break; const t = Math.min(a.bal, need); if (t <= 0) continue; lines.push(['deposits', t, accRef(a)]); a.bal -= t; need -= t; }
+  if (need > 1e-9) lines.push(['deposits', need]);
+  je('deposit.flow', lines); chip('Deposits ' + fmt(x, true), 'bad');
+}
+// An account opened with nothing in it yet (a student, a new business that has not traded).
+function custOpen(c, product){ if (S.acc && c && c.who && !c.who.claim && !accsOf(c.who.name).some(a => a.product === product)) accOpen(c, product); }
+// Money the customer already had with the bank, in the pool, moved into an account in their own name.
+function custCarve(c, amt, product){
+  if (!S.acc || !c || !c.who || c.who.claim || !(amt > 0)) return;
+  const a = accsOf(c.who.name).find(q => q.product === product) || accOpen(c, product);
+  je('deposit.transfer', [['deposits', amt], ['deposits', -amt, accRef(a)]]); a.bal += amt;
+}
+// A customer leaves: every account they hold is closed and the money goes. With no accounts of their own, `fallback` leaves the pool.
+function custLeave(c, fallback){
+  const mine = S.acc && c && c.who ? accsOf(c.who.name) : [];
+  if (!mine.length){ depMove(-fallback); return; }
+  const tot = mine.reduce((t, a) => t + a.bal, 0), lines = [['cash', -tot]];
+  for (const a of mine){ if (a.bal > 0) lines.push(['deposits', a.bal, accRef(a)]); a.bal = 0; a.status = 'closed'; a.closed = [S.year, Math.min(S.month, 11)]; }
+  if (tot > 0) je('deposit.flow', lines);
+  chip('Deposits ' + fmt(-tot, true), 'bad');
+}
+// Each month: salary in and spending out on current accounts, interest credited on savers, fixed savers maturing into easy access.
+function accMonth(){
+  if (!S.acc) return;
+  const at = S.year * 12 + Math.min(S.month, 11);
+  for (const a of S.acc.list){
+    if (a.status !== 'open') continue;
+    if (a.pay > 0){
+      const u1 = hx(a.id * 7919 + at, S.seed), u2 = hx(a.id * 104729 + at, S.seed + 1);      // hashed, so accounts never move the game's random numbers
+      const inn = a.pay * (0.9 + 0.2 * u1), out = Math.min(a.bal + inn, inn * (0.9 + 0.16 * u2));
+      je('account.month', [['cash', inn - out], ['deposits', -inn, accRef(a)], ['deposits', out, accRef(a)]]); a.bal += inn - out;
+    }
+    if (SAVERS[a.product] && a.bal > 0){
+      const r = a.product === 'fixed_saver' ? a.rate : S.savRate, i = a.bal * r / 1200;
+      if (i > 0){ je('pl.intDep', [['pl.intDep', i, accRef(a)], ['deposits', -i, accRef(a)]]); a.bal += i; }
+    }
+    if (a.product === 'fixed_saver' && a.matures <= at){ a.product = 'easy_access'; delete a.rate; delete a.matures; }
+  }
+}
+const accSum = (saversOnly) => S.acc ? S.acc.list.reduce((t, a) => t + (a.status === 'open' && (!saversOnly || SAVERS[a.product]) ? a.bal : 0), 0) : 0;
 const fid = () => (S.fid = (S.fid || 0) + 1);
 function later(n, data){ S.pending.push(Object.assign({ due: S.month + n }, data)); }
 function person(a, b){ if (S.cast) return castPerson(a, b); return { name: pick(FIRST) + ' ' + pick(LAST), age: ri(a, b), hue: Math.round(R() * 1000) / 1000 }; }
@@ -712,7 +788,7 @@ gen.onboard = (o = {}) => {
 res.onboard = (c, k) => {
   const h = c.h, nm = first(h.name);
   const mule = () => later(ri(1, 3), { text:`${h.name}'s account was used as a money mule. Scam victims' money passed through it; you paid your share of their refunds.`, cash: -rf(6, 24) * 0.5, key:'redress', comp:-6, trust:-1, tone:'bad', fine:true, news:[3, 'Scam cash laundered through local bank accounts', `Police say money stolen from scam victims passed through an account opened at Counting House by ${h.name}.`] });
-  const open = (d, text) => { depMove(d); S.stats.customers++; say(text); if (h.bad) mule(); else dT(1); };
+  const open = (d, text) => { custDep(c, d, fv(c, 'Product') === 'Easy-access saver' ? 'easy_access' : 'current_account'); S.stats.customers++; say(text); if (h.bad) mule(); else dT(1); };
   if (k === 'open') open(h.dep, `Account open. ${nm} leaves with a card on order.`);
   if (k === 'docs') {
     if (!h.bad){ if (chance(Math.min(0.97, 0.75 * fx(c, 'docs')))) open(h.dep * 0.9, `${nm} came back the next day with a payslip and a council tax bill. Account open.`); else { say(`${nm} didn't come back. Probably opened an account elsewhere.`); dT(-1); } }
@@ -1111,7 +1187,7 @@ const VISITS = {
         opts: [ { k: 'release', l: 'Release it now', sub: 'Small estate', s: 'go', st: 'RELEASED' }, { k: 'probate', l: 'Ask for probate first', s: 'alt', st: 'PROBATE' }, { k: 'freeze', l: 'Freeze; pass to the bereavement team', s: 'neutral', st: 'FROZEN' } ] }; },
     res(c, k, h, nm){
       const risky = h.big || h.dispute;
-      if (k === 'release'){ if (!risky){ say(`${nm} thanks the cashier for making one thing easy this month.`, 'good'); dT(3); } else { say(`The money is moved today. ${nm} cries with relief.`); later(ri(1, 3), { text: `A relative with a claim on ${c.who.name}'s late ${h.who}'s estate disputes the payment. You repay the estate.`, cash: -Math.min(h.bal * 0.5, 30), key: 'redress', comp: -3, tone: 'bad' }); } }
+      if (k === 'release'){ custCarve(c, h.bal, 'current_account'); if (!risky){ say(`${nm} thanks the cashier for making one thing easy this month.`, 'good'); dT(3); } else { say(`The money is moved today. ${nm} cries with relief.`); later(ri(1, 3), { text: `A relative with a claim on ${c.who.name}'s late ${h.who}'s estate disputes the payment. You repay the estate.`, cash: -Math.min(h.bal * 0.5, 30), key: 'redress', comp: -3, tone: 'bad' }); } }
       if (k === 'probate'){ if (risky){ say(`${nm} understands. The solicitor sends the grant ${pick(['in eight weeks', 'in three months'])}.`); dT(1); dC(1); } else { say(`${nm} is told to come back with a grant of probate for ${full(h.bal)}. They leave in tears.`, 'bad'); dT(-3); later(1, { text: `${c.who.name} complained that you asked for probate on a small estate. You apologise and pay for the delay.`, cash: -0.15, key: 'redress', tone: 'bad' }); } }
       if (k === 'freeze'){ say(`The account is frozen while the bereavement team works through it. ${nm} has to call a helpline.`); dT(-1); if (risky) dC(1); }
     } },
@@ -1133,7 +1209,7 @@ const VISITS = {
     res(c, k, h, nm){
       if (k === 'proceed'){ if (h.ctrl){ say('The joint account is opened.'); later(ri(1, 3), { text: `${c.who.name} was being financially abused. The partner emptied the joint account. The regulator asks why nobody spoke to ${first(c.who.name)} alone.`, comp: -5, trust: -2, tone: 'bad' }); } else { say(`${nm} and their partner leave with a new joint account.`, 'good'); dT(2); } }
       if (k === 'alone'){ if (h.ctrl){ say(`In a side room ${nm} said they were frightened. The savings stay in their name, and they leave with a helpline number.`, 'good'); dT(3); dC(3); } else { say('A slightly awkward ten minutes, then the account is opened.'); dT(-1); } }
-      if (k === 'refuse'){ if (h.ctrl){ say(`They leave together. ${nm} looks back at the counter.`); } else { say(`The couple take their savings to another bank.`, 'bad'); dT(-3); depMove(-h.amt * 0.5); } }
+      if (k === 'refuse'){ if (h.ctrl){ say(`They leave together. ${nm} looks back at the counter.`); } else { say(`The couple take their savings to another bank.`, 'bad'); dT(-3); custDep(c, -h.amt * 0.5); } }
     } },
   switch: { w: 1.2, label: 'Switching to you', age: [21, 66], sub: 'Switching their account', fresh: true,
     gen(p){ const hop = chance(0.4), sal = Math.round(rf(1.6, 4.6) * 10) / 10, from = pick(['a high street rival', 'an app-only bank', 'their building society']);
@@ -1141,9 +1217,9 @@ const VISITS = {
         fields: [ F('Switches in 2 years', sig(hop, ['None', 'One, when they moved house'], ['Four, each for a bonus', 'Three'])), F('Salary', full(sal) + '/month'), F('Other products', sig(hop, ['Wants to bring savings over too', 'Has had a mortgage for years'], ['None', 'Moves everything every year'])) ],
         opts: [ { k: 'bonus', l: 'Pay £175 to switch', s: 'go', st: 'SWITCHED' }, { k: 'welcome', l: 'Welcome them, no bonus', s: 'neutral', st: 'WELCOMED' }, { k: 'saver', l: 'Offer a better saver rate instead', sub: 'About £250 a year', s: 'alt', st: 'OFFERED' } ] }; },
     res(c, k, h, nm){
-      if (k === 'bonus'){ money('costs', -0.175, 'Switch bonus'); if (h.hop){ say(`${nm} takes the £175. Their salary arrives once.`); depMove(0.4); later(ri(3, 5), { text: `${c.who.name} switched away again for another bank's bonus.`, tone: 'bad' }); } else { say(`${nm} moves everything over, savings too.`, 'good'); depMove(rf(6, 25)); dT(1); } }
-      if (k === 'welcome'){ if (!h.hop && chance(0.6)){ say(`${nm} switches anyway.`, 'good'); depMove(rf(5, 18)); } else say(`${nm} takes the rival's bonus instead.`); }
-      if (k === 'saver'){ money('intDep', -0.25, 'Better rate'); if (h.hop){ say(`${nm} opens the saver with ${full(0.5)} and keeps looking.`); depMove(0.5); } else { say(`${nm} brings their savings but leaves their salary where it was.`); depMove(rf(8, 22)); } }
+      if (k === 'bonus'){ money('costs', -0.175, 'Switch bonus'); if (h.hop){ say(`${nm} takes the £175. Their salary arrives once.`); custDep(c, 0.4, 'current_account'); later(ri(3, 5), { text: `${c.who.name} switched away again for another bank's bonus.`, tone: 'bad' }); } else { say(`${nm} moves everything over, savings too.`, 'good'); custDep(c, rf(6, 25), 'current_account'); dT(1); } }
+      if (k === 'welcome'){ if (!h.hop && chance(0.6)){ say(`${nm} switches anyway.`, 'good'); custDep(c, rf(5, 18), 'current_account'); } else say(`${nm} takes the rival's bonus instead.`); }
+      if (k === 'saver'){ money('intDep', -0.25, 'Better rate'); if (h.hop){ say(`${nm} opens the saver with ${full(0.5)} and keeps looking.`); custDep(c, 0.5, 'easy_access'); } else { say(`${nm} brings their savings but leaves their salary where it was.`); custDep(c, rf(8, 22), 'easy_access'); } }
     } },
   gamble: { w: 0.8, label: 'Gambling block', age: [19, 70], sub: 'Wants to talk privately',
     gen(p){ const vul = chance(0.5), od = Math.round(rf(0.4, 2.5) * 10) / 10, spend = Math.round(rf(0.3, 2.4) * 10) / 10;
@@ -1161,9 +1237,9 @@ const VISITS = {
         fields: [ F('Savings', full(amt)), F('Plans', sig(need, ['No plans for it', 'Retiring in ten years'], ['A house deposit next spring', 'Might need it for a car'])), F('Emergency fund', sig(need, ['Six months of costs elsewhere', 'A separate rainy-day pot'], ['This is all their savings', 'No other savings']), null, true), F('Inflation', inflation().toFixed(1) + '%', 'Inflation') ],
         opts: [ { k: 'fix', l: 'A two-year fixed bond', sub: 'Higher rate, locked in', s: 'go', st: 'FIXED' }, { k: 'isa', l: 'An easy-access cash ISA', sub: 'Tax-free, can take it out', s: 'alt', st: 'ISA' }, { k: 'keep', l: 'Leave it where it is', s: 'neutral', st: 'NO CHANGE' } ] }; },
     res(c, k, h, nm){
-      if (k === 'fix'){ if (h.need){ say(`${nm} locks it away for two years.`); later(ri(3, 6), { text: `${c.who.name} needed the money early, paid a penalty and says you mis-advised them.`, cash: -0.3, key: 'redress', comp: -3, trust: -2, tone: 'bad' }); } else { say(`${nm} fixes for two years. Money you can count on is cheaper funding.`, 'good'); money('fees', 0.06, 'Stable funding'); dT(2); } }
-      if (k === 'isa'){ say(`${nm} moves it into a cash ISA they can still get at.`); dT(1); }
-      if (k === 'keep'){ say(`${nm} leaves it earning less than prices are rising.`); if (!h.need) dT(-1); }
+      if (k === 'fix'){ if (h.need){ say(`${nm} locks it away for two years.`); custCarve(c, h.amt, 'fixed_saver'); later(ri(3, 6), { text: `${c.who.name} needed the money early, paid a penalty and says you mis-advised them.`, cash: -0.3, key: 'redress', comp: -3, trust: -2, tone: 'bad' }); } else { say(`${nm} fixes for two years. Money you can count on is cheaper funding.`, 'good'); money('fees', 0.06, 'Stable funding'); custCarve(c, h.amt, 'fixed_saver'); dT(2); } }
+      if (k === 'isa'){ say(`${nm} moves it into a cash ISA they can still get at.`); custCarve(c, h.amt, 'cash_isa'); dT(1); }
+      if (k === 'keep'){ say(`${nm} leaves it earning less than prices are rising.`); custCarve(c, h.amt, 'easy_access'); if (!h.need) dT(-1); }
     } },
   student: { w: 0.9, label: 'Student account', age: [18, 19], sub: 'Starting university', fresh: true,
     gen(p){ const str = chance(0.4), ml = Math.round(rf(4.5, 10.5) * 10) / 10;
@@ -1171,9 +1247,9 @@ const VISITS = {
         fields: [ F('Maintenance loan', full(ml) + '/yr'), F('Work', sig(str, ['Weekend job at a café', 'Saved £1,400 from a summer job'], ['None', 'Has not looked yet'])), F('Budget', sig(str, ['A spreadsheet for rent and food', 'Parents help with rent'], ['"I\'ll work it out"', 'Already owes on buy now pay later']), null, true) ],
         opts: [ { k: 'full', l: 'Account with £2,000 overdraft', s: 'go', st: 'OPENED' }, { k: 'half', l: '£1,000 now, review at Christmas', s: 'alt', st: 'OPENED' }, { k: 'none', l: 'Account, no overdraft', s: 'neutral', st: 'OPENED' } ] }; },
     res(c, k, h, nm){
-      if (k === 'full'){ S.stats.customers++; if (h.str){ say(`${nm} spends it by November.`); later(ri(4, 8), { text: `${c.who.name} hit the overdraft limit and stopped paying in. You write it off.`, cash: -rf(0.9, 1.8), key: 'losses', tone: 'bad' }); } else { say(`${nm} leaves happy and keeps the account after graduating.`, 'good'); dT(1); depMove(0.6); } }
-      if (k === 'half'){ S.stats.customers++; say(`${nm} gets £1,000 now and a review at Christmas.`); if (h.str) later(ri(4, 8), { text: `${c.who.name} used the overdraft and is paying it back slowly.`, cash: -0.3, key: 'losses', tone: 'bad', p: 0.5 }); }
-      if (k === 'none'){ S.stats.customers++; say(`${nm} opens a basic account, then a friend tells them where the free overdraft is.`); dT(-2); }
+      if (k === 'full'){ S.stats.customers++; if (h.str){ say(`${nm} spends it by November.`); later(ri(4, 8), { text: `${c.who.name} hit the overdraft limit and stopped paying in. You write it off.`, cash: -rf(0.9, 1.8), key: 'losses', tone: 'bad' }); } else { say(`${nm} leaves happy and keeps the account after graduating.`, 'good'); dT(1); custDep(c, 0.6, 'current_account'); } }
+      if (k === 'half'){ S.stats.customers++; custOpen(c, 'current_account'); say(`${nm} gets £1,000 now and a review at Christmas.`); if (h.str) later(ri(4, 8), { text: `${c.who.name} used the overdraft and is paying it back slowly.`, cash: -0.3, key: 'losses', tone: 'bad', p: 0.5 }); }
+      if (k === 'none'){ S.stats.customers++; custOpen(c, 'current_account'); say(`${nm} opens a basic account, then a friend tells them where the free overdraft is.`); dT(-2); }
     } },
   startup: { w: 0.9, label: 'New business', age: [24, 58], sub: 'Starting a business',
     gen(p){ const ok = chance(0.55), what = pick(['dog grooming from home', 'a mobile coffee van', 'bookkeeping for local firms', 'a nail bar', 'a bike repair stall', 'wedding cakes', 'a cleaning company', 'a market stall selling plants']);
@@ -1181,8 +1257,8 @@ const VISITS = {
         fields: [ F('Plan', sig(!ok, ['Two months of bookings already', 'Three local firms signed up'], ['No customers yet', 'Plan written last week'])), F('To fall back on', sig(!ok, ['Six months of costs saved', 'A partner\'s salary covers the bills'], ['None', 'A credit card for emergencies'])), F('Experience', sig(!ok, ['Ten years in the trade', 'Ran a stall for two summers'], ['Learnt it from videos', 'New to it']), null, true) ],
         opts: [ { k: 'od', l: 'Account and £5,000 overdraft', s: 'go', st: 'OPENED' }, { k: 'acct', l: 'Account only, review in six months', s: 'alt', st: 'OPENED' }, { k: 'no', l: 'Decline', s: 'no', st: 'DECLINED' } ] }; },
     res(c, k, h, nm){
-      if (k === 'od'){ money('fees', 0.1, 'Fee'); if (h.ok){ say(`${nm} shakes on it.`, 'good'); later(ri(5, 8), { text: `${c.who.name}'s ${h.what.replace(/^a /, '')} business is doing well and moved its savings to you.`, tone: 'good', trust: 1 }); depMove(rf(2, 8)); } else { say(`${nm} is off to buy equipment.`); later(ri(4, 8), { text: `${c.who.name}'s business closed. The overdraft is written off.`, cash: -rf(3, 5), key: 'losses', tone: 'bad' }); } }
-      if (k === 'acct'){ if (h.ok && !chance(0.7)){ say(`${nm} goes to a challenger bank that offered an overdraft.`); dT(-1); } else { say(`${nm} opens the account and will come back in six months.`); dT(1); } }
+      if (k === 'od'){ money('fees', 0.1, 'Fee'); if (h.ok){ say(`${nm} shakes on it.`, 'good'); later(ri(5, 8), { text: `${c.who.name}'s ${h.what.replace(/^a /, '')} business is doing well and moved its savings to you.`, tone: 'good', trust: 1 }); custDep(c, rf(2, 8), 'business_current'); } else { say(`${nm} is off to buy equipment.`); later(ri(4, 8), { text: `${c.who.name}'s business closed. The overdraft is written off.`, cash: -rf(3, 5), key: 'losses', tone: 'bad' }); } }
+      if (k === 'acct'){ if (h.ok && !chance(0.7)){ say(`${nm} goes to a challenger bank that offered an overdraft.`); dT(-1); } else { say(`${nm} opens the account and will come back in six months.`); custOpen(c, 'business_current'); dT(1); } }
       if (k === 'no'){ say(`${nm} leaves.`); if (h.ok){ dT(-2); S.stats.wrongNo++; } }
     } },
   closing: { w: 0.9, label: 'Closing everything', age: [25, 88], sub: 'Unhappy customer',
@@ -1191,9 +1267,9 @@ const VISITS = {
         fields: [ F('With you for', yrs + ' years'), F('Balances', full(bal)), F('What happened', sig(!fix, ['Charged while abroad; nobody called back', 'Card blocked twice on holiday'], ['Has already opened an account elsewhere', 'Moving everything to a partner\'s bank']), null, true) ],
         opts: [ { k: 'refund', l: 'Refund the charge and apologise', sub: full(fee), s: 'go', st: 'REFUNDED' }, { k: 'rate', l: 'Offer a better saver rate to stay', sub: 'Costs about £100', s: 'alt', st: 'OFFERED' }, { k: 'close', l: 'Close the accounts smoothly', s: 'neutral', st: 'CLOSED' } ] }; },
     res(c, k, h, nm){
-      if (k === 'refund'){ money('redress', -h.fee, 'Refund'); if (h.fix){ say(`${nm} says that was all they wanted. They stay.`, 'good'); dT(3); } else { say(`${nm} takes the refund and closes the accounts anyway.`); depMove(-h.bal); r0(c).gone = 1; } }
-      if (k === 'rate'){ money('costs', -0.1, 'Retention rate'); if (h.fix){ say(`${nm} stays for the better rate.`); depMove(rf(1, 5)); dT(1); } else { say(`${nm} closes the accounts regardless.`); depMove(-h.bal); r0(c).gone = 1; } }
-      if (k === 'close'){ say(h.fix ? `Accounts closed. ${nm} says nobody even asked why.` : `Accounts closed and the balance sent on the same day. ${nm} leaves on good terms.`, h.fix ? 'bad' : ''); depMove(-h.bal); dT(h.fix ? -2 : 1); r0(c).gone = 1; }
+      if (k === 'refund'){ money('redress', -h.fee, 'Refund'); if (h.fix){ say(`${nm} says that was all they wanted. They stay.`, 'good'); dT(3); } else { say(`${nm} takes the refund and closes the accounts anyway.`); custLeave(c, h.bal); r0(c).gone = 1; } }
+      if (k === 'rate'){ money('costs', -0.1, 'Retention rate'); if (h.fix){ say(`${nm} stays for the better rate.`); custDep(c, rf(1, 5), 'easy_access'); dT(1); } else { say(`${nm} closes the accounts regardless.`); custLeave(c, h.bal); r0(c).gone = 1; } }
+      if (k === 'close'){ say(h.fix ? `Accounts closed. ${nm} says nobody even asked why.` : `Accounts closed and the balance sent on the same day. ${nm} leaves on good terms.`, h.fix ? 'bad' : ''); custLeave(c, h.bal); dT(h.fix ? -2 : 1); r0(c).gone = 1; }
     } },
   takeover: { w: 1, label: 'Locked out', age: [22, 85], sub: 'Locked out of online banking',
     gen(p){ const imp = chance(0.4), amt = Math.round(rf(1.5, 12) * 10) / 10;
@@ -1477,6 +1553,7 @@ function newGame(seed, opts = {}){
   if (DIFFICULTY[opts.difficulty] && opts.difficulty !== 'standard' && !opts.tutorial && !opts.scenario) S.diff = opts.difficulty;
   S.path = S.diff ? wpick(['soft', 'sticky', 'downturn'].map(k => [k, dif().path[k]])) : pick(['soft', 'sticky', 'downturn']);
   if (opts.characters) S.cast = { recent: [], regs: [], rid: 0 };
+  if (opts.accounts && opts.characters && !opts.tutorial && !opts.scenario) S.acc = { next: 1, list: [] };
   if (opts.weeks && !opts.tutorial && !opts.scenario){ S.weeks = true; S.wk = 0; S.wkHold = []; }
   if (opts.households && !opts.tutorial && !opts.scenario) S.households = makeCast();
   if (opts.meetings && !opts.tutorial && !opts.scenario) S.meet = true;
@@ -1758,11 +1835,11 @@ function fundingByPolicy(){
   // large depositors: offers arrive, the cap decides whether to take them, and they can all leave at once
   for (const d of [...S.large]){
     const p = 0.015 + (S.trust < 45 ? 0.05 : 0) + (frozen ? 0.25 : 0) + (capRatio() < MIN_CAP ? 0.15 : 0);
-    if (R() < p){ je('deposit.flow', [['cash', -d.amt], ['deposits', d.amt]]); S.large = S.large.filter(x => x !== d); notes.push([`${d.name} has withdrawn ${full(d.amt)} in one go.`, 'bad']); }
+    if (R() < p){ je('deposit.flow', [['cash', -d.amt], ['deposits', d.amt, 'large:' + d.id]]); S.large = S.large.filter(x => x !== d); notes.push([`${d.name} has withdrawn ${full(d.amt)} in one go.`, 'bad']); }
   }
   if (own && fp.largeCap > 0 && R() < 0.4){
     const amt = Math.max(100, Math.round(S.deposits * rf(0.03, 0.07) / 50) * 50), name = pick(FOUNDERS);
-    if (largeSum() + amt <= fp.largeCap * S.deposits){ je('deposit.flow', [['cash', amt], ['deposits', -amt]]); S.large.push({ id: S.nextId++, name, amt, rate: Math.max(0.1, Math.round((S.base - 0.4) * 100) / 100) }); notes.push([`${name} has placed ${full(amt)} with us at ${Math.max(0.1, S.base - 0.4).toFixed(2)}%.`, '']); }
+    if (largeSum() + amt <= fp.largeCap * S.deposits){ je('deposit.flow', [['cash', amt], ['deposits', -amt, 'large:' + S.nextId]]); S.large.push({ id: S.nextId++, name, amt, rate: Math.max(0.1, Math.round((S.base - 0.4) * 100) / 100) }); notes.push([`${name} has placed ${full(amt)} with us at ${Math.max(0.1, S.base - 0.4).toFixed(2)}%.`, '']); }
   }
 
   // selling a pool of mortgages when liquidity is short
@@ -1825,11 +1902,14 @@ function resolveCard(c, k){
   begin(); const cap0 = capital() - (S.injected || 0), b0 = S.cast ? { customers: S.stats.customers, loans: S.loans.length } : null;
   res[c.kind](c, k); c.done = k; if (c.h && c.h.hh != null) hhOutcome(c, k);
   S.qi = S.queue.filter(x => x.done).length; logDecision(c, k, cap0);
-  const o = OUT; OUT = null; c.out = o; if (b0) regAfter(c, k, b0); return o;
+  const o = OUT; OUT = null; c.out = o; if (b0) regAfter(c, k, b0);
+  if (S.acc && !S.sim) for (const a of S.acc.list) if (a.reg == null && a.holder === (c.who && c.who.name)){ const r = regFind(a.holder); if (r) a.reg = r.id; }
+  return o;
 }
 function resolve(k){ return resolveCard(current(), k); }
 
 function closeMonth(){
+  CLOSING = true;
   begin();
   const m = S.month, u = uf(), rep = { m, events:[] };
   const ev = (t, tone) => say(t, tone);
@@ -1860,8 +1940,9 @@ function closeMonth(){
   }
   for (const g of S.gilts) post('intGilts', g.amt * g.coupon / 1200);
   householdMonth();
+  accMonth();
   post('intRes', Math.max(0, S.cash) * S.base / 1200);
-  post('intDep', -(S.deposits - largeSum()) * S.savRate * 0.6 / 1200);
+  post('intDep', -(S.deposits - largeSum() - accSum(true)) * S.savRate * 0.6 / 1200);      // customers' own savers were credited above; the pool's blended rate already allows for current accounts
   for (const d of S.large) post('intDep', -d.amt * d.rate / 1200);
   for (const b of S.bondTranches) post('intDep', -b.amt * b.rate / 1200);
   poolMonth(u);
@@ -1924,6 +2005,7 @@ function closeMonth(){
   if (S.over === 'done') ambitionYear();
   if (S.over) S.debrief = makeDebrief();
   evalGoals(S.history[S.history.length - 1], !!S.over);
+  CLOSING = false;
   if (!S.over){ applyQueuedPolicy(); buildMonth(); }
   rep.next = S.over ? null : { unemp: unemp(), hpi: hpiYr(), base: S.base };
   return rep;

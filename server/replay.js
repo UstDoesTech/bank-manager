@@ -110,13 +110,27 @@ async function verifyGame(pool, host, gameId) {
       const r = stored.get(f.area + '|' + f.setting);
       if (!r || (f.value == null ? r.value != null : Math.abs(Number(r.value) - f.value) > 1e-6) || (r.value_text || null) !== f.text || r.owner !== f.owner) problems.push(`setting ${f.area}.${f.setting} is stored differently from the replay`);
     }
-    const opt = { weekly: !!state.weeks, characters: !!state.cast, households: !!state.households, meetings: !!state.meet, rivals: !!state.rivals };
+    const opt = { weekly: !!state.weeks, characters: !!state.cast, households: !!state.households, meetings: !!state.meet, rivals: !!state.rivals, accounts: !!state.acc };
     if (open.length) for (const [k, v] of Object.entries(opt)) if (g[k] !== v) problems.push(`the game's ${k} option is stored as ${g[k]}, the replay has ${v}`);
     // since journal lines began to carry their loan, nothing may reach the loan book without one
     const loose = (await pool.query(
       `SELECT coalesce(sum(amount_pence), 0)::bigint AS p FROM bank.journal_line WHERE game_id = $1 AND account = 'loans' AND subledger IS NULL
          AND entry_seq > (SELECT min(entry_seq) FROM bank.journal_line WHERE game_id = $1 AND subledger IS NOT NULL)`, [gameId])).rows[0].p;
     if (Number(loose) !== 0) problems.push(`${loose} pence posted to the loan book without a loan`);
+    // the same for deposits: every posting names the pool, a customer's account or a large depositor
+    const looseDep = (await pool.query(
+      `SELECT coalesce(sum(amount_pence), 0)::bigint AS p FROM bank.journal_line WHERE game_id = $1 AND account = 'deposits' AND subledger IS NULL
+         AND entry_seq > (SELECT min(entry_seq) FROM bank.journal_line WHERE game_id = $1 AND subledger IN ('deposit', 'large'))`, [gameId])).rows[0].p;
+    if (Number(looseDep) !== 0) problems.push(`${looseDep} pence posted to deposits without an account`);
+    // customers' accounts: one stored row for each, at the replayed balance
+    if (state.acc) {
+      const rows = (await pool.query("SELECT account_id, balance_pence, status, customer_id FROM bank.account WHERE game_id = $1 AND account_id LIKE 'acct-%'", [gameId])).rows;
+      if (rows.length !== state.acc.list.length) problems.push(`${rows.length} customer accounts stored, replay has ${state.acc.list.length}`);
+      for (const a of state.acc.list) {
+        const r = rows.find((x) => x.account_id === 'acct-' + a.id);
+        if (!r || Math.abs(Number(r.balance_pence) - Math.round((a.status === 'open' ? a.bal : 0) * 1e5)) > 1 || r.status !== (a.status === 'open' ? 'active' : 'closed')) problems.push(`customer account ${a.id} is stored differently from the replay`);
+      }
+    }
   }
 
   if (state && state.cast) {
