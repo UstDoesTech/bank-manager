@@ -23,6 +23,7 @@ html{height:100%;box-sizing:border-box;background:var(--hall)}
 body{height:100%;margin:0;background:var(--hall);color:var(--text);font:calc(15px*var(--ts))/1.45 var(--f-display);font-variation-settings:"wdth" 100;overflow:hidden;-webkit-tap-highlight-color:transparent}
 button{font:inherit;color:inherit;cursor:pointer}
 button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+#docs:focus-visible{outline:2px solid var(--brass);outline-offset:-2px}
 .num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
 #app{height:100%;display:flex;flex-direction:column}
 
@@ -477,6 +478,24 @@ input[type="range"]{width:100%;accent-color:var(--brass)}
 /* the banner when a new week opens */
 #wkban{position:absolute;left:50%;top:44%;transform:translateX(-50%);z-index:6;background:var(--hall-2,#14231f);border:1px solid var(--brass,#d9ab4f);border-radius:10px;padding:8px 14px;display:grid;gap:2px;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.35);pointer-events:none}
 #wkban[hidden]{display:none}
+#clock{position:absolute;left:10px;bottom:34px;z-index:5;display:grid;grid-template-columns:auto 90px auto;align-items:center;gap:8px;background:#0c1714;border:1px solid rgba(217,171,79,.4);border-radius:8px;padding:5px 9px;font-size:calc(12px*var(--ts));color:#e9e4d6}
+#clock[hidden]{display:none}
+#clock i{display:block;height:6px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden}
+#clock b{display:block;height:100%;background:var(--brass,#d9ab4f);transition:width .4s}
+#clock.low b{background:var(--bad)}
+#clock em{font-style:normal;color:#fff;font-variant-numeric:tabular-nums}
+.act small.tm{opacity:.75}
+.mwho{display:flex;gap:12px;align-items:center;margin:10px 0;padding:8px 10px;border:1px solid var(--line,rgba(255,255,255,.12));border-radius:8px}
+.mwho .photo{flex:none;transform:scale(.8);transform-origin:left center}
+.mwho p{margin:0;font-size:calc(13.5px*var(--ts))}
+.calls{width:100%;border-collapse:collapse;font-size:calc(13.5px*var(--ts))}
+.calls td,.calls th{padding:4px 6px;text-align:right;border-bottom:1px solid rgba(255,255,255,.08)}
+.calls td:first-child,.calls th:first-child{text-align:left}
+.calls .wrong{color:var(--bad)}
+.mistakes{margin:6px 0 0;padding-left:18px;color:var(--muted);font-size:calc(13px*var(--ts))}
+.rules{display:grid;gap:10px;margin:8px 0}
+.rules label{display:grid;gap:4px;font-size:calc(13.5px*var(--ts))}
+.rules select{font:inherit;padding:6px;border-radius:6px;background:var(--hall-2,#14231f);color:var(--text);border:1px solid rgba(255,255,255,.2)}
 #wkban b{font-size:calc(15px*var(--ts));color:var(--brass,#d9ab4f)}
 #wkban span{font-size:calc(12.5px*var(--ts));color:var(--muted)}
 /* regulars in the Customers panel */

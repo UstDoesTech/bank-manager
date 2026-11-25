@@ -288,6 +288,10 @@ function regAdd(who, job){
   if (!r){
     r = { id: (C.rid = (C.rid || 0) + 1), name: who.name, born: who.born != null ? who.born : S.year - (who.age || 40), hue: who.hue, look: who.look || null, job: job || null, since: [S.year, Math.min(S.month, 11)], last: at, n: 0, notes: [] };
     C.regs.push(r);
+    if (deep('town') && job && !/Student|Retired|Director|Between jobs/.test(job) && hx(r.id, S.seed + 90) < 0.3){
+      const bosses = C.regs.filter(x => /^Director, /.test(x.job || '') && S.loans.some(l => l.kind === 'business' && (x.job || '').includes(l.name)));
+      if (bosses.length) r.employer = bosses[Math.floor(hx(r.id, S.seed + 91) * bosses.length)].id;
+    }
     if (C.regs.length > REG_MAX){ const old = C.regs.filter(x => x !== r).sort((a, b) => a.last - b.last)[0]; C.regs.splice(C.regs.indexOf(old), 1); }
   }
   if (job && !r.job) r.job = job;
@@ -309,6 +313,31 @@ function regAfter(c, k, before){
   r = regAdd(c.who, JOB_KINDS[c.kind] ? c.who.sub : c.kind === 'business' ? c.who.sub : null);
   if (c.kind === 'mortgage' && S.loans.length > before.loans) r.mort = 1;
   regNote(r, line.length > 120 ? line.slice(0, 117) + '…' : line, (c.label || c.kind) + (o ? ' · ' + o.l : ''));
+}
+// A power of attorney case: the parent is one of the bank's older regulars, and the money is theirs.
+function poaParent(c, inQueue){
+  const hh = new Set((S.households || []).map(h => h.name)), old = S.cast.regs.filter(r => S.year - r.born >= 75 && !r.gone && !inQueue.has(r.name) && !hh.has(r.name));
+  if (!old.length) return;
+  const r = old[Math.floor(hx(c.id, S.seed + 92) * old.length)], par = r.look && r.look.p === 'f' ? 'mother' : 'father', was = c.h.par;
+  c.h.parent = r.id; c.h.parentName = r.name;
+  c.note = c.note.replace(`their ${was}'s account`, `their ${par} ${r.name}'s account (a customer since ${r.since[0]})`);
+  const f = c.fields.find(x => x.l === 'The ' + was); if (f) f.l = 'The ' + par;
+  c.h.par = par;
+}
+// A new card's person becomes a regular the player has met before: their name, face, age and history.
+function becomeRegular(c, r){
+  const old = c.who;
+  c.who = Object.assign({}, old, { name: r.name, age: S.year - r.born, hue: r.hue, look: r.look, born: r.born, reg: r.id });
+  if (c.kind === 'mortgage' && r.job) c.who.sub = r.job;
+  if (S.acc && c.kind === 'visit' && c.h && c.h.v === 'closing' && !c.h.imp){      // what they hold with you, not a guess
+    const tot = accsOf(r.name).reduce((t, a) => t + a.bal, 0), f = c.fields.find(x => x.l === 'Balances');
+    if (tot > 0 && f){ c.h.bal = tot; f.v = full(tot); }
+  }
+  if (c.h && c.h.imp){ c.who.look = old.look; c.who.hue = old.hue; c.who.claim = 1; if (deep('ids')) c.idLook = r.look; }    // someone else, using a regular's name (and, with ID checks, the regular's stolen ID)
+  if (c.h) c.h.name = r.name;
+  c.note = c.note.split(old.name).join(r.name).replace(new RegExp('\\b' + first(old.name) + '\\b', 'g'), first(r.name));
+  if (deep('town') && r.employer){ const boss = S.cast.regs.find(x => x.id === r.employer); if (boss && boss.job) c.note = `Works for ${boss.job.replace(/^Director, /, '')}. ` + c.note; }
+  c.note = regIntro(r) + c.note;
 }
 function regIntro(r){
   const last = r.notes[r.notes.length - 1], topic = last && last.w ? last.w.split(' · ')[0].toLowerCase() : '';
@@ -333,23 +362,43 @@ function castCards(cards){
       const cand = S.cast.regs.filter(r => { const a = S.year - r.born; return a >= lo && a <= hi && !inQueue.has(r.name) && !hh.has(r.name) && !r.gone && !(c.kind === 'mortgage' && (r.mort || /Student|Retired|Between jobs/.test(r.job || ''))); })
         .sort((a, b) => a.last - b.last);
       if (cand.length){
-        const r = cand[Math.floor(hx(c.id, S.seed + 7) * Math.min(6, cand.length))], old = c.who;
-        c.who = Object.assign({}, old, { name: r.name, age: S.year - r.born, hue: r.hue, look: r.look, born: r.born, reg: r.id });
-        if (c.kind === 'mortgage' && r.job) c.who.sub = r.job;
-        if (S.acc && c.kind === 'visit' && c.h && c.h.v === 'closing' && !c.h.imp){      // what they hold with you, not a guess
-          const tot = accsOf(r.name).reduce((t, a) => t + a.bal, 0), f = c.fields.find(x => x.l === 'Balances');
-          if (tot > 0 && f){ c.h.bal = tot; f.v = full(tot); }
-        }
-        if (c.h && c.h.imp){ c.who.look = old.look; c.who.hue = old.hue; c.who.claim = 1; }    // someone else, using a regular's name
-        if (c.h) c.h.name = r.name;
-        c.note = c.note.split(old.name).join(r.name).replace(new RegExp('\\b' + first(old.name) + '\\b', 'g'), first(r.name));
-        c.note = regIntro(r) + c.note;
+        const r = cand[Math.floor(hx(c.id, S.seed + 7) * Math.min(6, cand.length))];
+        becomeRegular(c, r);
         inQueue.add(r.name);
       }
     }
     if (!c.who.reg){ const mv = motive(c); if (mv) c.note = c.note + ' ' + mv; }
+    if (deep('town') && c.kind === 'visit' && c.h && c.h.v === 'poa') poaParent(c, inQueue);
+    idCheck(c);
     if (c.phys && c.who.look){ const mn = mannerOf(c.who); if (mn && !c.fields.some(f => f.l === 'Manner')) c.fields.push(F('Manner', `${mn.name}. ${mn.text}`, null, true)); }
   }
+}
+/* ---- ID checks (depth: ids): the photo on the ID is not always the face at the counter. A forged ID shows someone else; a
+   genuine customer's photo may be years old (other hair, no glasses); an impostor carries the real customer's ID; and a money mule
+   turned away before may come back with a new name and the same face. Chosen by hash, so it never moves the random numbers. ---- */
+function otherFace(look, age, id){
+  for (let i = 0; i < 6; i++){
+    const g = HERITAGE[Math.floor(hx(id, S.seed + 40 + i) * HERITAGE.length)].key, L = makeLook({ sx: look.p, g, sur: '' }, Math.floor(hx(id, S.seed + 50 + i) * 4294967296) | 0, age, 0);
+    if (L.skin !== look.skin || (L.hair !== look.hair && L.hc !== look.hc)) return L;
+  }
+  return Object.assign({}, look, { skin: SKIN_TONES[(SKIN_TONES.indexOf(look.skin) + 4) % SKIN_TONES.length] });
+}
+function olderPhoto(look, id){
+  const styles = look.p === 'f' ? ['long', 'bob', 'bun', 'ponytail', 'curly', 'pixie'] : ['short', 'crop', 'curly', 'long'];
+  const L = Object.assign({}, look, { hair: styles.filter(x => x !== look.hair)[Math.floor(hx(id, S.seed + 60) * (styles.length - 1))], specs: look.specs ? 0 : 1 });
+  if (HAIR_GREY.includes(look.hc)) L.hc = HAIR_ALL[Math.floor(hx(id, S.seed + 61) * 3)];
+  if (look.p === 'm') L.beard = look.beard ? null : 'short';
+  return L;
+}
+function idCheck(c){
+  if (!deep('ids') || !c.phys || !c.who || !c.who.look || c.idLook) return;
+  const u = hx(c.id, S.seed + 21);
+  if (c.kind === 'onboard' && c.h && c.h.bad){
+    const M = S.cast.mules = S.cast.mules || [];
+    if (M.length && u < 0.3){ const old = M[Math.floor(hx(c.id, S.seed + 22) * M.length)]; c.who.look = old.look; c.who.hue = old.hue; c.h.seenBefore = old.name; }
+    else if (u < 0.75) c.idLook = otherFace(c.who.look, c.who.age, c.id);
+    if (!c.h.seenBefore){ M.push({ name: c.who.name, look: c.who.look, hue: c.who.hue }); if (M.length > 20) M.shift(); }
+  } else if (!(c.h && (c.h.bad || c.h.imp)) && u < 0.2) c.idLook = olderPhoto(c.who.look, c.id);
 }
 // What is driving the customer. Chosen by hash, so it never moves the random stream, and never from the hidden truth.
 const MOTIVES = {
@@ -410,7 +459,7 @@ function syncGilts(){
   const d = giltCarry() - (S.ledger.bal.gilts || 0);
   if (Math.abs(d) > 1e-9) je('gilts.revalue', [['gilts', d], ['pl.gilts', -d]]);
 }
-function assets(){ return S.cash + giltCarry() + S.legacy + loanSum() + (S.retained || 0) + (S.collateral || 0); }
+function assets(){ return S.cash + giltCarry() + S.legacy + loanSum() + (S.retained || 0) + (S.collateral || 0) - (S.provision || 0); }
 function capital(){ return assets() - S.deposits - S.cb - (S.wholesale || 0) - (S.bonds || 0); }
 function rwa(){ let r = S.legacy * 0.75 + 1000 + aum() * 0.005 + (S.retained || 0) * 2; for (const l of S.loans) r += l.bal * (l.kind === 'mortgage' ? (l.ltv > 80 ? 0.5 : 0.35) : 1); return r; }
 function capRatio(){ return capital() / rwa(); }
@@ -435,7 +484,7 @@ function chip(t, c){ if (OUT) OUT.chips.push({ t, c }); }
    equity.opening, equity.paidin; income and expense pl.<key> (one per profit-and-loss line).
    S.ledger holds running balances only; entries are streamed to LEDGER_SINK (the game server stores them). */
 var LEDGER_SINK = null, LEDGER_STRICT = false;
-const LEDGER_DIR = { cash:1, legacy:1, deposits:-1, cb:-1, wholesale:-1, bonds:-1, retained:1, collateral:1, goodwill:1 };   // accounts mirrored by a plain state field
+const LEDGER_DIR = { cash:1, legacy:1, deposits:-1, cb:-1, wholesale:-1, bonds:-1, retained:1, collateral:1, goodwill:1, provision:-1 };   // accounts mirrored by a plain state field
 function je(memo, lines, opts){
   let sum = 0; for (const l of lines) sum += l[1];
   if (!(Math.abs(sum) < 1e-6)){ if (LEDGER_STRICT) throw new Error('unbalanced journal entry ' + memo + ': ' + sum); }
@@ -467,7 +516,7 @@ function ledgerCheck(){
   const L = S.ledger, bad = [], near = (x, y) => Math.abs(x - y) <= 1e-6 + 1e-9 * Math.abs(y);
   const chk = (n, ledger, live) => { if (!near(ledger, live)) bad.push(`${n}: ledger ${ledger} vs state ${live}`); };
   chk('cash', L.bal.cash || 0, S.cash); chk('legacy', L.bal.legacy || 0, S.legacy); chk('deposits', -(L.bal.deposits || 0), S.deposits); chk('cb', -(L.bal.cb || 0), S.cb); chk('wholesale', -(L.bal.wholesale || 0), S.wholesale || 0); chk('bonds', -(L.bal.bonds || 0), S.bonds || 0); chk('retained', L.bal.retained || 0, S.retained || 0);
-  chk('gilts', L.bal.gilts || 0, giltCarry()); chk('loans', L.bal.loans || 0, loanSum()); chk('collateral', L.bal.collateral || 0, S.collateral || 0); chk('goodwill', L.bal.goodwill || 0, S.goodwill || 0);
+  chk('gilts', L.bal.gilts || 0, giltCarry()); chk('provision', -(L.bal.provision || 0), S.provision || 0); chk('loans', L.bal.loans || 0, loanSum()); chk('collateral', L.bal.collateral || 0, S.collateral || 0); chk('goodwill', L.bal.goodwill || 0, S.goodwill || 0);
   const total = Object.values(L.bal).reduce((t, x) => t + x, 0);
   if (!near(total, 0)) bad.push('ledger does not sum to zero: ' + total);
   const eq = -Object.keys(L.bal).filter(a => a.startsWith('equity.') || a.startsWith('pl.')).reduce((t, a) => t + L.bal[a], 0);
@@ -542,8 +591,8 @@ function custLeave(c, fallback){
     a.bd = 0;
   }
   const tot = mine.reduce((t, a) => t + a.bal, 0), lines = [['cash', -tot]];
-  for (const a of mine){ if (a.bal > 0) lines.push(['deposits', a.bal, accRef(a)]); a.bal = 0; a.status = 'closed'; a.closed = [S.year, Math.min(S.month, 11)]; }
-  if (tot > 0) je('deposit.flow', lines, { note: 'Account closed; balance sent to another bank' });
+  for (const a of mine){ if (a.bal > 0 || (a.limit != null && a.bal < -1e-9)) lines.push(['deposits', a.bal, accRef(a)]); a.bal = 0; a.status = 'closed'; a.closed = [S.year, Math.min(S.month, 11)]; }
+  if (tot > 0 || lines.some(l => l[1] < 0)) je('deposit.flow', lines, { note: tot > 0 ? 'Account closed; balance sent to another bank' : 'Account closed; the overdraft repaid by the new bank' });      // an overdraft is repaid by the bank they move to
   chip('Deposits ' + fmt(-tot, true), 'bad');
 }
 // Each month: salary in and spending out on current accounts, interest credited on savers, fixed savers maturing into easy access.
@@ -571,11 +620,41 @@ function accMonth(){
     a.bd = 0; a.d = 1;
     if (a.pay > 0){
       const u1 = hx(a.id * 7919 + at, S.seed), u2 = hx(a.id * 104729 + at, S.seed + 1);      // hashed, so accounts never move the game's random numbers
-      const inn = a.pay * (0.9 + 0.2 * u1), out = Math.min(a.bal + inn, inn * (0.9 + 0.16 * u2));
+      const usual = a.pay * (0.9 + 0.2 * u1), cut = a.cut > at;           // pay cut (the town's closures): income falls more than spending
+      const inn = usual * (cut ? 0.35 : 1), spend = usual * (a.osp ? 1.08 + 0.25 * u2 : 0.9 + 0.16 * u2) * (cut ? 0.7 : 1);
+      const out = Math.min(a.bal + inn + (a.limit || 0), spend);
       je('account.month', [['cash', inn - out], ['deposits', -inn, accRef(a)], ['deposits', out, accRef(a)]], { note: a.product === 'business_current' ? 'Takings in; suppliers and bills out' : 'Salary in; rent, bills and card spending out' }); a.bal += inn - out; a.d = 1;
+    }
+    if (a.limit && a.bal < -1e-9){                                  // an arranged overdraft in use: interest on what is borrowed
+      const r = a.free || a.freeze > at ? 0 : a.product === 'business_current' ? OD_RATE.business : OD_RATE.personal, i = -a.bal * r / 100 / 12;
+      if (i > 1e-6){ je('overdraft.interest', [['deposits', i, accRef(a)], ['pl.intLoans', -i, accRef(a)]], { note: `Overdraft interest: ${full(-a.bal)} at ${r}%` }); a.bal -= i; }
     }
     if (a.product === 'fixed_saver' && a.matures <= at){ a.product = 'easy_access'; delete a.rate; delete a.matures; }
   }
+}
+/* ---- arranged overdrafts (depth: overdraft, with accounts): a limit on a current account the holder can spend into. Interest is
+   charged on what is used, students pay none, and a business pays less. An account that runs to its limit and stops paying in is
+   written off: the overdrawn balance itself, not a guessed sum. ---- */
+const OD_RATE = { personal: 19.9, business: 12.5 };
+function odArrange(c, k, pend0){
+  const h = c.h || {}, v = h.v, at = S.year * 12 + Math.min(S.month, 11);
+  let product = 'current_account', limit = 0, osp = false, free = false;
+  if (v === 'student' && (k === 'full' || k === 'half')){ limit = k === 'full' ? 2 : 1; osp = !!h.str; free = true; }
+  else if (v === 'startup' && k === 'od'){ product = 'business_current'; limit = 5; osp = !h.ok; }
+  else if (v === 'gamble' && c.who && !c.who.claim){ limit = Math.max(0.5, Math.ceil(h.od * 2) / 2 + 0.5); osp = !!h.vul && k !== 'freeze'; }
+  else return;
+  custOpen(c, product);
+  const a = accsOf(c.who.name).find(q => q.product === product); if (!a) return;
+  a.limit = limit; if (osp) a.osp = 1; if (free) a.free = 1; if (v === 'gamble' && k === 'freeze') a.freeze = at + 3;
+  if (osp && !a.pay) a.pay = Math.round((0.8 + hx(a.id, S.seed + 93)) * 100) / 100;
+  for (const p of S.pending.slice(pend0)) if (p.key === 'losses' && p.cash < 0){ p.odWrite = a.id; delete p.cash; delete p.key; }
+}
+function odWriteOff(p){
+  const a = S.acc && S.acc.list.find(q => q.id === p.odWrite);
+  if (!a) return 0;
+  const amt = Math.max(0, -a.bal);
+  if (amt > 1e-9){ je('pl.losses', [['pl.losses', amt, accRef(a)], ['deposits', -amt, accRef(a)]], { note: 'Overdraft written off' }); a.bal += amt; }
+  a.limit = 0; delete a.osp; return -amt;
 }
 // A refund to a customer: into their own account where they have one, otherwise paid out as before.
 function custRefund(c, amt, key, label, note, corrects){
@@ -592,7 +671,12 @@ function custPay(name, amt, note){
 }
 const accSum = (saversOnly) => S.acc ? S.acc.list.reduce((t, a) => t + (a.status === 'open' && (!saversOnly || SAVERS[a.product]) ? a.bal : 0), 0) : 0;
 const fid = () => (S.fid = (S.fid || 0) + 1);
-function later(n, data){ S.pending.push(Object.assign({ due: S.month + n }, data)); }
+var CUR = null;      // the card being decided, so a consequence can say whose and which decision it was
+function later(n, data){
+  const p = Object.assign({ due: S.month + n }, data);
+  if (CUR && deep('calls') && CUR.c.who && CUR.c.who.age){ const c = CUR.c, o = (c.opts || []).find(x => x.k === CUR.k); p.who = { name: c.who.name, age: c.who.age, hue: c.who.hue, look: c.who.look || null }; p.dec = { label: c.label || c.kind, pick: o ? o.l : String(CUR.k), y: S.year, m: Math.min(S.month, 11) }; }
+  S.pending.push(p);
+}
 function person(a, b){ if (S.cast) return castPerson(a, b); return { name: pick(FIRST) + ' ' + pick(LAST), age: ri(a, b), hue: Math.round(R() * 1000) / 1000 }; }
 const first = n => n.split(' ')[0];
 function sig(bad, good, badL, pg = 0.8, pb = 0.6){ if (S.tutorial && S.month === 0) return bad ? pick(badL) : pick(good); if (S.up && S.up.train){ pg += (1 - pg) * 0.7; pb += (1 - pb) * 0.6; } return bad ? (chance(pb) ? pick(badL) : pick(good)) : (chance(pg) ? pick(good) : pick(badL)); }
@@ -607,12 +691,70 @@ function analyst(pd){ if (!S.up || !S.up.analyst) return null; const v = pd * Ma
 function book(o){
   const l = Object.assign({ id: S.nextId++, status: 'current', m0: S.month, carded: false, hpi0: hpi() }, o);
   if (S.acc) l.vd = dayNow();                                       // the day it was drawn, for its first month's interest
+  if (deep('risk')){ const e = eclOf(l); if (e > 0.01){ provide(e, 'Expected loss provided for when the loan was made', 'loan:' + l.id); chip('Expected loss ' + fmt(-e, true), 'bad'); } }
   je('loan.originate', [['loans', l.bal, 'loan:' + l.id], ['cash', -l.bal, 'loan:' + l.id]]); S.loans.push(l); S.stats.loans++; S.stats.lent += l.bal; if (l.hh != null) hhBooked(l);
   chip('Lent ' + fmt(l.bal), 'neutral');
   const kept = l.bal * (RETAIN[l.kind] || 0.2); je('deposit.created', [['cash', kept], ['deposits', -kept]]); chip('Deposit created ' + fmt(kept, true), 'neutral');
   if (!S.flags.seenCreate){ S.flags.seenCreate = true; say(`Lending created a new deposit of ${full(l.bal)} in the borrower's account. As they spend it, most moves to other banks and takes your reserves with it. ${full(kept)} is still with you.`); }
   return l;
 }
+/* ---- depth: the rules that make judgement show (the depth option) ----
+   risk: expected credit losses are provided for when a loan is made and trued up each month, so risky lending costs at once, and
+   defaults season, so most arrive in a loan's second year. clock: counter time each week. ids: ID photos to check against faces.
+   staff: standing instructions for routine cases. town: stories that link the regulars. ramp: everyday visits introduced over the
+   first months. overdraft: arranged overdrafts on current accounts. calls: month-end feedback on each decision. */
+const DEPTH_PARTS = ['risk', 'clock', 'ids', 'staff', 'town', 'ramp', 'overdraft', 'calls'];
+const deep = k => !!(S.depth && S.depth[k]);
+const lgdOf = l => clamp(1 - recovery(l) / Math.max(0.001, l.bal), 0, 1);
+// Expected credit loss over the next year: a current loan's chance of default this year times what would be lost; a loan behind
+// with its payments or on a plan is provided for as likely to go.
+const ECL_K = 0.5;                                                  // calibrated to the losses the game's own payment plans and recoveries leave
+function eclOf(l){
+  const lgd = lgdOf(l);
+  if (l.status === 'arrears') return l.bal * lgd * (S.month - l.since >= 1 ? 0.85 : 0.6) * ECL_K * 2;
+  if (l.status === 'plan') return l.bal * lgd * 0.4 * ECL_K * 2;
+  return l.bal * lgd * Math.min(0.95, l.pd * AMP * uf()) * ECL_K;
+}
+function provide(amt, label, ref){
+  if (Math.abs(amt) < 1e-9) return;
+  je('provision', [['pl.losses', amt, ref], ['provision', -amt, ref]], { note: label });
+}
+// Each month the provision is set to the expected loss on the book as it stands.
+function provisionMonth(){
+  if (!deep('risk')) return;
+  const target = S.loans.reduce((t, l) => t + eclOf(l), 0), delta = target - (S.provision || 0);
+  provide(delta, 'Expected credit losses trued up');
+}
+/* ---- the counter clock: each case the player serves takes time, and checks take longer. When the week's time is gone, the
+   customers still queuing give up and leave. ---- */
+const TIME_BASE = { onboard: 8, mortgage: 14, personal: 9, business: 14, app: 7, visit: 10, hardship: 12, wmClient: 12, wmPep: 10, wmVuln: 8 };
+const TIME_OPT = { docs: 10, check: 12, verify: 10, alone: 10, stop: 15, probate: 4, less: 4, pg: 5, plan: 6, hold: 6, freeze: 4 };
+const TIME_MANNER = { chatty: 4, flustered: 5, anxious: 2, brisk: -3 };
+function timeCost(c, k){
+  if (!c || !c.phys) return 0;
+  const t = c.who && c.who.look && c.who.look.t;
+  return Math.max(3, (TIME_BASE[c.kind] || 10) + (TIME_OPT[k] || 0) + (TIME_MANNER[t] || 0));
+}
+const clockCap = () => (S.weeks ? 40 : 50) * (owned('cashier') ? 1.5 : 1);
+function clockStart(){ if (deep('clock')) S.clock = { cap: clockCap(), left: clockCap(), walked: 0 }; }
+// After a case: the time it took, and if the time has gone, everyone still waiting at the counter leaves.
+function clockSpend(c, k){
+  if (!deep('clock') || !S.clock || !c.phys) return;
+  S.clock.left -= timeCost(c, k);
+  if (S.clock.left > 0) return;
+  const now = S.weeks ? x => (x.wk || 0) === S.wk : () => true;
+  for (const w of S.queue.filter(x => x.phys && !x.done && now(x))){
+    w.done = 'walked'; S.clock.walked++; S.stats.walked = (S.stats.walked || 0) + 1;
+    if (deep('calls') && !S.sim) yrLog().dec.push({ m: S.month, y: S.year, label: w.label || w.kind, who: w.who.name, pick: 'Walked out', d: 0, kind: w.kind, walked: 1 });
+    const brisk = w.who && w.who.look && w.who.look.t === 'brisk';
+    S.trust = clamp(S.trust - (brisk ? 2 : 1), 0, 100);
+    w.out = { lines: [{ t: `${first(w.who.name)} gave up waiting and left.`, tone: 'bad' }], chips: [{ t: 'Customers −' + (brisk ? 2 : 1), c: 'bad' }], cust: null };
+    if (w.kind === 'hardship'){ const l = S.loans.find(x => x.id === w.h.lid); if (l) l.carded = false; }      // they will be back next month
+  }
+  S.qi = S.queue.filter(x => x.done).length;
+}
+// Default hazard by a loan's age in months: few defaults at first, most in the second year.
+const season = age => age < 3 ? 0.25 : age < 9 ? 0.8 : age < 24 ? 1.35 : 0.9;
 function recovery(l){
   if (l.kind === 'mortgage') return Math.max(0, collateral(l) * 0.82 - 4);
   if (l.kind === 'business') return l.bal * Math.max(l.guar ? 0.62 : 0.3, l.ggs ? 0.7 : 0);
@@ -973,8 +1115,8 @@ res.fraud = (c, k) => {
   if (k === 'block'){ if (h.fraud){ say(`${nm} replied "NOT ME". New card on its way.`, 'good'); dT(2); S.stats.fraudStop++; } else { say(`It was ${nm}. The card was declined at the till.`, 'bad'); dT(-2); } }
 };
 
-gen.app = () => {
-  const scam = chance(0.45), p = person(scam ? 30 : 28, scam ? 88 : 80), amt = Math.round(rf(1.5, 38) * 10) / 10;
+gen.app = (o = {}) => {
+  const scam = o.scam != null ? o.scam : chance(0.45), p = person(scam ? 30 : 28, scam ? 88 : 80), amt = Math.round(rf(1.5, 38) * 10) / 10;
   const why = scam ? pick(['Paying a builder','Moving money to a safe account','Investing in crypto','Paying a tax bill','Helping a friend overseas'])
                    : pick(['Paying a builder','Deposit on a car','Wedding venue balance','Gift to a grandchild','Solicitor for a house purchase']);
   const cop = sig(scam, ['Full match'], ['No match: different name','Close match'], 0.92, 0.7);
@@ -1328,13 +1470,188 @@ const VISITS = {
       if (k === 'refuse'){ if (h.imp) say('The person at the counter leaves without arguing.'); else { say(`${nm} is still locked out and furious.`, 'bad'); dT(-3); } }
     } },
 };
+VISITS.redundant = { w: 0, label: 'Made redundant', age: [22, 62], sub: 'Lost their job', arc: true,
+  gen(p){ const back = chance(0.5), where = (S.town && S.town.closing) || 'the depot', pay = Math.round(rf(2, 14) * 10) / 10;
+    return { note: `${first(p.name)} has just been made redundant from ${where} and is worried about the bills.`, h: { back, pay, where, best: back ? 'budget' : 'holiday' },
+      fields: [ F('Redundancy pay', full(pay)), F('Prospects', sig(!back, ['An interview next week', 'Skills that are in demand'], ['Worked there 22 years', 'Few local jobs in their trade'])), F('Savings', sig(!back, ['Three months of bills put by', 'A partner still working'], ['Next to nothing', 'Already used the overdraft']), null, true) ],
+      opts: [ { k: 'holiday', l: 'Three-month payment holiday', s: 'go', st: 'HOLIDAY' }, { k: 'budget', l: 'Budget review and free debt advice', s: 'alt', st: 'ADVISED' }, { k: 'nothing', l: 'Nothing we can do', s: 'no', st: 'NO CHANGE' } ] }; },
+  res(c, k, h, nm){
+    if (k === 'holiday'){ money('intLoans', -0.1, 'Interest deferred'); say(h.back ? `${nm} takes the holiday, though they were starting a new job anyway.` : `${nm} has three months to find their feet.`, h.back ? '' : 'good'); dT(h.back ? 1 : 3); if (!h.back) dC(1); }
+    if (k === 'budget'){ say(`${nm} leaves with a budget and an adviser's number.`); dT(h.back ? 2 : 0); if (!h.back) later(ri(2, 3), { text: `${c.who.name} fell behind after the redundancy and says the bank only offered a leaflet.`, comp: -2, trust: -1, tone: 'bad' }); }
+    if (k === 'nothing'){ say(`${nm} leaves without help.`, 'bad'); dT(-3); if (!h.back) later(ri(1, 3), { text: `${c.who.name}, made redundant from ${h.where}, complained that the bank would not help.`, comp: -3, trust: -2, tone: 'bad' }); }
+  } };
 const r0 = c => (c.who && c.who.reg && regFind(c.who.name)) || {};
+const RAMP = ['switch', 'savings', 'bereave', 'closing', 'student', 'takeover', 'gamble', 'startup', 'poa', 'coercion'];
+const monthsPlayed = () => Math.max(0, (S.year - 2027) * 12 + Math.min(S.month, 11));
 gen.visit = (o = {}) => {
-  const keys = Object.keys(VISITS), v = o.v || wpick(keys.map(k => [k, VISITS[k].w])), V = VISITS[v];
+  const keys = deep('ramp') ? RAMP.slice(0, 3 + 2 * monthsPlayed()) : Object.keys(VISITS).filter(k => VISITS[k].w > 0), v = o.v || wpick(keys.map(k => [k, VISITS[k].w])), V = VISITS[v];
   const p = person(V.age[0], V.age[1]), g = V.gen(p);
   return card('visit', { label: V.label, phys: true, who: { ...p, sub: V.sub }, note: g.note, fields: g.fields, opts: g.opts, h: Object.assign({ name: p.name, v, amin: V.age[0], amax: V.age[1] }, g.h) });
 };
 res.visit = (c, k) => { const h = c.h; VISITS[h.v].res(c, k, h, first(h.name)); };
+
+/* ---- standing instructions (depth: staff): the branch team decides routine inbox cases by the player's rules, from what the
+   papers show, and now and then gets one wrong. ---- */
+const FRAUD_SIGNS = ['Online electronics store, Lithuania', 'Gift card website', 'Crypto exchange', 'Luxury watch site', 'Prepaid card top-up', 'Used in Leeds and Lisbon 40 minutes apart', 'Abroad · no travel spending on record', 'Online · device never seen before', 'No app approval attempted', 'Card number typed in by hand', '4 declines in 2 minutes'];
+const RULES = {
+  fraud: ['Leave card fraud alerts to me', 'Block when two or more warning signs show', 'Block when the fraud model scores 70 or more'],
+  limits: ['Leave limit requests to me', 'Offer a plan to anyone in persistent debt; keep other limits', 'Offer a plan to anyone in persistent debt; raise limits for the rest'],
+  complaints: ['Leave complaints to me', 'Uphold complaints of £200 or less with a refund'],
+};
+function setRules(r){
+  if (!deep('staff')) throw new Error('standing instructions are not part of this game');
+  if (!r || typeof r !== 'object') throw new Error('no rules');
+  const next = Object.assign({ fraud: 0, limits: 0, complaints: 0 }, S.rules);
+  for (const [k, v] of Object.entries(r)){
+    if (!RULES[k] || !Number.isInteger(v) || v < 0 || v >= RULES[k].length) throw new Error('unknown rule ' + k);
+    if (k === 'fraud' && v === 2 && !owned('fraudModel')) throw new Error('the fraud model rule needs the fraud scoring model');
+    next[k] = v;
+  }
+  S.rules = next; return S.rules;
+}
+function staffDecide(c){
+  const R = S.rules || {};
+  if (c.kind === 'fraud' && R.fraud){
+    if (R.fraud === 2){ const f = c.fields.find(x => x.l === 'Model score'); if (!f) return null; return parseInt(f.v, 10) >= 70 ? 'block' : 'let'; }
+    return c.fields.filter(f => FRAUD_SIGNS.includes(f.v)).length >= 2 ? 'block' : 'let';
+  }
+  if (c.kind === 'card' && R.limits){ if (/Minimum only/.test(fv(c, 'Repayments'))) return c.opts.some(o => o.k === 'plan') ? 'plan' : 'keep'; return R.limits === 2 ? 'up' : 'keep'; }
+  if (c.kind === 'complaint' && R.complaints) return c.h.amt <= 0.2 ? 'refund' : null;
+  return null;
+}
+const SLIP = { block: 'let', let: 'block', plan: 'keep', keep: 'up', up: 'keep', refund: 'reject' };
+function staffByRules(cards){
+  if (!deep('staff') || !S.rules || S.tutorial) return;
+  const tally = { fraud: 0, card: 0, complaint: 0 };
+  for (const c of cards){
+    if (c.done || c.phys) continue;
+    let k = staffDecide(c); if (!k) continue;
+    if (hx(c.id, S.seed + 31) < 0.05 && c.opts.some(o => o.k === SLIP[k])) k = SLIP[k];          // people make mistakes
+    c.staff = true; resolveCard(c, k); tally[c.kind]++;
+  }
+  const n = tally.fraud + tally.card + tally.complaint;
+  if (n) addMail('Your team', 'Handled by your standing instructions', `${[tally.fraud ? `${tally.fraud} card fraud alert${tally.fraud > 1 ? 's' : ''}` : '', tally.card ? `${tally.card} limit request${tally.card > 1 ? 's' : ''}` : '', tally.complaint ? `${tally.complaint} complaint${tally.complaint > 1 ? 's' : ''}` : ''].filter(Boolean).join(', ')} decided by the rules you set. The team decides from what the papers show, and gets the odd one wrong. You can change the rules in the Branch tab.`, '', Math.min(S.month, 11), S.year);
+}
+
+/* ---- the player's calls (depth: calls): each decision judged against what the engine knew, for the month-end summary ---- */
+const CALL_LABEL = { fraud: 'Card fraud alerts', onboard: 'New customers', app: 'Payments in branch', aml: 'Money laundering alerts', sanctions: 'Sanctions screening', mortgage: 'Mortgages', personal: 'Personal loans', business: 'Business loans', card: 'Limit requests', complaint: 'Complaints', visit: 'Everyday visits', hardship: 'Arrears' };
+function judgeCall(c, k){
+  const h = c.h || {};
+  switch (c.kind){
+    case 'fraud': return (k === 'block') === !!h.fraud;
+    case 'onboard': return (k === 'no') === !!h.bad;
+    case 'app': return (k === 'stop') === !!h.scam;
+    case 'aml': return (k === 'sar' || k === 'exit') === !!h.guilty;
+    case 'sanctions': return (k === 'hold' || k === 'freeze') === !!h.real;
+    case 'mortgage': return (k !== 'no') === (mortgageRisk(h).pd < 0.05);
+    case 'personal': case 'business': return (k !== 'no') === (h.pd < 0.08);
+    case 'card': return h.persist ? k === 'plan' : true;
+    case 'complaint': return h.valid ? k !== 'reject' : k === 'reject';
+    case 'visit': return k === h.best;
+    case 'hardship': return k === 'plan';
+    default: return null;
+  }
+}
+// The month's calls by kind of case: right, wrong, decided by the team, walked out; and up to three mistakes to look at.
+function callsFacts(m, y){
+  const dec = (S.yr && S.yr.dec || []).filter(d => d.m === m && d.kind && (d.ok != null || d.staff || d.walked) && (y == null || (d.y || S.year) === y));
+  const by = {};
+  for (const d of dec){
+    const r = by[d.kind] = by[d.kind] || { kind: d.kind, label: CALL_LABEL[d.kind] || d.kind, right: 0, wrong: 0, staff: 0, walked: 0, mistakes: [] };
+    if (d.walked) r.walked++; else if (d.staff) r.staff++; else if (d.ok === true) r.right++; else if (d.ok === false){ r.wrong++; if (r.mistakes.length < 3) r.mistakes.push(`${d.who}: ${d.pick}`); }
+  }
+  return Object.values(by).sort((a, b) => b.wrong - a.wrong || (b.right + b.wrong) - (a.right + a.wrong));
+}
+
+/* ---- the town (depth: town): stories that link the regulars. Each year has one or two arcs: a local employer closes (some
+   regulars lose their jobs, come in for help, and their loans grow riskier), a scam ring works through older customers, or a new
+   hospital wing brings new customers. Regulars can work for another regular's business, and feel it when that business struggles. ---- */
+const ARC_KINDS = ['closure', 'scamring', 'hospital'], ARC_LEN = { closure: 4, scamring: 3, hospital: 2 };
+const CLOSERS = ['the Harwood Logistics depot', 'the Brookfield print works', 'the Marlow bottling plant', 'the Calder Valley call centre'];
+function townYear(){
+  if (!deep('town') || S.tutorial || S.scenario) return;
+  const T = S.town = S.town || { arcs: [] }, y = S.year;
+  T.arcs = T.arcs.filter(a => a.y >= y - 1);
+  const k1 = ARC_KINDS[Math.floor(hx(y, S.seed + 71) * 3)], s1 = 2 + Math.floor(hx(y, S.seed + 72) * 4);
+  T.arcs.push({ kind: k1, y, start: s1, len: ARC_LEN[k1], begun: false, victims: [] });
+  if (hx(y, S.seed + 73) < 0.6){ const k2 = ARC_KINDS[(ARC_KINDS.indexOf(k1) + 1 + Math.floor(hx(y, S.seed + 74) * 2)) % 3]; T.arcs.push({ kind: k2, y, start: Math.min(11, s1 + ARC_LEN[k1] + 1 + Math.floor(hx(y, S.seed + 75) * 2)), len: ARC_LEN[k2], begun: false, victims: [] }); }
+}
+function beginArc(a){
+  a.begun = true;
+  const at = S.year * 12 + Math.min(S.month, 11), hhs = new Set((S.households || []).map(h => h.name));
+  if (a.kind === 'closure'){
+    a.where = CLOSERS[Math.floor(hx(S.year, S.seed + 76) * CLOSERS.length)]; S.town.closing = a.where;
+    const pool = (S.cast ? S.cast.regs : []).filter(r => { const age = S.year - r.born; return age >= 20 && age <= 62 && !r.gone && !hhs.has(r.name) && !/Student|Retired|Director/.test(r.job || ''); });
+    pool.sort((p, q) => hx(p.id, S.seed + 77) - hx(q.id, S.seed + 77));
+    a.victims = pool.slice(0, 4).map(r => r.id);
+    for (const r of pool.slice(0, 4)){
+      r.redundant = at; regNote(r, `Made redundant when ${a.where} closed.`, 'Town news');
+      for (const l of S.loans) if (l.name === r.name) l.pd = Math.min(0.95, l.pd * 2);
+      for (const ac of accsOf(r.name)) if (ac.pay > 0) ac.cut = at + 4;
+    }
+    const hh = (S.households || []).find(h => h.stage !== 'retiree' && h.stage !== 'student' && !h.out); if (hh){ hh.out = 4; hhSay(hh, `Lost their job when ${a.where} closed.`); }
+    const names = pool.slice(0, 4).map(r => r.name);
+    addMail('Local news', `${a.where.replace(/^the /, '').replace(/^./, x => x.toUpperCase())} to close`, `Three hundred jobs will go when ${a.where} closes this month.${names.length ? ` Your customers ${names.join(', ')} work there.` : ''} Expect people to come in worried about their bills, and loans to people who worked there to be riskier.`, 'bad', Math.min(S.month, 11), S.year);
+    news(6, `${a.where.replace(/^the /, '').replace(/^./, x => x.toUpperCase())} closes with the loss of 300 jobs`, 'Workers say they had a month\'s notice.');
+  }
+  if (a.kind === 'scamring'){
+    addMail('Local police', 'Courier fraud in the area', 'Fraudsters are phoning older people, posing as police or bank staff, and telling them to withdraw cash or move money to a "safe account" while a courier waits. Please ask older customers making large or unusual payments who asked them to.', 'bad', Math.min(S.month, 11), S.year);
+    news(5, 'Police warn of courier fraud targeting older residents', 'Callers pose as police officers and bank staff.');
+  }
+  if (a.kind === 'hospital'){
+    addMail('Local news', 'New hospital wing opens', 'The new wing at the General brings 400 jobs. Expect nurses, care workers and paramedics opening accounts over the next two months.', 'good', Math.min(S.month, 11), S.year);
+    news(3, 'New hospital wing brings 400 jobs', 'Staff are moving to the area.');
+  }
+}
+// This week's (or this month's) cards from the arcs that are running.
+function townCards(monthStart){
+  if (!deep('town') || !S.town || S.tutorial || S.over) return;
+  const m = Math.min(S.month, 11), add = [], inQ = new Set(S.queue.filter(c => !c.done && c.who).map(c => c.who.name)), slot = S.weeks ? S.wk : 0;
+  for (const a of S.town.arcs){
+    if (a.y !== S.year || m < a.start || m >= a.start + a.len) continue;
+    if (!a.begun){ if (!monthStart) continue; beginArc(a); }
+    const n = S.weeks ? 1 : 2;
+    for (let i = 0; i < n; i++){
+      const key = (S.year * 12 + m) * 10 + slot * 2 + i;
+      if (hx(key, S.seed + 80 + a.start) > 0.75) continue;
+      if (a.kind === 'closure'){
+        const r = a.victims.map(id => S.cast.regs.find(x => x.id === id)).filter(x => x && !inQ.has(x.name) && !x.gone)[0];
+        if (!r) continue;
+        const c = gen.visit({ v: 'redundant' }); becomeRegular(c, r); add.push(c); inQ.add(r.name); a.victims.push(a.victims.shift());
+      }
+      if (a.kind === 'scamring'){
+        const older = (S.cast ? S.cast.regs : []).filter(r => S.year - r.born >= 68 && !inQ.has(r.name) && !r.gone);
+        const c = gen.app({ scam: true });
+        if (older.length){ const r = older[Math.floor(hx(key, S.seed + 81) * older.length)]; becomeRegular(c, r); inQ.add(r.name); }
+        c.note += ' A taxi is waiting outside for them.'; add.push(c);
+      }
+      if (a.kind === 'hospital'){
+        const c = gen.onboard({ bad: false, saver: hx(key, S.seed + 82) < 0.35 });
+        c.who.sub = ['Nurse', 'Care worker', 'Paramedic', 'Pharmacist', 'Physiotherapist'][Math.floor(hx(key, S.seed + 83) * 5)];
+        c.note = 'Starting at the new hospital wing. ' + c.note; add.push(c);
+      }
+    }
+  }
+  for (const c of add){ c.cst = 1; if (S.weeks) c.wk = S.wk; idCheck(c); if (c.phys && c.who.look){ const mn = mannerOf(c.who); if (mn && !c.fields.some(f => f.l === 'Manner')) c.fields.push(F('Manner', `${mn.name}. ${mn.text}`, null, true)); } }
+  if (add.length){ S.queue = S.queue.concat(add); S.qi = S.queue.filter(x => x.done).length; }
+}
+// A regular's business falls behind: the regulars who work there are paid less for a while, and are riskier to lend to.
+function employerTrouble(l){
+  if (!deep('town') || !S.cast || l.kind !== 'business') return;
+  const boss = S.cast.regs.find(r => (r.job || '').includes(l.name)); if (!boss) return;
+  const at = S.year * 12 + Math.min(S.month, 11), staff = S.cast.regs.filter(r => r.employer === boss.id);
+  for (const r of staff){ regNote(r, `Not paid in full: ${l.name} is struggling.`, 'Town news'); for (const ac of accsOf(r.name)) if (ac.pay > 0) ac.cut = at + 3; for (const x of S.loans) if (x.name === r.name) x.pd = Math.min(0.95, x.pd * 1.5); }
+  if (staff.length) say(`Staff at ${l.name}, including ${staff.map(r => r.name).join(', ')}, have not been paid in full this month.`, 'bad');
+}
+
+/* ---- the weekly challenge: one seed per ISO week (Monday to Sunday, UTC), the same for everyone ---- */
+function isoWeek(ms){
+  const d = new Date(ms), t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()), day = (new Date(t).getUTCDay() + 6) % 7;
+  const th = t - day * 864e5 + 3 * 864e5, y = new Date(th).getUTCFullYear(), w = 1 + Math.floor((th - Date.UTC(y, 0, 1)) / 6048e5);
+  return `${y}-W${String(w).padStart(2, '0')}`;
+}
+function challengeSeed(week){ let h = 0x811c9dc5; for (const ch of 'bank-manager ' + week){ h ^= ch.charCodeAt(0); h = Math.imul(h, 0x01000193) >>> 0; } return (h % 0x7ffffffe) + 1; }
+const CHALLENGE_OPTS = { households: true, meetings: true, rivals: true, weeks: true, characters: true, accounts: true, depth: true };
 
 /* ---- weekly turns ----
    With the weeks option a month runs as four weeks. Week one opens with the month's events and a few customers; each
@@ -1360,7 +1677,7 @@ function holdForWeeks(cards){
 function nextWeek(){
   if (!S.weeks || S.over) throw new Error('there are no weeks in this game');
   if (S.wk >= WEEKS - 1) throw new Error('this is the last week of the month');
-  S.wk++;
+  S.wk++; clockStart();
   const add = S.wkHold.filter(c => c.wk === S.wk);
   S.wkHold = S.wkHold.filter(c => c.wk !== S.wk);
   const w = weekWeights(), n0 = add.length;
@@ -1368,7 +1685,7 @@ function nextWeek(){
   if (owned('cashier')) add.push(gen[wpick(w.filter(([k]) => WEEK_PHYS[k]))]());
   for (const c of add) c.wk = S.wk;
   S.queue = S.queue.concat(shuffle(add));
-  hhLinkCards(); castCards(add);
+  hhLinkCards(); castCards(add); townCards(false); staffByRules(S.queue.filter(c => c.wk === S.wk));
   S.qi = S.queue.filter(x => x.done).length;
   return { week: S.wk, cards: add.length };
 }
@@ -1600,6 +1917,8 @@ function newGame(seed, opts = {}){
   S.path = S.diff ? wpick(['soft', 'sticky', 'downturn'].map(k => [k, dif().path[k]])) : pick(['soft', 'sticky', 'downturn']);
   if (opts.characters) S.cast = { recent: [], regs: [], rid: 0 };
   if (opts.accounts && opts.characters && !opts.tutorial && !opts.scenario) S.acc = { next: 1, list: [] };
+  if (typeof opts.challenge === 'string' && /^\d{4}-W\d{2}$/.test(opts.challenge) && !opts.tutorial && !opts.scenario) S.challenge = opts.challenge;
+  if (opts.depth && !opts.tutorial && !opts.scenario){ const d = opts.depth === true ? {} : opts.depth; S.depth = {}; for (const k of DEPTH_PARTS) S.depth[k] = d[k] !== false; S.provision = 0; }
   if (opts.weeks && !opts.tutorial && !opts.scenario){ S.weeks = true; S.wk = 0; S.wkHold = []; }
   if (opts.households && !opts.tutorial && !opts.scenario) S.households = makeCast();
   if (opts.meetings && !opts.tutorial && !opts.scenario) S.meet = true;
@@ -1613,6 +1932,7 @@ function newGame(seed, opts = {}){
   S.stats.minCap = capRatio();
   rivalsSync(false);
   S.yr = { cap0: capRatio(), dec: [], mon: [] }; if (!S.scenario && !S.tutorial) S.amb = { cap0: S.startCap, yrs: [], done: {}, life: 0, lifeYear: 0 };
+  townYear();
   buildMonth();
   welcomeMail();
   return S;
@@ -1642,6 +1962,7 @@ function nextYear(){
   applyQuiet();
   grantUnlock(r);
   applyQueuedPolicy();
+  townYear();
   buildMonth();
 }
 function migrate(s){ if (s.goodwill == null) s.goodwill = 0; if (s.policy && !s.policy.growth){ s.policy.growth = systemPolicy().growth; s.policy.owner.growth = 'system'; } if (s.policy && !s.policy.operations){ s.policy.operations = systemPolicy().operations; s.policy.owner.operations = 'system'; } if (s.policy && s.policy.funding && s.policy.funding.boeTarget == null) s.policy.funding.boeTarget = 0; for (const t of s.wsTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 3; } for (const t of s.bondTranches || []) if (t.id == null){ t.id = (s.fid = (s.fid || 0) + 1); t.start = t.due - 12; } if (s.swaps == null){ s.swaps = []; s.collateral = 0; } if (s.policy && s.policy.treasury && s.policy.treasury.hedgeTarget == null){ s.policy.treasury.hedgeTarget = 0; s.policy.treasury.hedgeYears = 3; } if (s.wholesale == null){ s.wholesale = 0; s.wsTranches = []; } if (s.bonds == null){ s.bonds = 0; s.bondTranches = []; s.retained = 0; s.pools = []; s.large = []; } if (!s.policy) s.policy = systemPolicy(); { const sp = systemPolicy(); for (const a of ['treasury', 'funding', 'capital']) if (!s.policy[a]) s.policy[a] = sp[a]; if (s.policy.capital.dividendPayout == null) s.policy.capital.dividendPayout = 0; for (const [k, v] of Object.entries(sp.funding)) if (s.policy.funding[k] == null) s.policy.funding[k] = v; for (const a of Object.keys(sp.owner)) if (!s.policy.owner[a]) s.policy.owner[a] = 'system'; } if (!s.up) s.up = {}; if (!s.news) s.news = []; if (!s.stats.harsh) s.stats.harsh = 0; if (s.queue && s.qi){ s.queue.forEach((c, i) => { if (i < s.qi && !c.done) c.done = 'x'; }); } if (!s.inbox) s.inbox = []; if (s.mkt == null){ s.wm = null; s.wmOffer = s.month <= 2 ? 2 : -1; s.mkt = 100; s.mktY0 = 100; s.mktHist = [100]; s.lastMkt = 0; } if (s.pl && s.pl.wealth == null) s.pl.wealth = 0; if (s.sched && s.sched.crash == null){ s.sched.crash = -1; s.sched.pep = 6; } if (!s.y0) s.y0 = { base:4, u:4.3, h:1 }; if (!s.career) s.career = []; if (s.divPaid == null) s.divPaid = 0; if (!s.progress) s.progress = { unlocked:['branch'] }; if (!s.engine) s.engine = ENGINE_VERSION; const keep = S; S = s; try { if (!s.ledger) openLedger('opening (migrated)'); welcomeMail(); } finally { S = keep; } return s; }
@@ -1722,12 +2043,13 @@ function hhOutcome(c, k){
   if (!h || (h.loanId && S.loans.some(l => l.id === h.loanId && l.hh === h.id))) return;
   hhSay(h, k === 'no' ? `Was turned down for a ${KNAME[c.kind] || 'loan'}.` : `Did not go ahead with the ${KNAME[c.kind] || 'loan'}.`);
 }
-function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); boeFacility(); opsByPolicy(); growthByPolicy(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); warnMonth(); meetingMail(); if (S.cast) castCards(S.queue); }
+function buildMonth(){ buildMonthCards(); hhLinkCards(); if (fairValued()) syncGilts(); fundingByPolicy(); boeFacility(); opsByPolicy(); growthByPolicy(); deskByPolicy(); treasuryByPolicy(); capitalByPolicy(); warnMonth(); meetingMail(); if (S.cast) castCards(S.queue); townCards(true); staffByRules(S.queue); }
 function buildMonthCards(){
   const m = S.month, lead = [];
   let other = [];
   S.pl = blankPL();
   if (S.weeks){ S.wk = 0; S.wkHold = []; }
+  clockStart();
   const nr = rateAt(m);
   if (nr !== S.base){ const old = S.base; S.base = nr; if (S.policy.owner.funding === 'player') addMail('Bank of England', `Bank Rate: ${nr.toFixed(2)}%`, `Bank Rate moved from ${old.toFixed(2)}% to ${nr.toFixed(2)}%. Your savings rate follows your funding policy.`, '', S.month, S.year); else lead.push(gen.rate(old, nr)); }
   for (const l of S.loans.filter(l => l.status === 'arrears' && !l.carded).slice(0, 2)) { l.carded = true; lead.push(gen.hardship(l)); }
@@ -1943,12 +2265,15 @@ function optionAllowed(o){ return !(o.cash && S.cash < o.cash); }
 function counterQueue(){ return S.queue.filter(c => c.phys && !c.done); }
 function inboxActions(){ return S.queue.filter(c => !c.phys); }
 function remaining(){ return S.queue.filter(c => !c.done).length; }
-function resolveCard(c, k){
+function resolveCard(c, k, atCounter){
   if (!c || c.done) return null;
   begin(); const cap0 = capital() - (S.injected || 0), b0 = S.cast ? { customers: S.stats.customers, loans: S.loans.length } : null;
-  res[c.kind](c, k); c.done = k; if (c.h && c.h.hh != null) hhOutcome(c, k);
+  const pend0 = S.pending.length;
+  CUR = { c, k }; try { res[c.kind](c, k); } finally { CUR = null; }
+  if (deep('overdraft') && S.acc && c.kind === 'visit') odArrange(c, k, pend0); c.done = k; if (c.h && c.h.hh != null) hhOutcome(c, k);
   S.qi = S.queue.filter(x => x.done).length; logDecision(c, k, cap0);
   const o = OUT; OUT = null; c.out = o; if (b0) regAfter(c, k, b0);
+  if (atCounter) clockSpend(c, k);
   if (S.acc && !S.sim) for (const a of S.acc.list) if (a.reg == null && a.holder === (c.who && c.who.name)){ const r = regFind(a.holder); if (r) a.reg = r.id; }
   return o;
 }
@@ -1958,7 +2283,7 @@ function closeMonth(){
   CLOSING = true;
   begin();
   const m = S.month, u = uf(), rep = { m, events:[] };
-  const ev = (t, tone) => say(t, tone);
+  const ev = (t, tone, p) => { say(t, tone); if (p && p.who && OUT && OUT.lines.length){ const L = OUT.lines[OUT.lines.length - 1]; L.who = p.who; L.dec = p.dec; } };
   let mr = (mktMean(m) + gauss(0, 3)) / 100; if (S.sched.crash === m) mr = -rf(0.07, 0.12);
   mr = clamp(mr, -0.15, 0.12); S.mkt *= 1 + mr; S.lastMkt = mr; S.mktHist.push(Math.round(S.mkt * 10) / 10); if (S.mktHist.length > 36) S.mktHist.shift();
   if (Math.abs(mr) >= 0.04) ev(`Shares ${mr > 0 ? 'rose' : 'fell'} ${pc(Math.abs(mr))} in ${MONTHS[m]}.`, S.wm ? (mr > 0 ? 'good' : 'bad') : '');
@@ -1975,8 +2300,8 @@ function closeMonth(){
       if (l.vd && l.m0 === m){ const last = daysIn(), days = last - l.vd + 1; je('pl.intLoans', [['cash', l.bal * l.rate / 100 * days / 365, 'loan:' + l.id], ['pl.intLoans', -l.bal * l.rate / 100 * days / 365, 'loan:' + l.id]], { note: `Interest: ${days} days at ${l.rate.toFixed(2)}%` }); }
       else post('intLoans', l.bal * l.rate / 1200, 'loan:' + l.id);
       const a = l.bal * AMORT[l.kind]; je('loan.repay', [['cash', a, 'loan:' + l.id], ['loans', -a, 'loan:' + l.id]]); l.bal -= a;
-      const pm = (1 - Math.pow(1 - l.pd, 1 / 12)) * AMP * u * (1 + Math.max(0, S.base - S.y0.base) * (P().stress || 0));
-      if (l.m0 !== m && R() < pm){ l.status = 'arrears'; l.since = m; l.carded = false; ev(`${l.name} fell behind on their ${KNAME[l.kind]}.`, 'bad'); }
+      const pm = (1 - Math.pow(1 - l.pd, 1 / 12)) * AMP * u * (1 + Math.max(0, S.base - S.y0.base) * (P().stress || 0)) * (deep('risk') ? season(m - l.m0) : 1);
+      if (l.m0 !== m && R() < pm){ l.status = 'arrears'; l.since = m; l.carded = false; ev(`${l.name} fell behind on their ${KNAME[l.kind]}.`, 'bad'); employerTrouble(l); }
     } else if (l.status === 'plan'){
       post('intLoans', l.bal * l.rate / 2400, 'loan:' + l.id);
       if (R() < l.cure){ l.status = 'current'; l.pd *= 0.8; ev(`${l.name} is back to full payments.`, 'good'); }
@@ -1993,6 +2318,7 @@ function closeMonth(){
   for (const d of S.large) post('intDep', -d.amt * d.rate / 1200);
   for (const b of S.bondTranches) post('intDep', -b.amt * b.rate / 1200);
   poolMonth(u);
+  provisionMonth();
   if (S.cb > 0) post('intCB', -S.cb * (S.base + 1) / 1200);
   for (const w of S.wsTranches) post('intCB', -w.amt * w.rate / 1200);
   if (upMonthly()) post('costs', -upMonthly());
@@ -2013,10 +2339,11 @@ function closeMonth(){
     if (p.news) news(p.news[0], p.news[1], p.news[2]);
     if (p.special){ wealthSpecial(p, ev); continue; }
     if (p.gr && S.growth) S.growth.upheld.push(S.year * 12 + S.month);
+    if (p.odWrite){ const w = odWriteOff(p); if (w < 0) p.shown = w; }
     if (p.cash){ post(p.key || 'redress', p.cash); if (p.fine) S.stats.fines += -p.cash; }
     if (p.trust) S.trust = clamp(S.trust + p.trust, 0, 100);
     if (p.comp) S.comp = clamp(S.comp + p.comp, 0, 100);
-    ev(p.text + (p.cash ? ` (${fmt(p.cash, true)})` : ''), p.tone);
+    ev(p.text + (p.cash || p.shown ? ` (${fmt(p.cash || p.shown, true)})` : ''), p.tone, p);
   }
   // dividends: a share of the month's profit, if the player owns capital
   if (S.policy.owner.capital === 'player' && S.policy.capital.dividendPayout > 0){
@@ -2930,7 +3257,7 @@ function rating(){
   const profit = capital() - S.startCap + (S.divPaid || 0) - (S.injected || 0), roe = profit / (S.startCap + (S.injected || 0) / 2);
   if (S.over && S.over !== 'done' && S.over !== 'resigned') return { letter:'D', score:0, profit, roe, peer:0 };      // resigning is judged on the year so far
   const avgBase = S.rateSum ? S.rateSum / Math.max(1, S.month) : S.base;
-  const peer = clamp(-0.43 + 0.112 * avgBase + (S.career && S.career.length ? 0.07 : 0), -0.25, 0.3);
+  const peer = clamp(-0.43 + 0.112 * avgBase + (S.career && S.career.length ? 0.07 : 0) - (deep('risk') ? 0.045 : 0), -0.25, 0.3);      // similar banks provide for their losses too
   const pP = clamp(0.5 + (roe - peer) / 0.15, -1, 1.5) * 30, pC = S.trust * 0.35, pK = S.comp * 0.25;
   const pen = S.stats.capBreach * 4 + S.stats.emergency * 4;
   const pD = S.divPaid > 0 ? clamp(S.divPaid / S.startCap / 0.05, 0, 1) * 8 : 0;   // shareholders like a dividend, up to 8 points at a 5% yield
@@ -2984,7 +3311,7 @@ function archiveMonth(){
   }
 }
 function mailMonth(rep, prevMonth, prevYear){
-  for (const e of rep.events) addMail(senderOf(e.t), firstSentence(e.t), e.t, e.tone, prevMonth, prevYear);
+  for (const e of rep.events){ addMail(senderOf(e.t), firstSentence(e.t), e.t, e.tone, prevMonth, prevYear); if (e.who){ const mm = S.inbox[S.inbox.length - 1]; mm.who = e.who; mm.dec = e.dec; } }
   if (rep.next) addMail('Economics desk', `${MONTHS[S.month]} outlook`, `Unemployment ${rep.next.unemp.toFixed(1)}%. House prices ${(rep.next.hpi * 100 >= 0 ? '+' : '')}${(rep.next.hpi * 100).toFixed(1)}% this year. Bank Rate ${rep.next.base.toFixed(2)}%. Inflation ${inflation().toFixed(1)}%, so savings at the best easy-access rate return ${(mkt() - inflation() >= 0 ? '+' : '')}${(mkt() - inflation()).toFixed(1)}% a year after rising prices. Shares ${(S.mkt / S.mktY0 - 1 >= 0 ? '+' : '')}${pc(S.mkt / S.mktY0 - 1)} this year.`, '', prevMonth, prevYear);
 }
 function welcomeMail(){
@@ -3032,6 +3359,7 @@ function settingsFacts(){
   add('branch', 'counter', F.branch === 'closed' ? 'closed' : F.branch === 'hub' ? 'hub' : 'full', 'bank');
   for (const k of ['broker', 'ggs', 'cyber']) add('branch', k, F[k] ? 1 : 0, 'bank');
   add('branch', 'wealth', S.wm ? (S.wm.houseNew ? 'house funds' : 'open') : 'none', 'bank');
+  if (S.depth && S.depth.staff) for (const k of Object.keys(RULES)) add('rules', k, RULES[k][(S.rules && S.rules[k]) || 0], 'player');
   return rows;
 }
 
@@ -3089,7 +3417,9 @@ function yrLog(){ return S.yr || (S.yr = { cap0: capRatio(), dec: [], mon: [] })
 function logDecision(c, k, cap0){
   if (S.sim) return;
   const o = (c.opts || []).find(x => x.k === k);
-  yrLog().dec.push({ m: S.month, label: c.label || c.kind, who: c.who ? c.who.name : '', pick: o ? o.l : String(k), d: r1(capital() - (S.injected || 0) - cap0) });   // new money from shareholders is not the decision's own effect
+  const e = { m: S.month, label: c.label || c.kind, who: c.who ? c.who.name : '', pick: o ? o.l : String(k), d: r1(capital() - (S.injected || 0) - cap0) };
+  if (deep('calls')){ e.kind = c.kind; e.y = S.year; const ok = judgeCall(c, k); if (ok != null) e.ok = ok; if (c.staff) e.staff = 1; }
+  yrLog().dec.push(e);   // new money from shareholders is not the decision's own effect
 }
 function logMonth(rep){
   if (S.sim) return;
@@ -3182,6 +3512,8 @@ function heraldStories(){
   for (const n of S.news || []) c.push({ w:n.w + n.m / 30, head:n.head, body:n.body });
   const yr = P().name.replace(/^an? /, '');
   if (!fail) c.push(r.profit >= 0 ? { w:4 + Math.max(0, r.roe - r.peer) * 25, head:`Counting House makes ${fmt(r.profit)} in a year of ${yr}`, body:`A return on capital of ${pc(r.roe)}, against about ${pc(r.peer, 0)} for similar banks.` } : { w:4 + Math.max(0, r.peer - r.roe) * 25, head:`Counting House loses ${fmt(-r.profit)} in a year of ${yr}`, body:`A return on capital of ${pc(r.roe)}. Similar banks managed about ${pc(r.peer, 0)}.` });
+  if (deep('risk') && S.provision > 1) c.push({ w:3 + S.provision / 40, head:`Counting House holds ${fmt(S.provision)} against loans that may go bad`, body:`Under the accounting rules a bank sets money aside for expected losses when it lends, not when a borrower stops paying. Most of it is for loans in their first two years, when defaults peak.` });
+  if (deep('clock') && st.walked >= 3) c.push({ w:2 + st.walked / 3, head:`Queues at Counting House: ${st.walked} customers gave up and left`, body:'Regulars say the branch is short-staffed at the counter.' });
   if (st.scamStop >= 2) c.push({ w:3 + st.scamStop, head:`Branch staff stopped ${st.scamStop} scams this year`, body:'Cashiers called police while customers were still on the phone to fraudsters.' });
   if (st.scamMiss >= 2) c.push({ w:2 + st.scamMiss, head:`${st.scamMiss} customers scammed in branch`, body:'Victims say staff did not ask enough questions.' });
   if (st.fines >= 60) c.push({ w:4 + st.fines / 60, head:`Fines and refunds cost Counting House ${fmt(st.fines)}`, body:'The bank says it has tightened its controls.' });
@@ -3213,8 +3545,9 @@ function dispatch(cmd){
 function dispatchInner(cmd){
   switch (cmd.type){
     case 'newGame': return newGame(cmd.seed, cmd.opts || {});
-    case 'resolve': { const c = S.queue.find(x => x.id === cmd.id); return resolveCard(c, cmd.k); }
+    case 'resolve': { const c = S.queue.find(x => x.id === cmd.id); return resolveCard(c, cmd.k, true); }
     case 'nextWeek': return nextWeek();
+    case 'setRules': return setRules(cmd.rules);
     case 'closeMonth': { if (S.weeks && !S.over && S.wk < WEEKS - 1) throw new Error('the month still has weeks to run'); const pm = S.month, py = S.year; archiveMonth(); const rep = closeMonth(); mailMonth(rep, pm, py); return rep; }
     case 'read': return markRead(cmd.key);
     case 'nextYear': return nextYear();

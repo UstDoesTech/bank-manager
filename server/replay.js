@@ -14,14 +14,16 @@ async function verifyGame(pool, host, gameId) {
   const cmds = (await pool.query('SELECT seq, payload FROM bank.command WHERE game_id = $1 ORDER BY seq', [gameId])).rows;
   cmds.forEach((c, i) => { if (c.seq !== i + 1) problems.push(`command sequence gap at ${i + 1}`); });
 
-  let state = null, entries = [], decisions = 0;
+  let state = null, entries = [], decisions = 0, auto = 0;
   for (const c of cmds) {
     if (c.payload.type === 'resolve') decisions++;
     try {
       // each command must be one the live server would have accepted at that point
       if (c.payload.type !== 'newGame') validate(state, c.payload);
+      const done = new Set(((state && state.queue) || []).filter((x) => x.done).map((x) => x.id));
       const out = host.apply(state, c.payload);
       state = out.state;
+      auto += (state.queue || []).filter((x) => x.done && (x.staff || x.done === 'walked') && !done.has(x.id)).length;
       entries = entries.concat(out.entries);
     } catch (e) {
       problems.push(`command ${c.seq} (${c.payload.type}) cannot be replayed: ${e.message}`);
@@ -182,8 +184,10 @@ async function verifyGame(pool, host, gameId) {
   const total = lines.reduce((t, l) => t + Number(l.amount_pence), 0);
   if (total !== 0) problems.push(`trial balance is ${total} pence, not zero`);
 
-  const d = (await pool.query('SELECT count(*)::int AS n FROM bank.decision WHERE game_id = $1', [gameId])).rows[0].n;
+  const d = (await pool.query("SELECT count(*)::int AS n FROM bank.decision WHERE game_id = $1 AND decided_by = 'player'", [gameId])).rows[0].n;      // the team's and the clock's come without commands
   if (d !== decisions) problems.push(`${d} decisions stored, ${decisions} resolve commands`);
+  const a = (await pool.query("SELECT count(*)::int AS n FROM bank.decision WHERE game_id = $1 AND decided_by <> 'player'", [gameId])).rows[0].n;
+  if (a !== auto) problems.push(`${a} team and walk-out decisions stored, the replay makes ${auto}`);
   return { ok: problems.length === 0, problems, commands: cmds.length, entries: entries.length };
 }
 

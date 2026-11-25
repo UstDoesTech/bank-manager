@@ -38,18 +38,21 @@ function endScreen(){
       <tr><td>Fines, penalties and redress</td><td>${fmt(st.fines)}</td></tr>
       ${S.wm ? `<tr><td>Client assets managed</td><td>${fmt(aum())}</td></tr>` : ''}
       <tr><td>Lowest capital ratio</td><td>${pc(st.minCap)}</td></tr>
+      ${S.depth && S.depth.risk ? `<tr><td>Held against expected losses</td><td>${fmt(S.provision || 0)}</td></tr>` : ''}
+      ${S.depth && S.depth.clock ? `<tr><td>Customers who gave up waiting</td><td>${st.walked || 0}</td></tr>` : ''}
     </table>
     <p style="color:var(--muted);font-size:calc(13px*var(--ts))">Default rates in this game run at about three times real-world levels, and a year is squeezed into twelve short months, so things move faster and go wrong more often than they would in life.</p>
     ${S.career.length ? `<h3>Earlier years</h3><table class="ledger">${S.career.map(c => `<tr><td>${c.year} · ${esc(c.letter)}</td><td>${fmt(c.profit, true)}</td></tr>`).join('')}</table>` : ''}
     </details>
     ${fail ? '' : `<p style="color:var(--muted);font-size:calc(14px*var(--ts))">${S.loans.length} loans, ${fmt(giltBook())} of gilts and ${fmt(S.deposits)} of deposits carry into ${S.year + 1}, along with your customers' trust and the regulator's memory.</p>`}
 
-    <div class="rowbtn">${fail || S.scenario ? '' : `<button type="button" class="btn primary" id="ovGo">Continue into ${S.year + 1}</button>`}${S.debrief && S.debrief.length ? '<button type="button" class="btn neutral" id="ovDebrief">Notes from the executive team</button>' : ''}${S.yr && S.yr.mon.length > 1 ? '<button type="button" class="btn neutral" id="ovReplay">Replay the year</button>' : ''}<button type="button" class="btn link" id="ovPaper">Read The Fiscal Herald again</button>${S.scenario ? `<button type="button" class="btn primary" id="ovRetry">Try ${esc(SCENARIOS[S.scenario].name.replace(/^The /, 'the '))} again</button><button type="button" class="btn neutral" id="ovMenu">Main menu</button>` : `<button type="button" class="btn ${fail ? 'primary' : 'neutral'}" id="ovNew">Start a new bank</button>`}</div>`);
+    <div class="rowbtn">${fail || S.scenario ? '' : `<button type="button" class="btn primary" id="ovGo">Continue into ${S.year + 1}</button>`}${S.debrief && S.debrief.length ? '<button type="button" class="btn neutral" id="ovDebrief">Notes from the executive team</button>' : ''}${S.yr && S.yr.mon.length > 1 ? '<button type="button" class="btn neutral" id="ovReplay">Replay the year</button>' : ''}<button type="button" class="btn link" id="ovPaper">Read The Fiscal Herald again</button>${S.challenge && S.career.length === 0 ? `<button type="button" class="btn link" id="ovChal">This week's challenge leaderboard</button>` : ''}${S.scenario ? `<button type="button" class="btn primary" id="ovRetry">Try ${esc(SCENARIOS[S.scenario].name.replace(/^The /, 'the '))} again</button><button type="button" class="btn neutral" id="ovMenu">Main menu</button>` : `<button type="button" class="btn ${fail ? 'primary' : 'neutral'}" id="ovNew">Start a new bank</button>`}</div>`);
   const go = $('#ovGo'); if (go) go.onclick = () => { dispatch({ type:"nextYear" }); save(); play(); };
   const nw = $('#ovNew'); if (nw) nw.onclick = () => { clearSave(); start({ fresh:true }); };
   const rt = $('#ovRetry'); if (rt) rt.onclick = () => startScenario(S.scenario);
   const mn = $('#ovMenu'); if (mn) mn.onclick = () => { clearSave(); S = null; titleScreen(); };
   const pp = $('#ovPaper'); if (pp) pp.onclick = herald;
+  const ch = $('#ovChal'); if (ch) ch.onclick = async () => { await Remote.settled(); challengeScreen(); };
   const db = $('#ovDebrief'); if (db) db.onclick = debriefScreen;
   const rp = $('#ovReplay'); if (rp) rp.onclick = replayScreen;
   offerLiteracy();

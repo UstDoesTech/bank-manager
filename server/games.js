@@ -3,7 +3,8 @@ const crypto = require('crypto');
 const { HttpError } = require('./auth');
 
 const PENCE_PER_K = 1e5;                  // the engine counts £ thousands; the database counts pence
-const COMMANDS = new Set(['newGame', 'resolve', 'nextWeek', 'closeMonth', 'nextYear', 'buy', 'read', 'setPolicy', 'stress', 'resign']);
+const COMMANDS = new Set(['newGame', 'resolve', 'nextWeek', 'closeMonth', 'nextYear', 'buy', 'read', 'setPolicy', 'setRules', 'stress', 'resign']);
+const RULE_MAX = { fraud: 2, limits: 2, complaints: 1 };
 
 // Converts one engine journal entry to whole pence. Rounding each line can leave the entry off by a penny or two,
 // so the difference goes on the largest line and the stored entry sums to exactly zero.
@@ -49,6 +50,12 @@ function validate(state, cmd) {
     if (!['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations', 'growth'].includes(cmd.area)) throw new HttpError(400, 'bad_command', 'Unknown policy area.');
     if (!state.progress.unlocked.includes(cmd.area)) throw new HttpError(403, 'not_unlocked', 'You do not control that policy yet.');
     if (!cmd.release && (!cmd.values || typeof cmd.values !== 'object' || Array.isArray(cmd.values))) throw new HttpError(400, 'bad_command', 'Missing values.');
+  } else if (cmd.type === 'setRules') {
+    if (state.over) throw new HttpError(409, 'game_over', 'The year is over.');
+    if (!state.depth || !state.depth.staff) throw new HttpError(409, 'no_rules', 'Standing instructions are not part of this game.');
+    const r = cmd.rules;
+    if (!r || typeof r !== 'object' || Array.isArray(r) || !Object.keys(r).length) throw new HttpError(400, 'bad_command', 'Missing rules.');
+    for (const [k, v] of Object.entries(r)) if (!(k in RULE_MAX) || !Number.isInteger(v) || v < 0 || v > RULE_MAX[k]) throw new HttpError(400, 'bad_command', 'Unknown rule.');
   } else if (cmd.type === 'resign') {
     if (state.over) throw new HttpError(409, 'game_over', 'The game is already over.');
     if (!state.progress.unlocked.some((a) => ['pricing', 'credit', 'treasury', 'funding', 'capital', 'operations', 'growth'].includes(a))) throw new HttpError(403, 'not_unlocked', 'Only a chief executive can resign.');
@@ -67,6 +74,7 @@ function cleanCommand(cmd) {
   if (cmd.type === 'resolve') { out.id = cmd.id; out.k = cmd.k; }
   if (cmd.type === 'buy' || cmd.type === 'read') out.key = cmd.key;
   if (cmd.type === 'setPolicy') { out.area = cmd.area; out.values = cmd.values; if (cmd.release) out.release = true; }
+  if (cmd.type === 'setRules' && cmd.rules && typeof cmd.rules === 'object') { out.rules = {}; for (const k of Object.keys(RULE_MAX)) if (k in cmd.rules) out.rules[k] = cmd.rules[k]; }
   if (cmd.type === 'stress'){ if (cmd.overrides) out.overrides = cmd.overrides; if (cmd.scenario && cmd.scenario !== 'recession') out.scenario = cmd.scenario; }
   if (cmd.type === 'newGame') { out.seed = cmd.seed; out.opts = cmd.opts || {}; }
   return out;
@@ -414,6 +422,15 @@ async function persist(client, game, seq, cmd, before, out) {
       await client.query('INSERT INTO bank.event (game_id, command_seq, year, month, kind, tone, text) VALUES ($1, $2, $3, $4, $5, $6, $7)',
         [gid, seq, before.year, before.month, 'outcome', l.tone || '', l.t]);
   }
+  // cases the branch team decided by the standing instructions, and customers who walked out: no command of their own
+  const auto = (state.queue || []).filter((c) => c.done && (c.staff || c.done === 'walked') && before.done && !before.done.has(c.id));
+  for (const c of auto)
+    await client.query(
+      `INSERT INTO bank.decision (game_id, command_seq, card_id, kind, year, month, decided_by, options, chosen, truth, shown, week, person_id, customer_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [gid, seq, c.id, c.kind, state.year, Math.min(state.month, 11), c.staff ? 'staff' : 'clock',
+        JSON.stringify(c.opts.map((o) => ({ k: o.k, l: o.l }))), c.done, JSON.stringify(c.h || {}), JSON.stringify((c.fields || []).map((f) => ({ l: f.l, v: f.v }))), state.weeks ? (c.wk || 0) : null,
+        await upsertPerson(client, c.who, people), customerOf(state, c)]);
   if (cmd.type === 'closeMonth') {
     for (const l of (result && result.events) || [])
       await client.query('INSERT INTO bank.event (game_id, command_seq, year, month, kind, tone, text) VALUES ($1, $2, $3, $4, $5, $6, $7)',
@@ -499,21 +516,45 @@ function register(app, { pool, host }) {
     if (body.characters) opts.characters = true;
     if (body.accounts && body.characters && !opts.tutorial && !opts.scenario) opts.accounts = true;
     if ((body.difficulty === 'gentle' || body.difficulty === 'hard') && !opts.tutorial && !opts.scenario) opts.difficulty = body.difficulty;
-    const seed = crypto.randomInt(1, 0x7fffffff);
+    if (body.depth && !opts.tutorial && !opts.scenario) opts.depth = true;
+    let seed = crypto.randomInt(1, 0x7fffffff), challenge = null;
+    if (body.challenge){                       // the weekly challenge: this week's seed and the same options for everyone
+      challenge = host.isoWeek(Date.now());
+      for (const k of Object.keys(opts)) delete opts[k];
+      Object.assign(opts, host.challengeOpts(), { challenge });
+      seed = host.challengeSeed(challenge);
+    }
     const cmd = { type: 'newGame', seed, opts };
     let out;
     try { out = host.apply(null, cmd); } catch (e) { throw new HttpError(422, 'bad_game', 'Could not start that game.'); }
     const game = await inTransaction(async (client) => {
       const g = (await client.query(
-        `INSERT INTO bank.game (player_key, mode, scenario, tutorial, seed, engine_version, in_analysis, difficulty, weekly, characters, households, meetings, rivals, chief_executive, accounts)
-         VALUES ($1, 'branch', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
+        `INSERT INTO bank.game (player_key, mode, scenario, tutorial, seed, engine_version, in_analysis, difficulty, weekly, characters, households, meetings, rivals, chief_executive, accounts, depth, challenge)
+         VALUES ($1, 'branch', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
         [p.player_key, opts.scenario || null, !!opts.tutorial, seed, host.version, !p.analysis_opt_out, opts.difficulty || 'standard',
-          !!out.state.weeks, !!out.state.cast, !!out.state.households, !!out.state.meet, !!out.state.rivals, !!opts.chiefExecutive && !opts.tutorial && !opts.scenario, !!out.state.acc])).rows[0];
-      await persist(client, g, 1, cmd, { year: out.state.year, month: out.state.month }, out);
+          !!out.state.weeks, !!out.state.cast, !!out.state.households, !!out.state.meet, !!out.state.rivals, !!opts.chiefExecutive && !opts.tutorial && !opts.scenario, !!out.state.acc, !!out.state.depth, out.state.challenge || null])).rows[0];
+      await persist(client, g, 1, cmd, { year: out.state.year, month: out.state.month, done: new Set() }, out);
       return g;
     });
     reply.code(201);
-    return { id: game.id, seq: 1, seed, engineVersion: host.version, state: out.state };
+    return { id: game.id, seq: 1, seed, engineVersion: host.version, state: out.state, ...(challenge ? { challenge } : {}) };
+  });
+
+  // The weekly challenge: this week's seed (anyone may ask), and the best first-year rating of each player who has played it.
+  // Players are shown only as "Banker" and four letters from a hash of their key; the caller's own row is marked.
+  app.get('/api/challenge', async () => { const week = host.isoWeek(Date.now()); return { week, seed: host.challengeSeed(week), options: host.challengeOpts() }; });
+  app.get('/api/challenge/leaderboard', async (req) => {
+    const week = /^\d{4}-W\d{2}$/.test(String(req.query.week || '')) ? String(req.query.week) : host.isoWeek(Date.now());
+    const me = req.player ? req.player.player_key : null;
+    const { rows } = await pool.query(
+      `WITH firsts AS (
+         SELECT DISTINCT ON (y.game_id) g.player_key, y.letter, y.score, y.profit_pence
+           FROM bank.year_result y JOIN bank.game g ON g.id = y.game_id
+          WHERE g.challenge = $1 ORDER BY y.game_id, y.year)
+       SELECT DISTINCT ON (player_key) player_key, letter, score, profit_pence FROM firsts ORDER BY player_key, score DESC`, [week]);
+    rows.sort((a, b) => Number(b.score) - Number(a.score));
+    const tag = (k) => 'Banker ' + crypto.createHash('sha256').update(String(k)).digest('hex').slice(0, 4).toUpperCase();
+    return { week, players: rows.length, top: rows.slice(0, 20).map((r, i) => ({ rank: i + 1, name: tag(r.player_key), letter: r.letter, score: Math.round(Number(r.score) * 10) / 10, profitPence: Number(r.profit_pence), you: !!me && r.player_key === me })) };
   });
 
   app.get('/api/games', auth, async (req) => {
@@ -550,7 +591,7 @@ function register(app, { pool, host }) {
       const state = (await client.query('SELECT state FROM bank.game_state WHERE game_id = $1', [g.id])).rows[0].state;
       validate(state, cmd);
       const card = cmd.type === 'resolve' ? state.queue.find((x) => x.id === cmd.id) : null;
-      const before = { year: state.year, month: state.month, card, weeks: !!state.weeks, regs: regularsBefore(state), loanIds: new Set((state.loans || []).map((l) => l.id)) };
+      const before = { year: state.year, month: state.month, card, weeks: !!state.weeks, regs: regularsBefore(state), loanIds: new Set((state.loans || []).map((l) => l.id)), done: new Set((state.queue || []).filter((c) => c.done).map((c) => c.id)) };
       let out;
       try { out = host.apply(state, cmd); } catch (e) { req.log.error(e); throw new HttpError(422, 'engine_error', 'The engine could not apply that command.'); }
       if (cmd.type === 'buy' && !out.result) throw new HttpError(422, 'cannot_buy', 'That cannot be bought now.');

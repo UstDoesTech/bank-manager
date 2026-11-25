@@ -38,6 +38,13 @@ const SCREENS = [
   ['week-end', () => { play(); served = null; setView('counter'); renderCounter(true); hud(); }],
   ['week-banner', () => { endWeek(); }],
   ['regulars', () => { for (let w = 0; w < 4; w++){ play(); if (S.wk < 3) dispatch({ type: 'nextWeek' }); } dispatch({ type: 'closeMonth' }); householdScreen(null, S.cast.regs[0] && S.cast.regs[0].id); }],
+  // depth: the counter clock, a walk-out, standing instructions, the month's calls, a consequence with a face, the challenge
+  ['depth-counter', () => { closeOverlay(); dispatch({ type: 'newGame', seed: 14, opts: { households: true, meetings: true, rivals: true, weeks: true, characters: true, accounts: true, depth: true } }); begin3(); setView('counter'); renderCounter(true); hud(); }],
+  ['depth-walkout', () => { S.clock.left = 1; const c = counterQueue()[0]; if (c) stampIt(c, 0); }],
+  ['depth-rules', () => { served = null; branchPanel(); }],
+  ['depth-calls', () => { closeOverlay(); for (let m = 0; m < 3; m++){ for (let w = 0; w < 4; w++){ play(); if (S.wk < 3) dispatch({ type: 'nextWeek' }); } if (m < 2) dispatch({ type: 'closeMonth' }); } closeBooks(); const d = document.querySelector('#ov details'); if (d) d.open = true; }],
+  ['depth-consequence', () => { closeOverlay(); const m = (S.inbox || []).slice().reverse().find(x => x.who); setView('inbox'); if (m) openMsg('m' + m.id); }],
+  ['challenge', () => challengeScreen()],
 ];
 (async () => {
   const b = await chromium.launch({ executablePath: E, headless: true, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });

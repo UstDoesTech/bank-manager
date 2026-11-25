@@ -897,4 +897,73 @@ for (const pol of ALL()) for (const seed of [3, 17]){
   const by = {}; for (const e of entries) for (const [ac, d, ref] of e.lines) if (ac === 'deposits' && ref) by[ref] = (by[ref] || 0) + d;
   for (const x of a.S.acc.list) assert(Math.abs(-(by['deposit:' + x.id] || 0) - x.bal) < 1e-6); n++;
   const R = loadEngine(src); for (const cmd of a.cmds) R.dispatch(cmd); assert.strictEqual(hashState(R.S, []), hashState(a.S, [])); n++; }
+// 29. Depth (depth option, on for new careers): expected credit losses, the counter clock, ID photos, standing instructions,
+//     town stories, consequences with faces, a gradual start, arranged overdrafts and the weekly challenge. Off, nothing changes.
+{ const DO = { households: true, meetings: true, rivals: true, weeks: true, characters: true, accounts: true };
+  const plain = play(loadEngine(src), 12, 'careful', 1, DO).S;
+  assert(!plain.depth && plain.provision === undefined && !plain.clock && !plain.town && !plain.rules, 'without depth there is none of it'); n++;
+  const opts = Object.assign({ depth: true }, DO);
+  const E = loadEngine(src); let entries = []; E.setSink(e => entries.push(e));
+  const a = play(E, 12, 'careful', 2, opts, run => run({ type: 'setRules', rules: { fraud: 1, limits: 1, complaints: 1 } })), S = a.S;
+  assert.strictEqual(JSON.stringify(Object.keys(S.depth)), JSON.stringify(['risk', 'clock', 'ids', 'staff', 'town', 'ramp', 'overdraft', 'calls'])); n++;
+  assert.strictEqual(E.ledgerCheck().length, 0, 'the ledger balances with every part on'); n++;
+  // replay: the same commands rebuild the same game
+  { const R = loadEngine(src); for (const cmd of a.cmds) R.dispatch(cmd); assert.strictEqual(hashState(R.S, []), hashState(S, [])); n++; }
+  // expected credit losses: a contra-asset, trued up to the sum over the book each month
+  assert(S.provision > 0, 'money is held against expected losses'); n++;
+  assert(entries.some(e => e.memo === 'provision' && /when the loan was made/.test(e.note || '')) && entries.some(e => e.memo === 'provision' && /trued up/.test(e.note || '')), 'provided at booking and trued up'); n++;
+  { const t = S.loans.reduce((x, l) => x + E.eclOf(l), 0); assert(Math.abs(t - S.provision) < 1e-6 || S.month < 12, 'held equals the book\'s expected loss at month end: ' + t + ' vs ' + S.provision); n++; }
+  { const noRisk = play(loadEngine(src), 12, 'careful', 1, Object.assign({}, DO, { depth: { risk: false } })).S; assert(!noRisk.depth.risk && noRisk.depth.clock && !noRisk.provision, 'each part can be switched off'); n++; }
+  // calls: every logged decision knows its kind; most are judged; the team's and the walk-outs are told apart
+  const dec = S.yr.dec;
+  assert(dec.length > 50 && dec.every(d => d.kind), 'decisions carry their kind'); n++;
+  assert(dec.filter(d => d.ok === true).length > dec.filter(d => d.ok === false).length, 'the careful bot is mostly right'); n++;
+  assert(dec.some(d => d.staff) && dec.some(d => d.walked), 'the team decided some and some customers walked out'); n++;
+  { const f = E.callsFacts(5, S.year); assert(f.length && f.every(r => r.label && r.right + r.wrong + r.staff + r.walked > 0)); n++; }
+  assert(S.inbox.some(m => m.who && m.who.name && m.dec && m.dec.pick), 'a consequence names the customer and the decision'); n++;
+  // the town: arcs every year, with victims and their own cards
+  assert(S.town && S.town.arcs.length >= 2 && S.town.arcs.every(x => ['closure', 'scamring', 'hospital'].includes(x.kind))); n++;
+  // overdrafts: arranged limits, and interest only on what is used
+  assert(S.acc.list.some(x => x.limit > 0)); n++;
+  assert(entries.filter(e => e.memo === 'overdraft.interest').every(e => e.lines.some(([ac, amt]) => ac === 'pl.intLoans' && amt < 0)), 'overdraft interest is income'); n++;
+  // the accounts still add up, overdrawn ones included
+  { const by = {}; for (const e of entries) for (const [ac, d, ref] of e.lines) if (ac === 'deposits' && ref) by[ref] = (by[ref] || 0) + d;
+    for (const x of S.acc.list) assert(Math.abs(-(by['deposit:' + x.id] || 0) - x.bal) < 1e-6, 'account ' + x.id); n++; }
+  // standing instructions: checked, applied, recorded as settings
+  { const G = loadEngine(src); G.dispatch({ type: 'newGame', seed: 4, opts });
+    assert.throws(() => G.dispatch({ type: 'setRules', rules: { fraud: 2 } }), /fraud scoring model/); n++;
+    assert.throws(() => G.dispatch({ type: 'setRules', rules: { lunch: 1 } }), /unknown rule/); n++;
+    G.dispatch({ type: 'setRules', rules: { fraud: 1 } });
+    assert(G.settingsFacts().some(r => r.area === 'rules' && r.setting === 'fraud' && /two or more/.test(r.text))); n++;
+    const P = loadEngine(src); P.dispatch({ type: 'newGame', seed: 4, opts: DO }); assert.throws(() => P.dispatch({ type: 'setRules', rules: { fraud: 1 } }), /not part of this game/); n++;
+    assert(!P.settingsFacts().some(r => r.area === 'rules'), 'no rule rows without depth'); n++;
+    // the team decides from the papers, the same way every time
+    const c = { kind: 'fraud', fields: [{ l: 'Merchant', v: 'Gift card website' }, { l: 'Location', v: 'Abroad · no travel spending on record' }], opts: [] };
+    assert.strictEqual(G.staffDecide(c), 'block'); c.fields[1].v = 'Where they usually shop'; assert.strictEqual(G.staffDecide(c), 'let'); n++; }
+  // the clock: time per case, and everyone still waiting leaves when it runs out
+  { const G = loadEngine(src); G.dispatch({ type: 'newGame', seed: 21, opts });
+    const t0 = G.S.clock.left, c = G.current(); assert(t0 > 0 && c); const k = c.opts[0].k, cost = G.timeCost(c, k);
+    G.dispatch({ type: 'resolve', id: c.id, k }); if (c.phys) assert.strictEqual(G.S.clock.left, t0 - cost); n++;
+    let guard = 0; while (G.S.clock.left > 0 && G.current() && guard++ < 40){ const x = G.current(); G.dispatch({ type: 'resolve', id: x.id, k: x.opts[0].k }); }
+    const walked = G.S.queue.filter(x => x.done === 'walked');
+    if (G.S.clock.left <= 0) assert(walked.every(x => x.phys && x.out && /gave up waiting/.test(x.out.lines[0].t)) && G.S.queue.every(x => !x.phys || x.done || (x.wk || 0) !== G.S.wk), 'all waiting customers walk out');
+    n++; }
+  // ID photos: forged IDs show someone else, genuine ones can be old, impostors carry the regular's photo, mule faces come back
+  { let forged = 0, older = 0, back = 0;
+    for (const seed of [6, 7]){ const G = loadEngine(src), cur = G.current, seen = new Set();
+      G.current = () => { const c = cur(); if (c && !seen.has(c.id)){ seen.add(c.id);
+        if (c.idLook && c.kind === 'onboard' && c.h.bad) forged++;
+        if (c.idLook && !(c.h.bad || c.h.imp)) older++;
+        if (c.h.seenBefore) back++; } return c; };
+      play(G, seed, 'careful', 2, opts); }
+    assert(forged > 0 && older > 0 && back > 0, JSON.stringify({ forged, older, back })); n++; }
+  // a gradual start: the first month's visits come from the first three kinds only
+  { const G = loadEngine(src); G.dispatch({ type: 'newGame', seed: 30, opts }); const kinds = new Set();
+    for (let w = 0; w < 4; w++){ for (const c of G.S.queue) if (c.kind === 'visit' && c.h.v !== 'redundant') kinds.add(c.h.v); if (w < 3){ for (let c; (c = G.current());) G.dispatch({ type: 'resolve', id: c.id, k: c.opts[0].k }); G.dispatch({ type: 'nextWeek' }); } }
+    assert([...kinds].every(k => ['switch', 'savings', 'bereave'].includes(k)), [...kinds].join()); n++; }
+  // the weekly challenge: one seed per ISO week, the same for everyone
+  assert.strictEqual(E.isoWeek(Date.UTC(2026, 10, 24)), '2026-W48'); assert.strictEqual(E.isoWeek(Date.UTC(2027, 0, 1)), '2026-W53'); assert.strictEqual(E.isoWeek(Date.UTC(2027, 0, 4)), '2027-W01'); n++;
+  { const s1 = E.challengeSeed('2026-W48'); assert(s1 === E.challengeSeed('2026-W48') && s1 !== E.challengeSeed('2026-W49') && s1 >= 1 && s1 < 0x7fffffff); n++; }
+  { const G = loadEngine(src); G.dispatch({ type: 'newGame', seed: E.challengeSeed('2026-W48'), opts: Object.assign({}, E.CHALLENGE_OPTS, { challenge: '2026-W48' }) }); assert.strictEqual(G.S.challenge, '2026-W48'); assert(G.S.depth && G.S.weeks && G.S.acc); n++; }
+}
 console.log('ok', n, 'checks');

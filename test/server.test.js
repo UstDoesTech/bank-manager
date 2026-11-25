@@ -262,11 +262,67 @@ test('policy: every game starts on the system pricing and credit policy and cann
   assert.deepStrictEqual(cleanCommand({ type: 'setPolicy', area: 'credit', release: true, evil: 1 }), { type: 'setPolicy', area: 'credit', values: undefined, release: true });
 });
 
+test('depth: standing instructions are recorded, the team\'s decisions are stored as theirs, expected losses reach the ledger, and the replay agrees', async () => {
+  const cookie = await newPlayer('deep@example.com');
+  const g = await call('POST', '/api/games', { households: true, meetings: true, rivals: true, weeks: true, characters: true, accounts: true, depth: true }, cookie);
+  assert.strictEqual(g.status, 201); assert(g.json.state.depth && g.json.state.depth.risk && g.json.state.depth.staff, 'depth is on');
+  const id = g.json.id, post = (seq, command, c = cookie) => call('POST', `/api/games/${id}/commands`, { seq, command }, c);
+  assert.strictEqual((await post(2, { type: 'setRules', rules: { lunch: 1 } })).json.error, 'bad_command');
+  assert.strictEqual((await post(2, { type: 'setRules', rules: { fraud: 3 } })).json.error, 'bad_command');
+  assert.strictEqual((await post(2, { type: 'setRules', rules: { fraud: 2 } })).json.error, 'engine_error', 'the model rule needs the fraud model');
+  const r = await post(2, { type: 'setRules', rules: { fraud: 1, limits: 1, complaints: 1 }, extra: 'dropped' });
+  assert.strictEqual(r.status, 200); assert.deepStrictEqual(r.json.state.rules, { fraud: 1, limits: 1, complaints: 1 });
+  const stored = (await pool.query('SELECT payload FROM bank.command WHERE game_id = $1 AND seq = 2', [id])).rows[0].payload;
+  assert.deepStrictEqual(stored, { type: 'setRules', rules: { fraud: 1, limits: 1, complaints: 1 } }, 'only the rules are kept');
+  const played = await play(cookie, id, r.json.state, 2, 3);
+  const v = await verifyGame(pool, host, id); assert.strictEqual(v.ok, true, JSON.stringify(v));
+  const q = async (sql) => (await pool.query(sql, [id])).rows;
+  assert.strictEqual((await q('SELECT depth FROM bank.game WHERE id = $1'))[0].depth, true);
+  const by = await q('SELECT decided_by, count(*)::int n FROM bank.decision WHERE game_id = $1 GROUP BY 1');
+  assert(by.find((x) => x.decided_by === 'staff' && x.n > 0), 'the team decided some cases: ' + JSON.stringify(by));
+  assert.strictEqual((await q("SELECT count(*)::int n FROM bank.decision WHERE game_id = $1 AND decided_by = 'staff' AND kind NOT IN ('fraud', 'card', 'complaint')"))[0].n, 0, 'only the kinds the rules cover');
+  assert.strictEqual((await q("SELECT count(*)::int n FROM bank.v_setting_current WHERE game_id = $1 AND area = 'rules'"))[0].n, 3, 'the rules are settings');
+  assert((await q("SELECT count(*)::int n FROM bank.journal_line WHERE game_id = $1 AND account = 'provision'"))[0].n > 0, 'expected losses are posted');
+  const pos = (await q('SELECT provision_pence FROM bank.v_position WHERE game_id = $1 ORDER BY year DESC, month DESC LIMIT 1'))[0];
+  assert(Math.abs(Number(pos.provision_pence) - played.state.provision * 100000) < 50, 'the allowance in the ledger is the game\'s: ' + pos.provision_pence + ' vs ' + played.state.provision);
+  assert((await pool.query("SELECT count(*)::int n FROM bank.metric_decision_accuracy WHERE decided_by = 'staff'")).rows[0].n > 0, 'the team\'s accuracy is measured apart from the player\'s');
+  // a changed team decision is caught by the replay
+  await pool.query("DELETE FROM bank.decision WHERE game_id = $1 AND card_id = (SELECT min(card_id) FROM bank.decision WHERE game_id = $1 AND decided_by = 'staff')", [id]);
+  assert.strictEqual((await verifyGame(pool, host, id)).ok, false, 'a missing team decision is caught');
+  // a game without depth has no rules to set
+  const m = (await call('POST', '/api/games', { weeks: true, characters: true }, cookie)).json;
+  assert.strictEqual((await call('POST', `/api/games/${m.id}/commands`, { seq: 2, command: { type: 'setRules', rules: { fraud: 1 } } }, cookie)).json.error, 'no_rules');
+});
+
+test('weekly challenge: one seed and set of options per week for everyone, and an anonymous leaderboard of first-year ratings', async () => {
+  const ch = await call('GET', '/api/challenge');
+  assert.strictEqual(ch.status, 200); assert.match(ch.json.week, /^\d{4}-W\d{2}$/); assert.strictEqual(ch.json.seed, local.challengeSeed(ch.json.week));
+  const a = await newPlayer('chal.a@example.com'), b = await newPlayer('chal.b@example.com');
+  const ga = (await call('POST', '/api/games', { challenge: true, difficulty: 'hard', tutorial: false }, a)).json, gb = (await call('POST', '/api/games', { challenge: true }, b)).json;
+  assert.strictEqual(ga.seed, ch.json.seed); assert.strictEqual(gb.seed, ch.json.seed); assert.strictEqual(ga.challenge, ch.json.week);
+  assert.strictEqual(ga.state.challenge, ch.json.week); assert(ga.state.depth && ga.state.weeks && ga.state.acc && !ga.state.diff, 'the challenge\'s own options, whatever was asked for');
+  assert.strictEqual(JSON.stringify(ga.state.queue.map((c) => c.who && c.who.name)), JSON.stringify(gb.state.queue.map((c) => c.who && c.who.name)), 'the same customers for everyone');
+  const row = (await pool.query('SELECT challenge, seed FROM bank.game WHERE id = $1', [ga.id])).rows[0];
+  assert.strictEqual(row.challenge, ch.json.week);
+  // a page that plays the challenge itself builds the same game
+  { const P = loadEngine(fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), 'utf8'));
+    P.dispatch({ type: 'newGame', seed: ch.json.seed, opts: Object.assign({}, P.CHALLENGE_OPTS, { challenge: ch.json.week }) });
+    assert.strictEqual(JSON.stringify(P.S.queue.map((c) => c.id + c.kind)), JSON.stringify(ga.state.queue.map((c) => c.id + c.kind))); }
+  assert.strictEqual((await call('GET', '/api/challenge/leaderboard')).json.players, 0);
+  const res = (gid, score, letter) => pool.query("INSERT INTO bank.year_result (game_id, year, status, letter, score, profit_pence, return_on_capital, peer_benchmark) VALUES ($1, 2027, 'done', $2, $3, 1000000, 0.1, 0.05)", [gid, letter, score]);
+  await res(ga.id, 81.2, 'AA'); await res(gb.id, 66, 'A');
+  const lb = (await call('GET', '/api/challenge/leaderboard', null, b)).json;
+  assert.strictEqual(lb.players, 2); assert.deepStrictEqual(lb.top.map((r) => [r.rank, r.letter, r.you]), [[1, 'AA', false], [2, 'A', true]]);
+  assert(lb.top.every((r) => /^Banker [0-9A-F]{4}$/.test(r.name)), 'no emails or keys on the leaderboard');
+  assert(!JSON.stringify(lb).includes('example.com'));
+  assert.strictEqual((await call('GET', '/api/challenge/leaderboard?week=1999-W01')).json.players, 0);
+});
+
 test('ledger: every account the engine can post to is in the chart of accounts', async () => {
   const have = new Set((await pool.query('SELECT code FROM bank.gl_account')).rows.map((r) => r.code));
   const src = fs.readFileSync(path.join(__dirname, '..', 'engine', 'engine.js'), 'utf8');
   // accounts named in journal entries, plus one P&L account per line of the profit-and-loss statement
-  const named = new Set([...src.matchAll(/\[\s*'((?:pl|equity)\.[A-Za-z]+|cash|gilts|legacy|loans|deposits|cb|wholesale|bonds|retained|collateral|goodwill)'\s*,/g)].map((m) => m[1]));
+  const named = new Set([...src.matchAll(/\[\s*'((?:pl|equity)\.[A-Za-z]+|cash|gilts|legacy|loans|deposits|cb|wholesale|bonds|retained|collateral|goodwill|provision)'\s*,/g)].map((m) => m[1]));
   const pl = [...src.matchAll(/function blankPL\(\)\{ return \{([^}]*)\}/g)][0][1].split(',').map((s) => 'pl.' + s.split(':')[0].trim());
   for (const a of [...named, ...pl]) assert(have.has(a), 'missing from the chart of accounts: ' + a);
   assert(have.has('wholesale') && have.has('equity.dividend') && have.has('pl.swaps') && have.has('collateral') && have.has('goodwill') && have.has('equity.writedown'));
