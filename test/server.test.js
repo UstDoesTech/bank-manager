@@ -478,7 +478,9 @@ test('deposit accounts: customers have their own, each reconciles to its posting
   assert((await q("SELECT count(*)::int n FROM bank.v_customer_holding WHERE game_id = $1 AND holding = 'deposit'"))[0].n > 0, 'customers hold deposits');
   assert.strictEqual((await q('SELECT count(*)::int n FROM bank.v_deposit_statement WHERE game_id = $1 AND narrative IS NULL'))[0].n, 0, 'every statement line has a narrative');
   const interest = await q("SELECT narrative FROM bank.v_deposit_statement WHERE game_id = $1 AND description = 'interest'");
-  assert(interest.length > 0 && interest.every((r) => /days at [\d.]+%/.test(r.narrative)), 'interest says how many days at what rate');
+  // month-end interest names the days and the rate; interest paid when a customer closes their account runs to the day of closing
+  // (only some seeds have a customer leave in the first month, which is why this once passed and then failed)
+  assert(interest.length > 0 && interest.every((r) => /days at [\d.]+%|to the day of closing at [\d.]+%/.test(r.narrative)), 'interest says how many days at what rate: ' + interest.map((r) => r.narrative).join(' | '));
   for (const c of await q('SELECT memo, corrects_memo FROM bank.v_correction WHERE game_id = $1'))
     assert(['deposit.return', 'pl.redress'].includes(c.memo) && c.corrects_memo === 'deposit.flow', 'a correction points at the payment it corrects');
   assert.deepStrictEqual((await verifyGame(pool, host, id)).problems, []);
